@@ -304,11 +304,20 @@ final class AppState: ObservableObject {
     }
 
     /// One live event: count it, refresh the list row (all chats),
-    /// route the bubble to the open chat only.
+    /// route the bubble to the open chat only. 1:1 chats also learn
+    /// the mate's sender MRI for live presence dots (own messages
+    /// and group chats skipped — same sender==name identity rule as
+    /// ConversationStore).
     private func handleRealtime(_ msg: RealtimeMessage) {
         feedEvents += 1
         refreshFeedStatus()
         chats.ingest(realtime: msg)
+        if let mri = msg.senderID,
+           msg.sender != conv.ownDisplayName,
+           chats.chats.first(where: { $0.id == msg.chatID })?.is_group == false
+        {
+            Task { await presence.refreshChatPeerMri(chatID: msg.chatID, mri: mri) }
+        }
         guard msg.isFor(chatID: openChatID) else { return }
         conv.ingest(realtime: msg)
     }

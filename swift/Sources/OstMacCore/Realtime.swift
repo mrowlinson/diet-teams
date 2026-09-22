@@ -26,6 +26,10 @@ public struct RealtimeMessage: Decodable, Sendable, Identifiable {
     public let chatID: String
     public let msgId: String
     public let sender: String
+    /// Raw sender MRI (`8:orgid:…`) when the event carried one; nil on
+    /// old core builds and non-MRI senders. Presence resolves it for
+    /// live chatmate dots.
+    public let senderID: String?
     public let text: String
     public let time: String
     public let isEdit: Bool
@@ -34,9 +38,26 @@ public struct RealtimeMessage: Decodable, Sendable, Identifiable {
     enum CodingKeys: String, CodingKey {
         case chatID = "chat_id"
         case msgId = "id"
-        case sender, text, time
+        case sender, senderID = "sender_id", text, time
         case isEdit = "is_edit"
         case editedID = "edited_id"
+    }
+
+    /// Host-side construction (tests, previews). `senderID` defaults to
+    /// nil (old core builds omit it); wire decoding is untouched.
+    public init(
+        chatID: String, msgId: String, sender: String,
+        senderID: String? = nil, text: String, time: String,
+        isEdit: Bool, editedID: String? = nil
+    ) {
+        self.chatID = chatID
+        self.msgId = msgId
+        self.sender = sender
+        self.senderID = senderID
+        self.text = text
+        self.time = time
+        self.isEdit = isEdit
+        self.editedID = editedID
     }
 
     /// True when this event belongs to the given open chat.

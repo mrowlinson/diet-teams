@@ -2,7 +2,9 @@
 //!
 //! `trouter_poll_json` yields opaque socket.io payloads. This module turns them
 //! into typed chat message/edit events the conversation view can apply:
-//! `{chat_id, id, sender, text, time, is_edit, edited_id?}`.
+//! `{chat_id, id, sender, sender_id?, text, time, is_edit, edited_id?}`.
+//! `sender_id` is the raw `from` MRI (e.g. `8:orgid:<oid>`) when present —
+//! the presence lane resolves it to a Graph user for live chatmate dots.
 //!
 //! Wire shapes handled (all observed or defensively supported):
 //! - socket.io v1 envelope `{"name","args":[...]}` — `args` unwrapped.
@@ -42,6 +44,8 @@ pub struct RealtimeMessage {
     pub chat_id: String,
     pub id: String,
     pub sender: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sender_id: Option<String>,
     pub text: String,
     pub time: String,
     pub is_edit: bool,
@@ -194,6 +198,11 @@ fn message_from_object(
     let text = strip_html(&content);
     let chat_id = chat_id_from(map);
     let sender = if from.is_empty() { "?".to_string() } else { from };
+    // Raw sender MRI for presence resolution. `from` doubles as the
+    // display-name fallback above, so re-read it raw: only `8:`-prefixed
+    // values (orgid/skypeids/teamsvisitor/...) qualify; display names
+    // must never leak into this field.
+    let sender_id = str_ci(map, "from").filter(|f| f.starts_with("8:"));
     let time = first_str(
         map,
         &[
@@ -227,6 +236,7 @@ fn message_from_object(
         chat_id,
         id,
         sender,
+        sender_id,
         text,
         time,
         is_edit,

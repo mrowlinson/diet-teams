@@ -10,6 +10,7 @@
 //   await store.refreshOwn()             // own dot (status bar, picker)
 //   store.set(status: .busy)             // own-status picker action
 //   await store.refreshPeers(ids: [...]) // chatmate dots by user id
+//   await store.refreshChatPeerMri(chatID: "19:..", mri: "8:orgid:..") // dots by sender MRI
 // Tests inject mock fetchers (same seam as ChatListViewModel.Fetcher).
 import Foundation
 import SwiftUI
@@ -86,6 +87,7 @@ public final class PresenceStore: ObservableObject {
     public typealias OwnFetcher = @Sendable () throws -> PresenceResponse
     public typealias SetFetcher = @Sendable (String) throws -> PresenceResponse
     public typealias UserFetcher = @Sendable (String) throws -> UserPresenceResponse
+    public typealias ResolveFetcher = @Sendable (String) throws -> ResolveMriResponse
 
     /// Last known own presence; nil until the first successful refresh.
     @Published public private(set) var own: PresenceResponse?
@@ -93,27 +95,40 @@ public final class PresenceStore: ObservableObject {
     @Published public private(set) var peers: [String: UserPresenceResponse] = [:]
     /// Chatmate presence by 1:1 chat id (row/header dot source). Core
     /// ChatInfo carries no peer ids (ost upstream gap), so live entries
-    /// land here only via `refreshChatPeer`; demo/tests adopt directly.
+    /// land here via `refreshChatPeer` (known user id) or
+    /// `refreshChatPeerMri` (sender MRI learned from the realtime feed);
+    /// demo/tests adopt directly.
     @Published public private(set) var chatPeers: [String: UserPresenceResponse] = [:]
     /// Last failure (fetch or set); cleared on the next success.
     /// Like ost, presence failure is non-critical: the UI keeps stale data.
     @Published public private(set) var error: String?
     @Published public private(set) var setting = false
+    /// Resolved Graph users by MRI (om-steal-ids: one resolve per mate).
+    public private(set) var resolved: [String: ResolveMriResponse] = [:]
+    /// Learned sender MRI by 1:1 chat id.
+    public private(set) var mriByChat: [String: String] = [:]
+    /// Min seconds between MRI refreshes of one chat (realtime feeds can
+    /// burst; tests shrink it). Resolve cache makes repeats cheap anyway.
+    public var resolveThrottle: TimeInterval = 300
 
     private let ownFetcher: OwnFetcher
     private let setFetcher: SetFetcher
     private let userFetcher: UserFetcher
+    private let resolveFetcher: ResolveFetcher
+    private var lastResolve: [String: Date] = [:]
 
     /// Nonisolated so views can take a default `PresenceStore()` in
     /// their (nonisolated) inits; all members stay main-actor-isolated.
     public nonisolated init(
         ownFetcher: @escaping OwnFetcher = { try RustCore.presence() },
         setFetcher: @escaping SetFetcher = { try RustCore.setPresence(status: $0) },
-        userFetcher: @escaping UserFetcher = { try RustCore.userPresence(id: $0) }
+        userFetcher: @escaping UserFetcher = { try RustCore.userPresence(id: $0) },
+        resolveFetcher: @escaping ResolveFetcher = { try RustCore.resolveMri(mri: $0) }
     ) {
         self.ownFetcher = ownFetcher
         self.setFetcher = setFetcher
         self.userFetcher = userFetcher
+        self.resolveFetcher = resolveFetcher
     }
 
     /// Refresh own presence. Failure keeps the stale value (ost parity).
@@ -200,11 +215,52 @@ public final class PresenceStore: ObservableObject {
         }
     }
 
+    /// Resolve a sender MRI to a Graph user, then fetch that user's
+    /// presence and pin it to a 1:1 chat id. Non-MRIs and non-orgid
+    /// forms (skypeids, visitor…) are silent no-ops — nothing to
+    /// resolve. Resolves are cached per MRI; refreshes are throttled
+    /// per chat. Failure keeps the stale pin (ost non-critical rule).
+    public func refreshChatPeerMri(chatID: String, mri: String) async {
+        guard Mri.isResolvable(mri) else { return }
+        if let last = lastResolve[chatID],
+           Date().timeIntervalSince(last) < resolveThrottle
+        {
+            return
+        }
+        lastResolve[chatID] = Date()
+        let resolve = resolveFetcher
+        let fetch = userFetcher
+        do {
+            let user: ResolveMriResponse
+            if let hit = resolved[mri] {
+                user = hit
+            } else {
+                user = try await Task.detached { try resolve(mri) }.value
+                resolved[mri] = user
+            }
+            mriByChat[chatID] = mri
+            let resp = try await Task.detached { try fetch(user.id) }.value
+            peers[resp.id] = resp
+            chatPeers[chatID] = resp
+            error = nil
+        } catch {
+            self.error = String(describing: error)
+        }
+    }
+
+    /// Adopt one MRI resolution without core (tests, previews, demo).
+    public func adoptResolved(mri: String, response: ResolveMriResponse) {
+        resolved[mri] = response
+    }
+
     /// Drop everything after sign-out (fail closed; stale dots vanish).
     public func clear() {
         own = nil
         peers = [:]
         chatPeers = [:]
+        resolved = [:]
+        mriByChat = [:]
+        lastResolve = [:]
         error = nil
     }
 }

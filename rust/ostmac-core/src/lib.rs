@@ -8,6 +8,7 @@
 //! - messages: full history for one chat (requires sign-in)
 //! - send: post one message to a chat (requires sign-in)
 //! - presence: own get/set + per-user get (Graph presence, requires sign-in)
+//! - resolve_mri: Teams `8:orgid:` MRI to Graph user (requires sign-in)
 //! - trouter: background push connection with a polled event channel
 //! - calls: signaling-only place/accept/end + echo-bot + recorder inject
 //!
@@ -746,6 +747,92 @@ pub fn user_presence_json(user_id: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// MRI resolution (om-steal-ids lane)
+// ---------------------------------------------------------------------------
+
+// Ported from weirdapps teams-access `src/commands/resolve-mri.ts` (MIT):
+// translate a Teams MRI `8:orgid:<aad-oid>` to {id, email, displayName} via
+// Graph /users/{aad-oid}. ost has no equivalent — its call slot shows raw
+// MRIs and presence takes user ids the UI can't derive. `mail` is null for
+// guests (same as upstream).
+fn resolve_envelope(id: &str, email: Option<&str>, display_name: &str) -> String {
+    json!({
+        "ok": true,
+        "id": id,
+        "email": email,
+        "display_name": display_name,
+    })
+    .to_string()
+}
+
+/// AAD object id from a Teams MRI. Mirrors upstream `MRI_RE`
+/// (`/^8:orgid:([A-Za-z0-9-]+)$/`): only orgid MRIs resolve via Graph;
+/// skypeids/visitor/federated forms are None (caller reports `arg`).
+fn mri_to_oid(mri: &str) -> Option<&str> {
+    let oid = mri.strip_prefix("8:orgid:")?;
+    if oid.is_empty() || !oid.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return None;
+    }
+    Some(oid)
+}
+
+/// True when a TeamsClient failure is a Graph 404 (unknown user). Upstream
+/// surfaces 404 distinctly so callers can mark permanent_fail; ost's
+/// `check_response` folds it into `anyhow` text, so match the status prefix.
+fn is_not_found(detail: &str) -> bool {
+    detail.contains("HTTP 404")
+}
+
+/// Resolve a Teams MRI to a Graph user. Empty/non-orgid `mri` is rejected
+/// before any network (`arg`); unknown users yield `not_found` (permanent,
+/// don't retry); anything else is `resolve_mri`.
+/// `{ok:true, id, email|null, display_name}` or `{ok:false}`.
+pub fn resolve_mri_json(mri: &str) -> String {
+    let m = mri.trim();
+    if m.is_empty() {
+        return err_json("arg", "empty mri");
+    }
+    let oid = match mri_to_oid(m) {
+        Some(o) => o.to_string(),
+        None => {
+            return err_json(
+                "arg",
+                format!("invalid MRI (want 8:orgid:<aad-oid>): {}", m),
+            )
+        }
+    };
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let resp = client
+                .graph_get(&format!("/users/{}", oid))
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            #[derive(serde::Deserialize)]
+            struct U {
+                id: String,
+                mail: Option<String>,
+                #[serde(rename = "displayName")]
+                display_name: String,
+            }
+            let u: U = resp
+                .json()
+                .await
+                .map_err(|e| format!("Failed to parse user response: {}", e))?;
+            Ok(resolve_envelope(&u.id, u.mail.as_deref(), &u.display_name))
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) if is_not_found(&e) => err_json("not_found", e),
+        Err(e) => err_json("resolve_mri", e),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Trouter event channel
 // ---------------------------------------------------------------------------
 
@@ -1050,6 +1137,16 @@ pub extern "C" fn ostmac_call_place(
 pub extern "C" fn ostmac_presence_user(user_id: *const c_char) -> *mut c_char {
     match cstr_to_string(user_id) {
         Ok(id) => string_to_c(user_presence_json(&id)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
+/// Resolve a Teams MRI (`8:orgid:<aad-oid>`) to a Graph user.
+/// See [`resolve_mri_json`]. Caller frees with [`ostmac_free`].
+#[no_mangle]
+pub extern "C" fn ostmac_resolve_mri(mri: *const c_char) -> *mut c_char {
+    match cstr_to_string(mri) {
+        Ok(m) => string_to_c(resolve_mri_json(&m)),
         Err(e) => string_to_c(err_json("arg", e)),
     }
 }
@@ -1611,5 +1708,110 @@ mod tests {
         let b = v["messages"][1]["id"].as_str().unwrap().to_string();
         assert!(a.starts_with("h:"));
         assert_eq!(a, b); // same content => same id => Swift dedupe drops it
+    }
+
+    #[test]
+    fn typed_poll_carries_sender_mri() {
+        let _ = ost::event_hub::drain(1024);
+        // Display name wins for `sender`; raw `from` MRI lands in sender_id.
+        ost::event_hub::publish(
+            r#"{"content":"hi","messagetype":"Text","from":"8:orgid:aaa-1",
+                "imdisplayname":"Doe, Jane","threadId":"19:t@thread.v2"}"#
+                .to_string(),
+        );
+        // Plain display name in `from` is not an MRI: sender_id omitted.
+        ost::event_hub::publish(
+            r#"{"content":"yo","messagetype":"Text","from":"Doe, Jane",
+                "threadId":"19:t@thread.v2"}"#
+                .to_string(),
+        );
+        let v: serde_json::Value =
+            serde_json::from_str(&trouter_poll_typed_json()).unwrap();
+        assert_eq!(v["messages"][0]["sender"], "Doe, Jane");
+        assert_eq!(v["messages"][0]["sender_id"], "8:orgid:aaa-1");
+        assert_eq!(v["messages"][1]["sender"], "Doe, Jane");
+        assert!(v["messages"][1].get("sender_id").is_none());
+    }
+
+    #[test]
+    fn mri_to_oid_matches_upstream_regex() {
+        // teams-access MRI_RE: /^8:orgid:([A-Za-z0-9-]+)$/.
+        assert_eq!(
+            mri_to_oid("8:orgid:12345678-9abc-def0-1234-56789abcdef0"),
+            Some("12345678-9abc-def0-1234-56789abcdef0")
+        );
+        assert_eq!(mri_to_oid("8:orgid:x"), Some("x")); // guest-style, lenient
+        for bad in [
+            "",
+            "8:orgid:",
+            "8:orgid:oid with space",
+            "8:orgid:oid/slash",
+            "8:orgid:oid_underscore",
+            "8:skypeids:aaa", // non-orgid forms don't resolve via Graph
+            "8:teamsvisitor:aaa",
+            "19:abc@thread.v2",
+            "user@example.com",
+        ] {
+            assert_eq!(mri_to_oid(bad), None, "mri {:?}", bad);
+        }
+    }
+
+    #[test]
+    fn resolve_envelope_shape() {
+        let v: serde_json::Value =
+            serde_json::from_str(&resolve_envelope("gid-1", Some("a@x.example"), "Doe, Jane"))
+                .unwrap();
+        assert_eq!(v["ok"], true);
+        assert_eq!(v["id"], "gid-1");
+        assert_eq!(v["email"], "a@x.example");
+        assert_eq!(v["display_name"], "Doe, Jane");
+        // Guest: mail null (upstream parity).
+        let g: serde_json::Value =
+            serde_json::from_str(&resolve_envelope("gid-2", None, "Guest")).unwrap();
+        assert!(g["email"].is_null());
+    }
+
+    #[test]
+    fn resolve_mri_rejects_bad_args_without_network() {
+        for bad in ["", "   ", "8:skypeids:aaa", "not-an-mri", "19:t@thread.v2"] {
+            let v: serde_json::Value =
+                serde_json::from_str(&resolve_mri_json(bad)).unwrap();
+            assert_eq!(v["ok"], false, "mri {:?}", bad);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
+    fn not_found_matches_graph_404_text() {
+        assert!(is_not_found("HTTP 404 for https://graph.microsoft.com/v1.0/users/x: {}"));
+        assert!(!is_not_found("HTTP 401 for https://graph.microsoft.com/v1.0/me: denied"));
+        assert!(!is_not_found("token expired"));
+    }
+
+    #[test]
+    fn ffi_resolve_mri_null_is_arg_error() {
+        unsafe {
+            let p = ostmac_resolve_mri(std::ptr::null());
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
+    fn ffi_resolve_mri_bad_mri_roundtrip() {
+        let m = CString::new("8:skypeids:aaa").unwrap();
+        unsafe {
+            let p = ostmac_resolve_mri(m.as_ptr());
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
     }
 }
