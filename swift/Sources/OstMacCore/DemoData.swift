@@ -1,4 +1,4 @@
-// DemoData.swift — om-app-union: ONE canned dataset for `OstMac --demo`.
+// DemoData.swift — om-app-union: ONE canned dataset for `Diet Teams --demo`.
 // Merges the om-package sidebar rows (stable ids demo/demo-2/demo-3) with
 // the om-integrate threads. Single source: chatsResponse()/messages()/name()
 // all derive from `chats`; every row's preview/sender/time matches the

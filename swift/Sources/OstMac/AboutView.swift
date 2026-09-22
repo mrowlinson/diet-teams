@@ -1,4 +1,4 @@
-// AboutView.swift — om-package lane: About OstMac window content.
+// AboutView.swift — om-package lane: About Diet Teams window content.
 import AppKit
 import OstMacCore
 import SwiftUI

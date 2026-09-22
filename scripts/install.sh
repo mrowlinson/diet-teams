@@ -1,13 +1,13 @@
 #!/bin/bash
-# Install release OstMac.app to /Applications (builds first if missing).
+# Install release Diet Teams.app to /Applications (builds first if missing).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-APP="$ROOT/tmp/OstMac.app"
+APP="$ROOT/tmp/Diet Teams.app"
 if [[ ! -x "$APP/Contents/MacOS/OstMac" ]]; then
     "$ROOT/scripts/package.sh"
 fi
-rm -rf /Applications/OstMac.app
-cp -R "$APP" /Applications/OstMac.app
-codesign --verify --verbose=1 /Applications/OstMac.app
-echo "installed: /Applications/OstMac.app"
-du -sh /Applications/OstMac.app
+rm -rf "/Applications/Diet Teams.app"
+cp -R "$APP" "/Applications/Diet Teams.app"
+codesign --verify --verbose=1 "/Applications/Diet Teams.app"
+echo "installed: /Applications/Diet Teams.app"
+du -sh "/Applications/Diet Teams.app"

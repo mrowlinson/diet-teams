@@ -1,4 +1,4 @@
-// make-icon.swift — draw the OstMac chat-bubble icon (1024px PNG) to argv[1].
+// make-icon.swift — draw the Diet Teams chat-bubble icon (1024px PNG) to argv[1].
 // Usage: swift scripts/make-icon.swift /tmp/icon-1024.png
 import AppKit
 import Foundation
