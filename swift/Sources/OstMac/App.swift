@@ -194,7 +194,8 @@ final class AppState: ObservableObject {
             let canned = CatchUpCannedTransport(stub: Self.catchUpDemoSummary)
             let store = CatchUpStore(
                 transport: canned,
-                defaults: UserDefaults(suiteName: "shot-catchup") ?? .standard)
+                defaults: UserDefaults(suiteName: "shot-catchup") ?? .standard,
+                keyStore: CatchUpMemoryKeyStore())
             store.adopt(CatchUpConfig(enabled: true, apiKey: "demo"))
             catchUp = store
         } else {

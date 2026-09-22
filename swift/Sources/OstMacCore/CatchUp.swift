@@ -6,12 +6,35 @@
 // Contract:
 //   - OFF by default; nothing leaves the machine until the user enables
 //     it, enters their own key, and taps Summarize.
-//   - BYO OpenAI-compatible key + configurable base URL + model.
+//   - BYO key + provider picker (OpenAI-compatible | OpenCode) +
+//     configurable base URL + model.
+//   - The key lives in the macOS keychain (service
+//     "dev.ostmac.OstMac.catchup", account "catchup-api-key"), never
+//     in UserDefaults/plist. The Settings key field writes keychain.
 //   - The privacy note (thread text leaves the machine) shows in both
 //     Settings and the sheet, every time.
 //   - Tests inject a mock transport (same seam style as PresenceStore's
-//     fetchers); live traffic goes through URLSessionCatchUpTransport.
+//     fetchers) + a memory key store; live traffic goes through
+//     URLSessionCatchUpTransport.
+//
+// OpenCode discovery (opencode.ai, 2026-09-22):
+//   - Config file: opencode.json — {"$schema":
+//     "https://opencode.ai/config.json", "provider": {<id>: {"npm":
+//     "@ai-sdk/openai-compatible", "name": ..., "options":
+//     {"baseURL": ...}, "models": {<model-id>: {...}}}}}
+//   - Hosted API (OpenCode Zen): base https://opencode.ai/zen/v1,
+//     OpenAI-compatible; POST {base}/chat/completions, auth
+//     `Authorization: Bearer <key>` (key from https://opencode.ai/auth,
+//     env OPENCODE_API_KEY). Model-id format on Zen: bare ids
+//     ("provider/model" only in opencode.json references).
+//   - 'Meta Muse Spark 1.3 Free' candidates: Zen
+//     "muse-spark-1.3-contributor-free" ($0, models.dev opencode page,
+//     exact name match) > Zen "muse-spark-1.3" (paid $1.25/$4.25) >
+//     OpenRouter "meta/muse-spark-1.3:free" (wrong provider for the
+//     Zen base URL) > "muse-spark-1.2-contributor-free" (free, older).
+//     Preloaded id: muse-spark-1.3-contributor-free.
 import Foundation
+import Security
 
 // MARK: - Pure helpers
 
@@ -79,23 +102,67 @@ public enum CatchUp {
 
 // MARK: - Config
 
+/// AI endpoint provider. Switching preloads that provider's base URL
+/// + model (see `CatchUpStore.selectProvider`).
+public enum CatchUpProvider: String, Sendable, Equatable, CaseIterable, Identifiable {
+    case openAICompatible = "openai-compatible"
+    case openCode = "opencode"
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .openAICompatible: "OpenAI-compatible"
+        case .openCode: "OpenCode"
+        }
+    }
+
+    public var defaultBaseURL: String {
+        switch self {
+        case .openAICompatible: "https://api.openai.com/v1"
+        case .openCode: "https://opencode.ai/zen/v1"
+        }
+    }
+
+    public var defaultModel: String {
+        switch self {
+        case .openAICompatible: "gpt-4o-mini"
+        case .openCode: "muse-spark-1.3-contributor-free"
+        }
+    }
+}
+
 /// BYO credentials. `enabled` defaults false (OFF); key starts empty.
+/// The key is in-memory only here — persisted in the keychain, never
+/// in UserDefaults (see `CatchUpStore.save`).
 public struct CatchUpConfig: Sendable, Equatable {
+    public var provider: CatchUpProvider
     public var enabled: Bool
     public var baseURL: String
     public var model: String
     public var apiKey: String
 
     public init(
+        provider: CatchUpProvider = .openAICompatible,
         enabled: Bool = false,
         baseURL: String = "https://api.openai.com/v1",
         model: String = "gpt-4o-mini",
         apiKey: String = ""
     ) {
+        self.provider = provider
         self.enabled = enabled
         self.baseURL = baseURL
         self.model = model
         self.apiKey = apiKey
+    }
+
+    /// Preset config for a provider: its base URL + model, key untouched.
+    public func withProvider(_ provider: CatchUpProvider) -> CatchUpConfig {
+        var out = self
+        out.provider = provider
+        out.baseURL = provider.defaultBaseURL
+        out.model = provider.defaultModel
+        return out
     }
 }
 
@@ -117,6 +184,84 @@ public enum CatchUpError: Error, Sendable, Equatable {
         case let .server(detail): "Catch-up failed: \(detail)"
         }
     }
+}
+
+// MARK: - Key storage
+
+/// API-key persistence seam. Live = macOS keychain; tests and the
+/// --show-catchup shot hook inject `CatchUpMemoryKeyStore` so they
+/// never touch the real keychain.
+public protocol CatchUpKeyStore: Sendable {
+    func load() -> String?
+    func save(_ key: String)
+    func clear()
+}
+
+/// macOS keychain item: service "dev.ostmac.OstMac.catchup", account
+/// "catchup-api-key". Preload from a shell (key via $KEY only):
+///   security add-generic-password -a catchup-api-key \
+///     -s dev.ostmac.OstMac.catchup -w "$KEY" -U
+public struct CatchUpSystemKeychain: CatchUpKeyStore {
+    public static let service = "dev.ostmac.OstMac.catchup"
+    public static let account = "catchup-api-key"
+
+    public init() {}
+
+    public func load() -> String? {
+        let q: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: Self.service,
+            kSecAttrAccount as String: Self.account,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var item: CFTypeRef?
+        guard SecItemCopyMatching(q as CFDictionary, &item) == errSecSuccess,
+              let data = item as? Data,
+              let key = String(data: data, encoding: .utf8),
+              !key.isEmpty
+        else { return nil }
+        return key
+    }
+
+    public func save(_ key: String) {
+        guard !key.isEmpty else { clear(); return }
+        let data = Data(key.utf8)
+        let q: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: Self.service,
+            kSecAttrAccount as String: Self.account,
+        ]
+        if SecItemCopyMatching(q as CFDictionary, nil) == errSecSuccess {
+            _ = SecItemUpdate(q as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        } else {
+            var add = q
+            add[kSecValueData as String] = data
+            _ = SecItemAdd(add as CFDictionary, nil)
+        }
+    }
+
+    public func clear() {
+        let q: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: Self.service,
+            kSecAttrAccount as String: Self.account,
+        ]
+        _ = SecItemDelete(q as CFDictionary)
+    }
+}
+
+/// In-memory key store for tests, previews, and the shot hook.
+public final class CatchUpMemoryKeyStore: CatchUpKeyStore, @unchecked Sendable {
+    private var key: String?
+
+    public init(key: String? = nil) {
+        self.key = key
+    }
+
+    public func load() -> String? { key }
+    public func save(_ key: String) { self.key = key.isEmpty ? nil : key }
+    public func clear() { key = nil }
 }
 
 // MARK: - Transport
@@ -189,8 +334,10 @@ public final class CatchUpCannedTransport: CatchUpTransport, @unchecked Sendable
 
 // MARK: - Store
 
-/// Catch-up state for the app. Config persists in UserDefaults (OFF
-/// default); the summary state resets per tap.
+/// Catch-up state for the app. Non-secret config persists in
+/// UserDefaults (OFF default); the key lives in the key store (live:
+/// macOS keychain) and is only ever in memory on `config`. The
+/// summary state resets per tap.
 @MainActor
 public final class CatchUpStore: ObservableObject {
     public enum State: Equatable {
@@ -201,10 +348,13 @@ public final class CatchUpStore: ObservableObject {
     }
 
     enum Keys {
+        static let provider = "catchup.provider"
         static let enabled = "catchup.enabled"
         static let baseURL = "catchup.baseURL"
         static let model = "catchup.model"
-        static let key = "catchup.apiKey"
+        /// Legacy: the pre-keychain lane kept the key here. Read once
+        /// for migration, never written.
+        static let legacyKey = "catchup.apiKey"
     }
 
     @Published public var config: CatchUpConfig {
@@ -215,20 +365,37 @@ public final class CatchUpStore: ObservableObject {
 
     private let transport: any CatchUpTransport
     private let defaults: UserDefaults
+    private let keys: any CatchUpKeyStore
 
     /// Nonisolated so views can take a default `CatchUpStore()` in
     /// their (nonisolated) inits; all members stay main-actor-isolated.
     public nonisolated init(
         transport: (any CatchUpTransport)? = nil,
-        defaults: UserDefaults = .standard
+        defaults: UserDefaults = .standard,
+        keyStore: (any CatchUpKeyStore)? = nil
     ) {
         self.transport = transport ?? URLSessionCatchUpTransport()
         self.defaults = defaults
+        let keys = keyStore ?? CatchUpSystemKeychain()
+        self.keys = keys
         var cfg = CatchUpConfig()
+        if let p = defaults.string(forKey: Keys.provider),
+           let provider = CatchUpProvider(rawValue: p)
+        {
+            cfg.provider = provider
+        }
         if defaults.bool(forKey: Keys.enabled) { cfg.enabled = true }
         if let b = defaults.string(forKey: Keys.baseURL), !b.isEmpty { cfg.baseURL = b }
         if let m = defaults.string(forKey: Keys.model), !m.isEmpty { cfg.model = m }
-        if let k = defaults.string(forKey: Keys.key) { cfg.apiKey = k }
+        if let k = keys.load(), !k.isEmpty {
+            cfg.apiKey = k
+        } else if let legacy = defaults.string(forKey: Keys.legacyKey), !legacy.isEmpty {
+            // One-time migration: move the pre-keychain key into the
+            // key store, scrub it from defaults.
+            cfg.apiKey = legacy
+            keys.save(legacy)
+            defaults.removeObject(forKey: Keys.legacyKey)
+        }
         _config = Published(initialValue: cfg)
         _state = Published(initialValue: .idle)
     }
@@ -270,10 +437,19 @@ public final class CatchUpStore: ObservableObject {
         config = cfg
     }
 
+    /// Provider switch from the Settings picker: preloads the
+    /// provider's base URL + model, keeps the key + enabled flag.
+    public func selectProvider(_ provider: CatchUpProvider) {
+        config = config.withProvider(provider)
+    }
+
     private func save() {
+        defaults.set(config.provider.rawValue, forKey: Keys.provider)
         defaults.set(config.enabled, forKey: Keys.enabled)
         defaults.set(config.baseURL, forKey: Keys.baseURL)
         defaults.set(config.model, forKey: Keys.model)
-        defaults.set(config.apiKey, forKey: Keys.key)
+        // Key → key store only. Never UserDefaults (see migration in
+        // init for the one pre-keychain exception we scrub).
+        keys.save(config.apiKey)
     }
 }
