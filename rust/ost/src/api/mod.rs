@@ -8,6 +8,7 @@ mod me;
 pub mod media;
 mod presence;
 mod teams;
+mod todo;
 
 use anyhow::Result;
 
@@ -17,6 +18,7 @@ pub use files::SharedFile;
 pub use me::UserInfo;
 pub use presence::PresenceInfo;
 pub use teams::TeamInfo;
+pub use todo::{TodoListInfo, TodoTaskInfo};
 
 // Re-export ChannelInfo for use in TUI sidebar (currently consumed
 // only through TeamInfo.channels, but kept public for future callers).
@@ -32,6 +34,10 @@ pub use media::{fetch_media_data, MediaBytes, MAX_BYTES};
 pub use me::whoami_data;
 pub use presence::get_presence_data;
 pub use teams::list_teams_data;
+pub use todo::{
+    complete_todo_task_data, create_todo_task_data, list_todo_lists_data,
+    list_todo_tasks_data,
+};
 
 /// List recent chats (native Teams API)
 pub async fn list_chats(limit: usize) -> Result<()> {
@@ -81,4 +87,24 @@ pub async fn download_file(drive_id: &str, item_id: &str, dest: &str) -> Result<
 /// Upload a local file to a chat or channel
 pub async fn upload_file(chat_id: &str, local_path: &str) -> Result<()> {
     files::upload_file(chat_id, local_path).await
+}
+
+/// List Microsoft To Do lists
+pub async fn list_todo_lists() -> Result<()> {
+    todo::list_todo_lists().await
+}
+
+/// List tasks in one To Do list
+pub async fn list_todo_tasks(list_id: &str, limit: usize) -> Result<()> {
+    todo::list_todo_tasks(list_id, limit).await
+}
+
+/// Create one task in a To Do list
+pub async fn create_todo_task(list_id: &str, title: &str) -> Result<()> {
+    todo::create_todo_task(list_id, title).await
+}
+
+/// Mark one To Do task completed
+pub async fn complete_todo_task(list_id: &str, task_id: &str) -> Result<()> {
+    todo::complete_todo_task(list_id, task_id).await
 }

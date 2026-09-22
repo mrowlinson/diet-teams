@@ -81,6 +81,16 @@ needing maintainer buy-in. Minor PRs stand alone; majors are separate PRs.
     round-trip, segment encoding, eTag GUID scan, children/message parsing,
     attachment preference.
 
+15. `src/api/todo.rs` (new) + `src/api/mod.rs` + `src/api/client.rs` +
+    `src/main.rs` — **Microsoft To Do lists/tasks (om-remind lane)**.
+    Graph `/me/todo/lists`, `/lists/{id}/tasks` (GET), create (POST),
+    complete (PATCH `status: completed`). `TodoListInfo`/`TodoTaskInfo`
+    + `*_data` fns re-exported; CLI `todo` (bare lists, `--list`,
+    `--add/--to`, `--done/--to`). `client.rs` gains generic `graph_patch`.
+    Auth: existing Graph token, NO scope widening (Teams client id already
+    consents Tasks.ReadWrite; 403 surfaces as the call detail). Ids breaking
+    the path (`/`, `?`, `#`, whitespace) rejected pre-network. TUI untouched.
+
 ## Upstream PRs (2026-09-22, base 0892144; main red on sdp E0308 until #5)
 
 Minor (standalone modulo #5-first; merge in any order after):

@@ -58,6 +58,20 @@ char *ostmac_files_upload(const char *chat_id, const char *path);
 // Returns {ok, path, bytes}. Caller frees.
 char *ostmac_files_download(const char *drive_id, const char *item_id, const char *dest);
 
+// To Do lists JSON (requires sign-in): {ok,lists:[{id,name,wellknown?}]}.
+// Caller frees.
+char *ostmac_reminders(void);
+
+// Tasks for one To Do list: {ok,list_id,tasks:[{id,title,status,
+// importance,due?,reminder?,completed}]}. Caller frees.
+char *ostmac_reminder_tasks(const char *list_id, int limit);
+
+// Create one task in a list: {ok,task}. Caller frees.
+char *ostmac_reminder_add(const char *list_id, const char *title);
+
+// Mark one task completed: {ok,task}. Caller frees.
+char *ostmac_reminder_done(const char *list_id, const char *task_id);
+
 // Start background Trouter push: 0 ok, -1 running, -2 no auth, -3 rt fail.
 int ostmac_trouter_start(void);
 
