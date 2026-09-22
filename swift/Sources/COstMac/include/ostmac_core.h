@@ -28,6 +28,9 @@ char *ostmac_whoami(void);
 // Chat list JSON (requires sign-in). Caller frees.
 char *ostmac_chats(int limit);
 
+// Joined teams + channels JSON (requires sign-in). Caller frees.
+char *ostmac_teams(void);
+
 // Message history JSON for one chat (requires sign-in). Caller frees.
 char *ostmac_messages(const char *chat_id, int limit);
 

@@ -118,6 +118,59 @@ public struct ChatsResponse: Decodable, Sendable {
     }
 }
 
+// MARK: - Teams (om-teams lane)
+
+/// One channel inside a team. Wire format from core `ostmac_teams`:
+/// `{"id","name"}`. The id opens as a conversation through the same
+/// messages/send path as chat ids (ost TUI parity).
+public struct TeamChannel: Decodable, Sendable, Identifiable {
+    public var id: String { channelId }
+    public let channelId: String
+    public let name: String
+
+    enum CodingKeys: String, CodingKey {
+        case channelId = "id"
+        case name
+    }
+
+    /// Host-side construction (demo data, previews). Wire decoding is untouched.
+    public init(channelId: String, name: String) {
+        self.channelId = channelId
+        self.name = name
+    }
+}
+
+/// One joined team with its channels.
+public struct TeamItem: Decodable, Sendable, Identifiable {
+    public var id: String { teamId }
+    public let teamId: String
+    public let name: String
+    public let channels: [TeamChannel]
+
+    enum CodingKeys: String, CodingKey {
+        case teamId = "id"
+        case name, channels
+    }
+
+    /// Host-side construction (demo data, previews). Wire decoding is untouched.
+    public init(teamId: String, name: String, channels: [TeamChannel]) {
+        self.teamId = teamId
+        self.name = name
+        self.channels = channels
+    }
+}
+
+public struct TeamsResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let teams: [TeamItem]
+
+    /// Host-side construction (demo data, previews). Wire decoding is untouched.
+    public init(ok: Bool, teams: [TeamItem]) {
+        self.ok = ok
+        self.teams = teams
+    }
+}
+
 public struct TrouterPoll: Decodable, Sendable {
     public let ok: Bool
     public let events: [AnyJSON]

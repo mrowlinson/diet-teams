@@ -48,14 +48,33 @@ public enum DemoData {
         ChatsResponse(ok: true, chats: chats)
     }
 
+    /// Canned teams for `--demo` (om-teams lane). Channel ids route to
+    /// `channelMessages` via `messages(for:)` so opening a channel shows
+    /// a thread offline.
+    public static let teams: [TeamItem] = [
+        TeamItem(teamId: "demo-team-eng", name: "Engineering", channels: [
+            TeamChannel(channelId: "demo-chan-general", name: "General"),
+            TeamChannel(channelId: "demo-chan-shipping", name: "Shipping"),
+        ]),
+        TeamItem(teamId: "demo-team-design", name: "Design", channels: [
+            TeamChannel(channelId: "demo-chan-crit", name: "Crit"),
+        ]),
+    ]
+
+    public static func teamsResponse() -> TeamsResponse {
+        TeamsResponse(ok: true, teams: teams)
+    }
+
     public static func messages(for chatID: String) -> [ChatMessage] {
         switch chatID {
-        case demoID: ConversationStore.demoMessages
-        case avaID: avaMessages
-        case standupID: standupMessages
-        case richID: ConversationStore.richDemoMessages()
-        default: []
+        case demoID: return ConversationStore.demoMessages
+        case avaID: return avaMessages
+        case standupID: return standupMessages
+        case richID: return ConversationStore.richDemoMessages()
+        default: break
         }
+        if chatID.hasPrefix("demo-chan-") { return channelMessages }
+        return []
     }
 
     /// Pre-failed bubble ids per demo chat (rich thread's failed own send).
@@ -64,8 +83,26 @@ public enum DemoData {
     }
 
     public static func name(for chatID: String) -> String? {
-        chats.first { $0.id == chatID }?.name
+        if let chat = chats.first(where: { $0.id == chatID }) { return chat.name }
+        for team in teams {
+            if let ch = team.channels.first(where: { $0.id == chatID }) {
+                return "\(team.name) > #\(ch.name)"
+            }
+        }
+        return nil
     }
+
+    /// Shared offline thread shown when a demo channel opens.
+    private static let channelMessages: [ChatMessage] = [
+        ChatMessage(
+            id: "chan-m1", sender: "Priya Nair",
+            timestamp: "2026-09-22T09:02:11Z",
+            content: "Kickoff notes are pinned — goals, dates, owners."),
+        ChatMessage(
+            id: "chan-m2", sender: "Tom Becker",
+            timestamp: "2026-09-22T09:10:44Z",
+            content: "Build is green, packaging lane is next."),
+    ]
 
     private static let avaMessages: [ChatMessage] = [
         ChatMessage(

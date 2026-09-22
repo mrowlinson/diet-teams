@@ -15,6 +15,7 @@
 // --say auto-sends once into the open chat. In live mode that is a REAL
 // send via core — never use it on shared chats for testing.
 // --show-about / --show-settings open those windows at launch (shot hooks).
+// --show-teams opens the sidebar on the Teams browser (shot hook).
 // --auth-state <name> opens the Auth window with a canned state, never
 // touching core/network (names: signed-out, starting, code, polling,
 // signed-in, expired, refreshing, refresh-failed, error). `--state` is
@@ -114,6 +115,7 @@ private struct OstMacCommands: Commands {
 final class AppState: ObservableObject {
     let isDemo: Bool
     let chats: ChatListViewModel
+    let teams: TeamsViewModel
     let conv = ConversationStore()
     let feed = RealtimeFeed()
     let auth = AuthViewModel()
@@ -157,8 +159,10 @@ final class AppState: ObservableObject {
         }
         if isDemo {
             chats = ChatListViewModel(fetcher: { _ in DemoData.chatsResponse() })
+            teams = TeamsViewModel(fetcher: { DemoData.teamsResponse() })
         } else {
             chats = ChatListViewModel()
+            teams = TeamsViewModel()
         }
         chats.$selectedChatID
             .dropFirst()
@@ -200,6 +204,7 @@ final class AppState: ObservableObject {
         guard !contentOpened, isDemo || auth.state.allowsContent else { return }
         contentOpened = true
         await chats.load()
+        await teams.load()
         if chats.state == .loaded {
             // Core's signed_in is aad-centric; a loaded list proves
             // working auth regardless.
@@ -255,6 +260,12 @@ final class AppState: ObservableObject {
         open(chatID: id, chatName: name)
     }
 
+    /// Teams browser: a channel opens as a conversation through the same
+    /// path as chats (channel ids are conversation ids, ost TUI parity).
+    func openChannel(channelID id: String, channelName: String) {
+        open(chatID: id, chatName: channelName)
+    }
+
     private func open(chatID id: String, chatName: String?) {
         openChatID = id
         persistedSelection = id
@@ -305,6 +316,7 @@ final class AppState: ObservableObject {
             signedIn = true
             if contentOpened {
                 chats.refresh()
+                teams.refresh()
                 if !isDemo { feed.start() }
             } else {
                 Task { await openContentIfAllowed() }
@@ -329,8 +341,13 @@ struct RootView: View {
         VStack(spacing: 0) {
             if state.isDemo || state.auth.state.allowsContent {
                 NavigationSplitView {
-                    ChatListSidebar(model: state.chats)
-                        .navigationSplitViewColumnWidth(min: 240, ideal: 300, max: 420)
+                    SidebarColumn(
+                        chats: state.chats, teams: state.teams,
+                        openChatID: state.openChatID,
+                        initialSection: CommandLine.arguments.contains("--show-teams") ? .teams : .chats,
+                        onOpenChannel: { id, name in state.openChannel(channelID: id, channelName: name) }
+                    )
+                    .navigationSplitViewColumnWidth(min: 240, ideal: 300, max: 420)
                 } detail: {
                     if state.openChatID == nil {
                         emptyDetail
