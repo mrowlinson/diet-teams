@@ -115,6 +115,79 @@ pub fn tone_check_json() -> String {
     .to_string()
 }
 
+/// Audio device display names for UI pickers (+ system defaults).
+pub fn audio_devices_json() -> String {
+    json!({
+        "ok": true,
+        "inputs": ost::calling::audio::input_device_names(),
+        "outputs": ost::calling::audio::output_device_names(),
+        "default_input": ost::calling::audio::default_input_name(),
+        "default_output": ost::calling::audio::default_output_name(),
+    })
+    .to_string()
+}
+
+/// Named-device mic test (None/empty = default). Errors `no_input` when
+/// the device is missing, `unknown_device` for a stale pick.
+pub fn mic_test_on_json(seconds: u64, input: Option<&str>, output: Option<&str>) -> String {
+    match ost::calling::audio::mic_test_report_on(seconds, false, input, output) {
+        Ok(r) => json!({
+            "ok": true,
+            "frames": r.frames,
+            "seconds": r.seconds,
+            "peak_db": r.peak_db,
+            "played_back": r.played_back,
+        })
+        .to_string(),
+        Err(e) => {
+            let msg = e.to_string();
+            let code = if msg.starts_with("Unknown audio") {
+                "unknown_device"
+            } else {
+                "no_input"
+            };
+            err_json(code, msg)
+        }
+    }
+}
+
+/// Named-device tone play (None/empty = default output).
+pub fn tone_play_on_json(msecs: u64, output: Option<&str>) -> String {
+    match ost::calling::audio::play_tone_on(msecs, output) {
+        Ok(frames) => json!({"ok": true, "frames": frames}).to_string(),
+        Err(e) => {
+            let msg = e.to_string();
+            let code = if msg.starts_with("Unknown audio") {
+                "unknown_device"
+            } else {
+                "no_output"
+            };
+            err_json(code, msg)
+        }
+    }
+}
+
+/// Short mic level sample for a live meter. Never errors: no device (or
+/// stale pick) yields `has_input: false` at the silence floor.
+pub fn mic_level_json(msecs: u64, input: Option<&str>) -> String {
+    match ost::calling::audio::mic_level_sample(msecs, input) {
+        Some(peak) => json!({"ok": true, "peak_db": peak, "has_input": true}).to_string(),
+        None => json!({"ok": true, "peak_db": -60.0, "has_input": false}).to_string(),
+    }
+}
+
+/// Optional C string arg: null/empty = default device.
+fn opt_name(p: *const c_char) -> Option<String> {
+    if p.is_null() {
+        return None;
+    }
+    unsafe { CStr::from_ptr(p) }
+        .to_str()
+        .ok()
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
 pub fn camera_begin_json(width: u32, height: u32, fps: u32) -> String {
     if width == 0 || height == 0 || fps == 0 {
         return err_json("arg", "width/height/fps must be nonzero");
@@ -250,6 +323,37 @@ pub extern "C" fn ostmac_tone_play(msecs: c_int) -> *mut c_char {
 #[no_mangle]
 pub extern "C" fn ostmac_tone_check() -> *mut c_char {
     string_to_c(tone_check_json())
+}
+
+#[no_mangle]
+pub extern "C" fn ostmac_audio_devices() -> *mut c_char {
+    string_to_c(audio_devices_json())
+}
+
+#[no_mangle]
+pub extern "C" fn ostmac_mic_test_on(
+    seconds: c_int,
+    input: *const c_char,
+    output: *const c_char,
+) -> *mut c_char {
+    let s = if seconds <= 0 { 3 } else { seconds as u64 };
+    let i = opt_name(input);
+    let o = opt_name(output);
+    string_to_c(mic_test_on_json(s, i.as_deref(), o.as_deref()))
+}
+
+#[no_mangle]
+pub extern "C" fn ostmac_tone_play_on(msecs: c_int, output: *const c_char) -> *mut c_char {
+    let ms = if msecs <= 0 { 1000 } else { msecs as u64 };
+    let o = opt_name(output);
+    string_to_c(tone_play_on_json(ms, o.as_deref()))
+}
+
+#[no_mangle]
+pub extern "C" fn ostmac_mic_level(msecs: c_int, input: *const c_char) -> *mut c_char {
+    let ms = if msecs <= 0 { 150 } else { msecs as u64 };
+    let i = opt_name(input);
+    string_to_c(mic_level_json(ms, i.as_deref()))
 }
 
 #[no_mangle]
@@ -449,6 +553,50 @@ mod tests {
             let v: serde_json::Value = serde_json::from_str(&s).unwrap();
             assert_eq!(v["ok"], false);
             assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
+    fn av_audio_devices_shape() {
+        // No hardware asserted — lists may be empty on headless.
+        let v: serde_json::Value = serde_json::from_str(&audio_devices_json()).unwrap();
+        assert_eq!(v["ok"], true);
+        assert!(v["inputs"].is_array());
+        assert!(v["outputs"].is_array());
+    }
+
+    #[test]
+    fn av_mic_level_unknown_device_has_no_input() {
+        // Deterministic with or without hardware: a bogus name never matches.
+        let v: serde_json::Value =
+            serde_json::from_str(&mic_level_json(50, Some("ostmac-no-such-device"))).unwrap();
+        assert_eq!(v["ok"], true);
+        assert_eq!(v["has_input"], false);
+        assert_eq!(v["peak_db"], -60.0);
+    }
+
+    #[test]
+    fn av_named_test_unknown_device_errors() {
+        let v: serde_json::Value =
+            serde_json::from_str(&mic_test_on_json(1, Some("ostmac-no-such-device"), None))
+                .unwrap();
+        assert_eq!(v["ok"], false);
+        assert_eq!(v["error"], "unknown_device");
+        let v: serde_json::Value =
+            serde_json::from_str(&tone_play_on_json(100, Some("ostmac-no-such-device"))).unwrap();
+        assert_eq!(v["ok"], false);
+        assert_eq!(v["error"], "unknown_device");
+    }
+
+    #[test]
+    fn av_ffi_mic_level_null_is_ok() {
+        unsafe {
+            let p = ostmac_mic_level(50, std::ptr::null());
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            crate::ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], true);
         }
     }
 
