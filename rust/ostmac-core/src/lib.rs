@@ -1,7 +1,8 @@
 //! ostmac-core: minimal embeddable surface over vendored `ost`.
 //!
-//! Exposes five capabilities to Swift (via C ABI, JSON over the FFI):
+//! Exposes six capabilities to Swift (via C ABI, JSON over the FFI):
 //! - auth: RFC 8628 device-code `start` (get URL+code) and single-shot `poll`
+//! - whoami: current user (Graph /me), process-cached until sign-out
 //! - chats: structured chat list (requires sign-in)
 //! - messages: full history for one chat (requires sign-in)
 //! - send: post one message to a chat (requires sign-in)
@@ -292,6 +293,7 @@ pub fn device_poll_json(session: &str) -> String {
                 return err_json("token_save", e);
             }
             lock_sessions().remove(session);
+            whoami_cache_clear(); // new sign-in may be a different user
             let tokens = Config::load()
                 .map(|c| token_summary(&c))
                 .unwrap_or(json!({}));
@@ -338,6 +340,7 @@ pub fn refresh_json() -> String {
 /// too. Returns `{ok:true}` or `{ok:false}` when the config can't load/save.
 pub fn sign_out_json() -> String {
     lock_sessions().clear();
+    whoami_cache_clear();
     let run = || -> Result<(), String> {
         let mut cfg = Config::load().map_err(|e| e.to_string())?;
         cfg.clear_tokens();
@@ -346,6 +349,68 @@ pub fn sign_out_json() -> String {
     match run() {
         Ok(()) => json!({"ok": true}).to_string(),
         Err(e) => err_json("sign_out", e),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Whoami (om-identity-own lane)
+// ---------------------------------------------------------------------------
+
+/// Process-lifetime cache of the last successful whoami envelope.
+/// Who Am I can't change without a sign-out/sign-in cycle, and both
+/// [`sign_out_json`] and [`device_poll_json`] (on complete) clear it.
+fn whoami_cache() -> &'static Mutex<Option<String>> {
+    static W: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+    W.get_or_init(|| Mutex::new(None))
+}
+
+fn whoami_cache_clear() {
+    *whoami_cache().lock().unwrap_or_else(|e| e.into_inner()) = None;
+}
+
+#[cfg(test)]
+fn whoami_cache_store(s: String) {
+    *whoami_cache().lock().unwrap_or_else(|e| e.into_inner()) = Some(s);
+}
+
+fn whoami_envelope(id: &str, display_name: &str, mail: Option<&str>) -> String {
+    json!({
+        "ok": true,
+        "id": id,
+        "display_name": display_name,
+        "mail": mail,
+    })
+    .to_string()
+}
+
+/// Current user via Graph /me. Requires sign-in; unsigned yields
+/// `{ok:false}`. First call hits network, later calls serve the cache.
+pub fn whoami_json() -> String {
+    if let Some(hit) = whoami_cache()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+    {
+        return hit;
+    }
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let info = ost::api::whoami_data(&client)
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            Ok(whoami_envelope(&info.id, &info.display_name, info.mail.as_deref()))
+        })
+    };
+    match run() {
+        Ok(s) => {
+            *whoami_cache().lock().unwrap_or_else(|e| e.into_inner()) = Some(s.clone());
+            s
+        }
+        Err(e) => err_json("whoami", e),
     }
 }
 
@@ -650,6 +715,13 @@ pub extern "C" fn ostmac_device_poll(session: *const c_char) -> *mut c_char {
     }
 }
 
+/// Current-user JSON (Graph /me, cached). See [`whoami_json`].
+/// Caller frees with [`ostmac_free`].
+#[no_mangle]
+pub extern "C" fn ostmac_whoami() -> *mut c_char {
+    string_to_c(whoami_json())
+}
+
 /// Chat list JSON. See [`chats_json`].
 #[no_mangle]
 pub extern "C" fn ostmac_chats(limit: c_int) -> *mut c_char {
@@ -874,6 +946,40 @@ mod tests {
             assert_eq!(v["ok"], false);
             assert_eq!(v["error"], "arg");
         }
+    }
+
+    #[test]
+    fn whoami_envelope_shape() {
+        let v: serde_json::Value =
+            serde_json::from_str(&whoami_envelope("gid-1", "Doe, Jane", Some("j@x.example"))).unwrap();
+        assert_eq!(v["ok"], true);
+        assert_eq!(v["id"], "gid-1");
+        assert_eq!(v["display_name"], "Doe, Jane");
+        assert_eq!(v["mail"], "j@x.example");
+        let v2: serde_json::Value =
+            serde_json::from_str(&whoami_envelope("gid-2", "No Mail", None)).unwrap();
+        assert!(v2["mail"].is_null());
+    }
+
+    #[test]
+    fn whoami_cache_hit_serves_without_network() {
+        whoami_cache_clear();
+        let fake = whoami_envelope("gid-9", "Cached User", None);
+        whoami_cache_store(fake.clone());
+        // Served from cache: no TeamsClient, no network.
+        assert_eq!(whoami_json(), fake);
+        unsafe {
+            let p = ostmac_whoami();
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            assert_eq!(s, fake);
+        }
+        whoami_cache_clear();
+        assert!(whoami_cache()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_none());
     }
 
     #[test]
