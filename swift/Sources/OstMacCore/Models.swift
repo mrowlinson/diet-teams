@@ -271,11 +271,25 @@ public struct MessagesResponse: Decodable, Sendable {
     /// Opaque cursor for the next older page; nil when history is exhausted.
     /// Absent (nil) on old core builds — treat as end of history.
     public let page_token: String?
+
+    /// Host-side construction (demo data, MCP mocks). Wire decoding is untouched.
+    public init(ok: Bool, chat_id: String?, messages: [ChatMessage], page_token: String? = nil) {
+        self.ok = ok
+        self.chat_id = chat_id
+        self.messages = messages
+        self.page_token = page_token
+    }
 }
 
 public struct SendResponse: Decodable, Sendable {
     public let ok: Bool
     public let chat_id: String?
+
+    /// Host-side construction (MCP mocks). Wire decoding is untouched.
+    public init(ok: Bool, chat_id: String?) {
+        self.ok = ok
+        self.chat_id = chat_id
+    }
 }
 
 // MARK: - Presence (om-presence lane)

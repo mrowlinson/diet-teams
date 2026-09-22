@@ -22,19 +22,31 @@ let package = Package(
     platforms: [.macOS(.v14)],
     products: [
         .executable(name: "OstMac", targets: ["OstMac"]),
+        .executable(name: "ostmac-mcp", targets: ["ostmac-mcp"]),
     ],
     targets: [
         .target(name: "COstMac", publicHeadersPath: "include"),
         .target(name: "OstMacCore", dependencies: ["COstMac"]),
         .target(name: "OstMacChatList", dependencies: ["OstMacCore"]),
+        .target(name: "OstMacMCP", dependencies: ["OstMacCore"]),
         .executableTarget(
             name: "OstMac",
             dependencies: ["OstMacCore", "OstMacChatList", "COstMac"],
             linkerSettings: rustLink
         ),
+        .executableTarget(
+            name: "ostmac-mcp",
+            dependencies: ["OstMacMCP", "OstMacCore", "COstMac"],
+            linkerSettings: rustLink
+        ),
         .testTarget(
             name: "OstMacCoreTests",
             dependencies: ["OstMacCore", "OstMacChatList", "COstMac"],
+            linkerSettings: rustLink
+        ),
+        .testTarget(
+            name: "OstMacMCPTests",
+            dependencies: ["OstMacMCP", "OstMacCore", "COstMac"],
             linkerSettings: rustLink
         ),
     ]
