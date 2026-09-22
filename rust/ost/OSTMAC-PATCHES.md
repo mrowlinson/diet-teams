@@ -24,3 +24,10 @@ vendored so the spike can build on macOS and expose a library surface.
    `RichText/Media_*` stripped to "TitlePlay" fragments (CallRecording) or
    raw JSON (CallTranscript); now skipped. Empty display names fall back to
    `"?"` like missing ones. TUI list benefits identically.
+7. `src/api/chat.rs` — **history paging + raw HTML (om-convrich lane)**.
+   New `read_messages_page` follows `_metadata.backwardLink` for older pages
+   (live-verified: no overlap, chainable; `startTime=` alone is ignored by
+   the server); `pageSize` rewritten per call. `MessagesPage`/`read_messages_page`
+   re-exported in `src/api/mod.rs`. `MessageInfo` gains `raw` (unstripped
+   HTML for mention/code mining). `read_messages_data` keeps its signature
+   (delegates, newest page). TUI untouched.

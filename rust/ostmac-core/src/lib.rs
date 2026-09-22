@@ -351,11 +351,25 @@ fn message_to_json(m: &ost::api::MessageInfo) -> serde_json::Value {
         "sender": m.sender,
         "timestamp": m.timestamp,
         "content": m.content,
+        "raw": m.raw,
     })
+}
+
+fn page_to_json(chat_id: &str, page: &ost::api::MessagesPage) -> String {
+    let items: Vec<_> = page.messages.iter().map(message_to_json).collect();
+    json!({
+        "ok": true,
+        "chat_id": chat_id,
+        "messages": items,
+        "page_token": page.backward_link,
+    })
+    .to_string()
 }
 
 /// Full message history for one chat as JSON. Requires sign-in; unsigned
 /// yields `{ok:false}`. Empty `chat_id` is rejected before any network.
+/// `page_token` (opaque server cursor, null when exhausted) feeds
+/// [`messages_page_json`] for older history.
 pub fn messages_json(chat_id: &str, limit: usize) -> String {
     if chat_id.trim().is_empty() {
         return err_json("arg", "empty chat_id");
@@ -366,16 +380,46 @@ pub fn messages_json(chat_id: &str, limit: usize) -> String {
             let client = ost::api::client::TeamsClient::new()
                 .await
                 .map_err(|e| format!("{:#}", e))?;
-            let msgs = ost::api::read_messages_data(&client, chat_id, limit)
+            let page = ost::api::read_messages_page(&client, chat_id, limit, None)
                 .await
                 .map_err(|e| format!("{:#}", e))?;
-            let items: Vec<_> = msgs.iter().map(message_to_json).collect();
-            Ok(json!({"ok": true, "chat_id": chat_id, "messages": items}).to_string())
+            Ok(page_to_json(chat_id, &page))
         })
     };
     match run() {
         Ok(s) => s,
         Err(e) => err_json("messages", e),
+    }
+}
+
+/// One older page of history. `page_token` is the previous response's
+/// opaque cursor; only `https://…/conversations/…` tokens are followed.
+/// Empty args are rejected before any network.
+pub fn messages_page_json(chat_id: &str, page_token: &str, limit: usize) -> String {
+    if chat_id.trim().is_empty() {
+        return err_json("arg", "empty chat_id");
+    }
+    if page_token.trim().is_empty() {
+        return err_json("arg", "empty page_token");
+    }
+    if !page_token.starts_with("https://") || !page_token.contains("/conversations/") {
+        return err_json("arg", "page_token not a conversations URL");
+    }
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let page = ost::api::read_messages_page(&client, chat_id, limit, Some(page_token))
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            Ok(page_to_json(chat_id, &page))
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("messages_page", e),
     }
 }
 
@@ -579,6 +623,24 @@ pub extern "C" fn ostmac_messages(chat_id: *const c_char, limit: c_int) -> *mut 
     }
 }
 
+/// Older history page for one chat. See [`messages_page_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_messages_page(
+    chat_id: *const c_char,
+    page_token: *const c_char,
+    limit: c_int,
+) -> *mut c_char {
+    let lim = if limit <= 0 { 50 } else { limit as usize };
+    let id = match cstr_to_string(chat_id) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    match cstr_to_string(page_token) {
+        Ok(t) => string_to_c(messages_page_json(&id, &t, lim)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
 /// Post one message to a chat. See [`send_json`].
 #[no_mangle]
 pub extern "C" fn ostmac_send(chat_id: *const c_char, text: *const c_char) -> *mut c_char {
@@ -670,12 +732,14 @@ mod tests {
             sender: "A Sender".to_string(),
             timestamp: "2026-09-22T12:00:00Z".to_string(),
             content: "hi".to_string(),
+            raw: "<p>hi</p>".to_string(),
         };
         let v = message_to_json(&m);
         assert_eq!(v["id"], "m1");
         assert_eq!(v["sender"], "A Sender");
         assert_eq!(v["timestamp"], "2026-09-22T12:00:00Z");
         assert_eq!(v["content"], "hi");
+        assert_eq!(v["raw"], "<p>hi</p>");
     }
 
     #[test]
@@ -694,6 +758,36 @@ mod tests {
             let v: serde_json::Value =
                 serde_json::from_str(&send_json(id, text)).unwrap();
             assert_eq!(v["ok"], false, "id={:?} text={:?}", id, text);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
+    fn messages_page_rejects_bad_args_without_network() {
+        for (id, tok) in [
+            ("", "https://h/conversations/x"),
+            ("19:x", ""),
+            ("19:x", "   "),
+            ("19:x", "http://h/conversations/x"), // not https
+            ("19:x", "https://evil.example/q"),   // not a conversations URL
+        ] {
+            let v: serde_json::Value =
+                serde_json::from_str(&messages_page_json(id, tok, 10)).unwrap();
+            assert_eq!(v["ok"], false, "id={:?} tok={:?}", id, tok);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
+    fn ffi_messages_page_null_is_arg_error() {
+        let id = CString::new("19:x").unwrap();
+        unsafe {
+            let p = ostmac_messages_page(id.as_ptr(), std::ptr::null(), 10);
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
             assert_eq!(v["error"], "arg");
         }
     }

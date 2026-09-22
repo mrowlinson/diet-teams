@@ -88,20 +88,28 @@ public struct ChatMessage: Decodable, Sendable, Identifiable, Equatable {
     public let timestamp: String
     public var content: String
     public var isOwn: Bool
+    /// Unstripped server HTML (om-convrich): mention/code mining source.
+    /// Absent on old payloads, realtime ingests, and local echoes.
+    public var raw: String?
+    /// Host-side: set when a realtime edit rewrites `content`.
+    public var edited: Bool
 
     enum CodingKeys: String, CodingKey {
-        case id, sender, timestamp, content
+        case id, sender, timestamp, content, raw
     }
 
     public init(
         id: String, sender: String, timestamp: String,
-        content: String, isOwn: Bool = false
+        content: String, isOwn: Bool = false,
+        raw: String? = nil, edited: Bool = false
     ) {
         self.id = id
         self.sender = sender
         self.timestamp = timestamp
         self.content = content
         self.isOwn = isOwn
+        self.raw = raw
+        self.edited = edited
     }
 
     public init(from decoder: Decoder) throws {
@@ -110,7 +118,9 @@ public struct ChatMessage: Decodable, Sendable, Identifiable, Equatable {
         sender = try c.decode(String.self, forKey: .sender)
         timestamp = try c.decode(String.self, forKey: .timestamp)
         content = try c.decode(String.self, forKey: .content)
+        raw = try c.decodeIfPresent(String.self, forKey: .raw)
         isOwn = false
+        edited = false
     }
 
     /// "2026-09-22T12:53:06.9690000Z" -> "12:53" (today) or "12:53 22 Sep".
@@ -157,6 +167,9 @@ public struct MessagesResponse: Decodable, Sendable {
     public let ok: Bool
     public let chat_id: String?
     public let messages: [ChatMessage]
+    /// Opaque cursor for the next older page; nil when history is exhausted.
+    /// Absent (nil) on old core builds — treat as end of history.
+    public let page_token: String?
 }
 
 public struct SendResponse: Decodable, Sendable {

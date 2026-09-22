@@ -2,6 +2,8 @@
 // Usage:
 //   OstMacConv --demo [--say <text>]     canned messages, no sign-in
 //                                        (--say auto-sends once, demo only)
+//   OstMacConv --demo-rich [--say <text>] rich canned states (om-convrich):
+//                                        mentions, code, edited, failed, 2 days
 //   OstMacConv --chat <id> [--name <n>]  real history via core
 import OstMacCore
 import SwiftUI
@@ -15,7 +17,16 @@ struct ConvApp: App {
 
     init() {
         let args = CommandLine.arguments
-        if args.contains("--demo") {
+        if args.contains("--demo-rich") {
+            _store = StateObject(wrappedValue: .demoRich())
+            initialChatID = nil
+            initialChatName = nil
+            if let i = args.firstIndex(of: "--say"), i + 1 < args.count {
+                demoSay = args[i + 1]
+            } else {
+                demoSay = nil
+            }
+        } else if args.contains("--demo") {
             _store = StateObject(wrappedValue: .demo())
             initialChatID = nil
             initialChatName = nil

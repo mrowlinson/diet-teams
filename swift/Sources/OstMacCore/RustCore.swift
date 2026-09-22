@@ -33,6 +33,14 @@ public enum RustCore {
         }
     }
 
+    public static func messagesPage(chatID: String, pageToken: String, limit: Int32 = 50) throws -> MessagesResponse {
+        try chatID.withCString { idPtr in
+            try pageToken.withCString { tokPtr in
+                try call(ostmac_messages_page(idPtr, tokPtr, limit), as: MessagesResponse.self)
+            }
+        }
+    }
+
     public static func send(chatID: String, text: String) throws -> SendResponse {
         try chatID.withCString { idPtr in
             try text.withCString { textPtr in
