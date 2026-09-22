@@ -63,11 +63,32 @@ public struct ChatItem: Decodable, Sendable, Identifiable {
         case name, is_group, last_message_time
         case last_message_sender, last_message_preview
     }
+
+    /// Host-side construction (demo data, previews). Wire decoding is untouched.
+    public init(
+        chatId: String, name: String, is_group: Bool = false,
+        last_message_time: String? = nil,
+        last_message_sender: String? = nil,
+        last_message_preview: String? = nil
+    ) {
+        self.chatId = chatId
+        self.name = name
+        self.is_group = is_group
+        self.last_message_time = last_message_time
+        self.last_message_sender = last_message_sender
+        self.last_message_preview = last_message_preview
+    }
 }
 
 public struct ChatsResponse: Decodable, Sendable {
     public let ok: Bool
     public let chats: [ChatItem]
+
+    /// Host-side construction (demo data, previews). Wire decoding is untouched.
+    public init(ok: Bool, chats: [ChatItem]) {
+        self.ok = ok
+        self.chats = chats
+    }
 }
 
 public struct TrouterPoll: Decodable, Sendable {

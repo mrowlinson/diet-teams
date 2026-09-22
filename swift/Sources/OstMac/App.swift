@@ -1,25 +1,31 @@
 // OstMac — integrated app: sidebar chat list + conversation detail +
-// live realtime feed in one window.
+// live realtime feed in one window; real identity (About window,
+// Settings shell, app menu) from the package lane.
 //
 // Usage:
-//   OstMac [--demo] [--chat <id> [--name <n>]] [--say <text>]
+//   OstMac [--demo] [--chat <id> [--name <n>]] [--say <text>] [--show-about]
 // --demo runs fully offline (canned chats/messages, local send echo).
 // --chat preselects (or opens directly when absent from the list).
 // --say auto-sends once into the open chat. In live mode that is a REAL
 // send via core — never use it on shared chats for testing.
+// --show-about opens the About window at launch (shot hook).
 //
 // Realtime routing: the Trouter socket is global (one feed for all
 // chats), so switching chats does NOT restart the socket — the app
 // filters events to the open chat (`isFor(chatID:)`). A resync gap
 // re-fetches the open chat plus the list.
+//
+// Entry is OstMacAppMain (not OstMacApp): the OstMacApp module is
+// imported, and a type sharing its module's name breaks qualified refs.
 import Combine
 import Foundation
+import OstMacApp
 import OstMacChatList
 import OstMacCore
 import SwiftUI
 
 @main
-struct OstMacApp: App {
+struct OstMacAppMain: App {
     @StateObject private var state: AppState
 
     init() {
@@ -32,6 +38,27 @@ struct OstMacApp: App {
                 .environmentObject(state)
         }
         .defaultSize(width: 1000, height: 640)
+        Window("About OstMac", id: AppIdentity.aboutWindowID) {
+            AboutView()
+        }
+        .defaultSize(width: 360, height: 340)
+        .windowResizability(.contentSize)
+        Settings {
+            SettingsView()
+        }
+        .commands { OstMacCommands() }
+    }
+}
+
+/// App menu: About opens our About window (standard panel replaced);
+/// Settings… (from the Settings scene) and Quit stay automatic.
+private struct OstMacCommands: Commands {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some Commands {
+        CommandGroup(replacing: .appInfo) {
+            Button("About OstMac") { openWindow(id: AppIdentity.aboutWindowID) }
+        }
     }
 }
 
@@ -197,6 +224,7 @@ final class AppState: ObservableObject {
 
 struct RootView: View {
     @EnvironmentObject private var state: AppState
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         VStack(spacing: 0) {
@@ -214,6 +242,12 @@ struct RootView: View {
             StatusBar()
         }
         .frame(minWidth: 760, minHeight: 520)
+        .onAppear {
+            // Shot hook: open the About window from launch args.
+            if CommandLine.arguments.contains("--show-about") {
+                openWindow(id: AppIdentity.aboutWindowID)
+            }
+        }
         .task { await state.startup() }
         .onDisappear { state.shutdown() }
         .sheet(isPresented: $state.showSignIn) {
