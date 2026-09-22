@@ -1,6 +1,7 @@
-// ConversationView.swift — om-conv/om-convrich/om-shared/om-notes: SwiftUI chat window.
+// ConversationView.swift — om-conv/om-convrich/om-shared/om-notes/om-cmdk/om-catchup: SwiftUI chat window.
 // Rich bubbles (mentions, code spans, links), day separators, scroll-up
-// load-more paging, edited markers, failed-send retry, Shared files + Notes tabs.
+// load-more paging, edited markers, failed-send retry, Shared files + Notes tabs,
+// GIF picker + thread catch-up.
 import SwiftUI
 
 public struct ConversationView: View {
@@ -9,26 +10,34 @@ public struct ConversationView: View {
     @ObservedObject public var call: CallStore
     @ObservedObject public var shared: SharedFilesStore
     @ObservedObject public var notes: NotesStore
+    @ObservedObject public var catchUp: CatchUpStore
     /// False for 1:1 chats (header shows the chatmate dot).
     private let isGroup: Bool
     @State private var draft = ""
     @State private var lastSeenID: String?
     @State private var tab: Int
+    @State private var showGIFs = false
+    @AppStorage("tenorAPIKey") private var tenorAPIKey = ""
+    @State private var showCatchUp: Bool
     @FocusState private var boxFocused: Bool
 
+    /// - catchUpOpen: open the catch-up sheet at launch (the
+    ///   --show-catchup shot hook only).
     public init(
         store: ConversationStore, presence: PresenceStore = PresenceStore(),
         call: CallStore = CallStore(), shared: SharedFilesStore = SharedFilesStore(),
-        notes: NotesStore = NotesStore(),
-        isGroup: Bool = true, initialTab: Int = 0
+        notes: NotesStore = NotesStore(), catchUp: CatchUpStore = CatchUpStore(),
+        isGroup: Bool = true, initialTab: Int = 0, catchUpOpen: Bool = false
     ) {
         self.store = store
         self.presence = presence
         self.call = call
         self.shared = shared
         self.notes = notes
+        self.catchUp = catchUp
         self.isGroup = isGroup
         _tab = State(initialValue: initialTab)
+        _showCatchUp = State(initialValue: catchUpOpen)
     }
 
     public var body: some View {
@@ -90,6 +99,11 @@ public struct ConversationView: View {
         }
         .frame(minWidth: 380, minHeight: 480)
         .onChange(of: store.chatID) { syncShared() }
+        .sheet(isPresented: $showCatchUp) {
+            CatchUpView(
+                catchUp: catchUp, messages: store.messages,
+                autoRun: CommandLine.arguments.contains("--show-catchup"))
+        }
     }
 
     /// Lazily load the Shared tab when selected (no unsigned core calls
@@ -149,6 +163,14 @@ public struct ConversationView: View {
                     .disabled(call.busy || (call.call?.isActive ?? false))
                     .help("Call this chat")
                 }
+                if CatchUp.shouldOffer(messageCount: store.messages.count) {
+                    Button("Catch up", systemImage: "sparkles") {
+                        catchUp.reset()
+                        showCatchUp = true
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Summarize this thread: TL;DR, key points, action items")
+                }
                 if store.loading { ProgressView().controlSize(.small) }
                 Text("\(store.messages.count)")
                     .font(.caption).monospaced()
@@ -168,6 +190,25 @@ public struct ConversationView: View {
 
     private var sendBox: some View {
         HStack {
+            Button {
+                showGIFs = true
+            } label: {
+                Text("GIF")
+                    .font(.caption).bold()
+                    .padding(.horizontal, 6).padding(.vertical, 3)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color.secondary, lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .help("Insert a GIF (Tenor)")
+            .popover(isPresented: $showGIFs, arrowEdge: .top) {
+                TenorPickerView(apiKey: tenorAPIKey) { url in
+                    insertGIF(url)
+                    showGIFs = false
+                }
+            }
             TextField("Message", text: $draft)
                 .textFieldStyle(.roundedBorder)
                 .focused($boxFocused)
@@ -177,7 +218,11 @@ public struct ConversationView: View {
                 .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
         .padding()
-        .onAppear { boxFocused = true }
+        .onAppear {
+            boxFocused = true
+            // Shot hook: --show-gif opens the picker at launch.
+            if CommandLine.arguments.contains("--show-gif") { showGIFs = true }
+        }
     }
 
     private func submit() {
@@ -185,6 +230,17 @@ public struct ConversationView: View {
         guard !body.isEmpty else { return }
         draft = ""
         store.send(text: body)
+    }
+
+    /// Append a picked GIF URL to the draft (space-separated); the user
+    /// still hits Send. Pure join so tests can pin the format.
+    private func insertGIF(_ url: String) {
+        draft = Self.appendGIF(url, to: draft)
+        boxFocused = true
+    }
+
+    static func appendGIF(_ url: String, to draft: String) -> String {
+        draft.isEmpty ? url : "\(draft) \(url)"
     }
 
     /// Auto-scroll only when the tail actually advanced (new message), never

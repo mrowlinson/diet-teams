@@ -25,6 +25,17 @@ public struct AuthView: View {
                 codeView(info: info, attempts: nil)
             case let .polling(info, attempts):
                 codeView(info: info, attempts: attempts)
+            case let .browser(info):
+                if model.isDemo {
+                    BrowserSignInDemoView(info: info) { model.cancelBrowser() }
+                } else {
+                    BrowserSignInView(
+                        info: info,
+                        onRedirect: { url in Task { await model.completeBrowserSignIn(callbackURL: url) } },
+                        onCancel: { model.cancelBrowser() })
+                }
+            case .browserWorking:
+                ProgressView("Completing browser sign-in…")
             case .signedIn:
                 signedIn
             case .signingOut:
@@ -59,6 +70,11 @@ public struct AuthView: View {
             Button("Sign in") { Task { await model.signIn() } }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
+            Button("Device code not working? Use browser sign-in") {
+                Task { await model.startBrowserSignIn() }
+            }
+            .buttonStyle(.link)
+            .font(.callout)
         }
     }
 
@@ -144,6 +160,11 @@ public struct AuthView: View {
                 Button("Sign in again") { Task { await model.signIn() } }
                     .buttonStyle(.bordered)
             }
+            Button("Use browser sign-in instead") {
+                Task { await model.startBrowserSignIn() }
+            }
+            .buttonStyle(.link)
+            .font(.callout)
         }
     }
 
@@ -165,6 +186,11 @@ public struct AuthView: View {
                 Button("Back") { model.cancel() }
                     .buttonStyle(.bordered)
             }
+            Button("Try browser sign-in instead") {
+                Task { await model.startBrowserSignIn() }
+            }
+            .buttonStyle(.link)
+            .font(.callout)
         }
     }
 }

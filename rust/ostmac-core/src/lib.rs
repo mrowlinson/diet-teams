@@ -29,6 +29,7 @@ use ost::config::Config;
 use serde_json::json;
 
 pub mod av;
+pub mod browser_auth;
 pub mod calls;
 pub mod live;
 pub mod realtime;
@@ -74,7 +75,7 @@ pub(crate) fn rt() -> Result<tokio::runtime::Runtime, String> {
     tokio::runtime::Runtime::new().map_err(|e| format!("runtime: {}", e))
 }
 
-fn token_summary(cfg: &Config) -> serde_json::Value {
+pub(crate) fn token_summary(cfg: &Config) -> serde_json::Value {
     let slot = |t: Option<ost::auth::StoredToken>| match t {
         Some(tok) if !tok.is_expired() => json!({"present": true, "expired": false}),
         Some(_) => json!({"present": true, "expired": true}),
@@ -358,6 +359,7 @@ pub fn refresh_json() -> String {
 /// too. Returns `{ok:true}` or `{ok:false}` when the config can't load/save.
 pub fn sign_out_json() -> String {
     lock_sessions().clear();
+    browser_auth::clear_browser_sessions();
     whoami_cache_clear();
     let run = || -> Result<(), String> {
         let mut cfg = Config::load().map_err(|e| e.to_string())?;
@@ -384,6 +386,11 @@ fn whoami_cache() -> &'static Mutex<Option<String>> {
 
 fn whoami_cache_clear() {
     *whoami_cache().lock().unwrap_or_else(|e| e.into_inner()) = None;
+}
+
+/// Crate-visible clear for the browser-auth module (same new-user rule).
+pub(crate) fn whoami_cache_clear_pub() {
+    whoami_cache_clear();
 }
 
 #[cfg(test)]
@@ -1464,6 +1471,39 @@ pub extern "C" fn ostmac_device_start() -> *mut c_char {
 pub extern "C" fn ostmac_device_poll(session: *const c_char) -> *mut c_char {
     match cstr_to_string(session) {
         Ok(s) => string_to_c(device_poll_json(&s)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
+/// Browser-capture start JSON (`session`, `authorize_url`, `redirect_uri`).
+/// See [`browser_auth::authcode_start_json`]. No network. Caller frees.
+#[no_mangle]
+pub extern "C" fn ostmac_authcode_start() -> *mut c_char {
+    string_to_c(browser_auth::authcode_start_json())
+}
+
+/// Browser-capture complete: `session` + intercepted callback URL.
+/// See [`browser_auth::authcode_complete_json`]. Caller frees.
+#[no_mangle]
+pub extern "C" fn ostmac_authcode_complete(
+    session: *const c_char,
+    callback: *const c_char,
+) -> *mut c_char {
+    let s = match cstr_to_string(session) {
+        Ok(v) => v,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    match cstr_to_string(callback) {
+        Ok(c) => string_to_c(browser_auth::authcode_complete_json(&s, &c)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
+/// Drop one pending browser session. See [`browser_auth::authcode_cancel_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_authcode_cancel(session: *const c_char) -> *mut c_char {
+    match cstr_to_string(session) {
+        Ok(s) => string_to_c(browser_auth::authcode_cancel_json(&s)),
         Err(e) => string_to_c(err_json("arg", e)),
     }
 }
