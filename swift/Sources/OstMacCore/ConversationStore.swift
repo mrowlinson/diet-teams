@@ -20,15 +20,20 @@ public final class ConversationStore: ObservableObject {
     public private(set) var chatID: String?
     public private(set) var chatName: String?
     public private(set) var isDemo = false
+    private var openGeneration = 0
 
     public init() {}
 
     /// Open a chat: fetch full history via core, replace messages.
+    /// Stale completions are dropped, so fast chat-switching always
+    /// lands on the newest selection.
     public func open(chatID: String, chatName: String? = nil, limit: Int32 = 50) {
         self.chatID = chatID
         if let n = chatName { self.chatName = n }
         loading = true
         error = nil
+        openGeneration += 1
+        let gen = openGeneration
         Task {
             let fetched: Result<[ChatMessage], Error>
             do {
@@ -39,6 +44,7 @@ public final class ConversationStore: ObservableObject {
             } catch {
                 fetched = .failure(error)
             }
+            guard gen == openGeneration else { return } // superseded
             loading = false
             didLoad = true
             switch fetched {
@@ -63,6 +69,25 @@ public final class ConversationStore: ObservableObject {
     public func ingestEdited(id: String, content: String) {
         guard let i = messages.firstIndex(where: { $0.id == id }) else { return }
         messages[i].content = content
+    }
+
+    /// Realtime feed: typed event → upsert by id (edits collapse onto
+    /// the edited id, so bubbles update in place; unknown edit ids
+    /// append, so nothing is lost). Callers filter by chat first via
+    /// `RealtimeMessage.isFor(chatID:)`.
+    public func ingest(realtime message: RealtimeMessage) {
+        ingest(message.asChatMessage)
+    }
+
+    /// Demo mode: show canned messages for a chat (offline, no core).
+    public func showDemo(chatID: String, chatName: String, messages: [ChatMessage]) {
+        self.chatID = chatID
+        self.chatName = chatName
+        self.messages = messages
+        isDemo = true
+        loading = false
+        error = nil
+        didLoad = true
     }
 
     /// Post via core; appends an optimistic own-bubble immediately.
@@ -120,7 +145,7 @@ public final class ConversationStore: ObservableObject {
         return s
     }
 
-    public static let demoMessages: [ChatMessage] = [
+    public nonisolated static let demoMessages: [ChatMessage] = [
         ChatMessage(
             id: "demo-1", sender: "Priya Nair",
             timestamp: "2026-09-22T09:02:11Z",
