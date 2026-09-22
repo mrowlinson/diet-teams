@@ -24,14 +24,15 @@ let package = Package(
     targets: [
         .target(name: "COstMac", publicHeadersPath: "include"),
         .target(name: "OstMacCore", dependencies: ["COstMac"]),
+        .target(name: "OstMacChatList", dependencies: ["OstMacCore"]),
         .executableTarget(
             name: "OstMacSpike",
-            dependencies: ["OstMacCore", "COstMac"],
+            dependencies: ["OstMacCore", "OstMacChatList", "COstMac"],
             linkerSettings: rustLink
         ),
         .testTarget(
             name: "OstMacCoreTests",
-            dependencies: ["OstMacCore", "COstMac"],
+            dependencies: ["OstMacCore", "OstMacChatList", "COstMac"],
             linkerSettings: rustLink
         ),
     ]

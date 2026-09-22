@@ -1,0 +1,157 @@
+// ChatListTests.swift — ViewModel states/selection + format helpers (mocked fetch).
+import XCTest
+
+import OstMacChatList
+@testable import OstMacCore
+
+/// Sendable box for asserting the limit crossed the detached-task boundary.
+private final class LimitBox: @unchecked Sendable {
+    var value: Int32 = -1
+}
+
+@MainActor
+final class ChatListTests: XCTestCase {
+    // MARK: - Fixtures
+
+    nonisolated static func chatsJSON(_ chats: String) -> ChatsResponse {
+        let json = #"{"ok":true,"chats":[\#(chats)]}"#
+        return try! decodeOrThrow(ChatsResponse.self, from: Data(json.utf8))
+    }
+
+    nonisolated static func chatJSON(
+        id: String, name: String, group: Bool = false,
+        time: String? = nil, sender: String? = nil, preview: String? = nil
+    ) -> String {
+        func str(_ v: String?) -> String {
+            v.map { #""\#($0)""# } ?? "null"
+        }
+        return #"{"id":"\#(id)","name":"\#(name)","is_group":\#(group ? "true" : "false"),"# +
+            #""last_message_time":\#(str(time)),"# +
+            #""last_message_sender":\#(str(sender)),"# +
+            #""last_message_preview":\#(str(preview))}"#
+    }
+
+    // MARK: - ViewModel states
+
+    func testLoadPopulatesChats() async {
+        let response = Self.chatsJSON([
+            Self.chatJSON(id: "19:a@thread", name: "Grp", group: true),
+            Self.chatJSON(id: "8:b", name: "Solo"),
+        ].joined(separator: ","))
+        let model = ChatListViewModel(fetcher: { _ in response })
+        XCTAssertEqual(model.state, .loading)
+        await model.load()
+        XCTAssertEqual(model.state, .loaded)
+        XCTAssertEqual(model.chats.count, 2)
+        XCTAssertEqual(model.chats[0].name, "Grp")
+    }
+
+    func testLoadEmpty() async {
+        let model = ChatListViewModel(fetcher: { _ in Self.chatsJSON("") })
+        await model.load()
+        XCTAssertEqual(model.state, .empty)
+        XCTAssertTrue(model.chats.isEmpty)
+    }
+
+    func testLoadError() async {
+        let model = ChatListViewModel(fetcher: { _ -> ChatsResponse in
+            throw CoreCallError.failed("boom")
+        })
+        await model.load()
+        XCTAssertEqual(model.state, .error("boom"))
+    }
+
+    func testLoadPassesLimit() async {
+        let seen = LimitBox()
+        let model = ChatListViewModel(fetcher: {
+            seen.value = $0
+            return Self.chatsJSON("")
+        })
+        await model.load(limit: 7)
+        XCTAssertEqual(seen.value, 7)
+    }
+
+    // MARK: - Selection
+
+    func testSelectionKeptWhenPresent() async {
+        let response = Self.chatsJSON(Self.chatJSON(id: "8:b", name: "Solo"))
+        let model = ChatListViewModel(fetcher: { _ in response })
+        model.selectedChatID = "8:b"
+        await model.load()
+        XCTAssertEqual(model.selectedChatID, "8:b")
+        XCTAssertEqual(model.selectedChat?.name, "Solo")
+    }
+
+    func testSelectionClearedWhenMissing() async {
+        let response = Self.chatsJSON(Self.chatJSON(id: "8:b", name: "Solo"))
+        let model = ChatListViewModel(fetcher: { _ in response })
+        model.selectedChatID = "19:gone@thread"
+        await model.load()
+        XCTAssertNil(model.selectedChatID)
+        XCTAssertNil(model.selectedChat)
+    }
+
+    func testSelectedChatNilWhenUnselected() {
+        let model = ChatListViewModel(fetcher: { _ in Self.chatsJSON("") })
+        XCTAssertNil(model.selectedChat)
+    }
+
+    // MARK: - Format: previewTime
+
+    nonisolated static var utc: Calendar {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = TimeZone(identifier: "UTC")!
+        c.locale = Locale(identifier: "en_US_POSIX")
+        return c
+    }
+
+    nonisolated static func date(_ iso: String) -> Date {
+        ISO8601DateFormatter().date(from: iso)!
+    }
+
+    func testPreviewTimeNilAndBlank() {
+        XCTAssertEqual(ChatListFormat.previewTime(nil), "")
+        XCTAssertEqual(ChatListFormat.previewTime("  "), "")
+    }
+
+    func testPreviewTimePassthroughWhenUnparseable() {
+        XCTAssertEqual(ChatListFormat.previewTime("t"), "t")
+        XCTAssertEqual(ChatListFormat.previewTime("  yesterday-ish "), "yesterday-ish")
+    }
+
+    func testPreviewTimeToday() {
+        let now = Self.date("2026-09-22T15:00:00Z")
+        XCTAssertEqual(
+            ChatListFormat.previewTime("2026-09-22T10:05:00Z", now: now, calendar: Self.utc),
+            "10:05")
+        XCTAssertEqual(
+            ChatListFormat.previewTime("2026-09-22T10:05:00.123Z", now: now, calendar: Self.utc),
+            "10:05")
+    }
+
+    func testPreviewTimeThisWeek() {
+        let now = Self.date("2026-09-22T15:00:00Z") // a Tuesday
+        let got = ChatListFormat.previewTime(
+            "2026-09-20T10:05:00Z", now: now, calendar: Self.utc)
+        XCTAssertEqual(got, "Sun")
+    }
+
+    func testPreviewTimeOlder() {
+        let now = Self.date("2026-09-22T15:00:00Z")
+        XCTAssertEqual(
+            ChatListFormat.previewTime("2026-08-01T10:05:00Z", now: now, calendar: Self.utc),
+            "8/1")
+    }
+
+    // MARK: - Format: previewLine
+
+    func testPreviewLine() {
+        XCTAssertEqual(
+            ChatListFormat.previewLine(sender: "Ann", preview: "hi there"),
+            "Ann: hi there")
+        XCTAssertEqual(ChatListFormat.previewLine(sender: nil, preview: "hi"), "hi")
+        XCTAssertEqual(ChatListFormat.previewLine(sender: "Ann", preview: nil), "Ann")
+        XCTAssertEqual(ChatListFormat.previewLine(sender: nil, preview: nil), "")
+        XCTAssertEqual(ChatListFormat.previewLine(sender: " ", preview: "  "), "")
+    }
+}

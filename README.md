@@ -10,7 +10,8 @@ from a minimal SwiftUI shell over a C ABI (JSON over the boundary).
 - `rust/ostmac-core/` — FFI crate (`staticlib` + `rlib`), C ABI in
   `swift/Sources/COstMac/include/ostmac_core.h`
 - `swift/` — SPM package: `COstMac` (headers), `OstMacCore` (Swift wrapper),
-  `OstMacSpike` (SwiftUI shell), `OstMacCoreTests`
+  `OstMacChatList` (chat sidebar + `ChatSelection` contract for the
+  conversation lane), `OstMacSpike` (SwiftUI shell), `OstMacCoreTests`
 - `scripts/` — `build-rust.sh`, `build-app.sh`, `test.sh`
 - `docs/shots/` — viewed screenshots (TUI + SwiftUI shell)
 
