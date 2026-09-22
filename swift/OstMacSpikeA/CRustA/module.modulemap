@@ -1,0 +1,4 @@
+module CRustA {
+    header "../../../rust/ostmac-a/include/ostmac_a.h"
+    export *
+}
