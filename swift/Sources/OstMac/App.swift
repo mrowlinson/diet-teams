@@ -8,6 +8,8 @@
 // Usage:
 //   OstMac [--demo | --demo-rich] [--chat <id> [--name <n>]] [--say <text>]
 //          [--show-about] [--show-settings] [--auth-state <name>]
+//          [--show-call incoming|active]
+// --show-call seeds the call banner offline (demo state, no core calls).
 // --demo runs fully offline (canned chats/messages, local send echo).
 // --demo-rich is --demo preselected on the rich thread (mentions, code,
 // edited + failed bubbles, Yesterday/Today separators).
@@ -120,6 +122,7 @@ final class AppState: ObservableObject {
     let feed = RealtimeFeed()
     let auth = AuthViewModel()
     let presence = PresenceStore()
+    let call: CallStore
     @Published var openChatID: String?
     @Published var signedIn: Bool?
     @Published var coreVersion = "?"
@@ -141,6 +144,11 @@ final class AppState: ObservableObject {
 
     init(args: [String]) {
         isDemo = args.contains("--demo") || args.contains("--demo-rich")
+        call = CallStore(demo: isDemo)
+        // Shot hook: --show-call incoming|active seeds the banner offline.
+        if let i = args.firstIndex(of: "--show-call"), i + 1 < args.count {
+            call.seedDemo(state: args[i + 1])
+        }
         if let i = args.firstIndex(of: "--chat"), i + 1 < args.count {
             preselectID = args[i + 1]
         } else if args.contains("--demo-rich") {
@@ -232,6 +240,9 @@ final class AppState: ObservableObject {
             feed.onResync { [weak self] in
                 Task { @MainActor [weak self] in self?.handleResync() }
             }
+            feed.onCall { [weak self] ev in
+                Task { @MainActor [weak self] in self?.call.ingest(ev) }
+            }
             feed.start()
             refreshFeedStatus()
             stateTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
@@ -309,6 +320,7 @@ final class AppState: ObservableObject {
         feedState = feed.currentState
         feedPolls = feed.pollCount
         feedError = feed.lastError
+        if !isDemo { call.refresh() } // re-read slot (place/accept landed?)
     }
 
     /// Gate transition (fired from the $state sink for every auth
@@ -349,6 +361,7 @@ struct RootView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            CallBanner(store: state.call)
             if state.isDemo || state.auth.state.allowsContent {
                 NavigationSplitView {
                     SidebarColumn(
@@ -365,6 +378,7 @@ struct RootView: View {
                     } else {
                         ConversationView(
                             store: state.conv, presence: state.presence,
+                            call: state.call,
                             isGroup: state.chats.selectedChat?.is_group ?? true)
                     }
                 }
@@ -374,7 +388,7 @@ struct RootView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             Divider()
-            StatusBar()
+            StatusBar(call: state.call)
         }
         .frame(minWidth: 760, minHeight: 520)
         .onAppear {
@@ -405,11 +419,22 @@ struct RootView: View {
 
 struct StatusBar: View {
     @EnvironmentObject private var state: AppState
+    @ObservedObject var call: CallStore
 
     var body: some View {
         HStack(spacing: 12) {
             Text("core \(state.coreVersion) · init=\(state.initCode)")
                 .font(.caption).monospaced().foregroundStyle(.secondary)
+            if let c = call.call, c.isActive {
+                Text("call: \(c.state) · \(c.displayPeer)")
+                    .font(.caption).monospaced().foregroundStyle(.green)
+                    .lineLimit(1)
+            } else if !state.isDemo, state.signedIn == true {
+                Button("Echo test") { call.echo() }
+                    .font(.caption)
+                    .disabled(call.busy)
+                    .help("Place the echo-bot test call (signaling only)")
+            }
             if state.isDemo {
                 Text("DEMO · offline")
                     .font(.caption).bold()

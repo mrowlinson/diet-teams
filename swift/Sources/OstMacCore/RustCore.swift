@@ -92,6 +92,32 @@ public enum RustCore {
         try call(ostmac_trouter_poll_typed(), as: RealtimePoll.self)
     }
 
+    public static func callStatus() throws -> CallStatus {
+        try call(ostmac_call_status(), as: CallStatus.self)
+    }
+
+    public static func callPlace(threadID: String, timeoutSecs: Int32 = 30) throws -> CallResult {
+        try threadID.withCString { ptr in
+            try call(ostmac_call_place(ptr, timeoutSecs), as: CallResult.self)
+        }
+    }
+
+    public static func callEcho(timeoutSecs: Int32 = 30) throws -> CallResult {
+        try call(ostmac_call_echo(timeoutSecs), as: CallResult.self)
+    }
+
+    public static func callAccept() throws -> CallResult {
+        try call(ostmac_call_accept(), as: CallResult.self)
+    }
+
+    public static func callEnd() throws -> CallResult {
+        try call(ostmac_call_end(), as: CallResult.self)
+    }
+
+    public static func callRecordInject() throws -> CallResult {
+        try call(ostmac_call_record_inject(), as: CallResult.self)
+    }
+
     // Take ownership of a Rust-allocated C string, decode, free.
     static func call<T: Decodable>(
         _ raw: UnsafeMutablePointer<CChar>?, as type: T.Type

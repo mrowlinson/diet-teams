@@ -9,6 +9,7 @@
 //! - send: post one message to a chat (requires sign-in)
 //! - presence: own get/set + per-user get (Graph presence, requires sign-in)
 //! - trouter: background push connection with a polled event channel
+//! - calls: signaling-only place/accept/end + echo-bot + recorder inject
 //!
 //! Dropped for now: TUI, audio/video, call media.
 
@@ -23,20 +24,21 @@ use ost::auth::{AuthConfig, TokenStore};
 use ost::config::Config;
 use serde_json::json;
 
+pub mod calls;
 pub mod realtime;
 
 // ---------------------------------------------------------------------------
 // Small helpers
 // ---------------------------------------------------------------------------
 
-fn now_secs() -> u64 {
+pub(crate) fn now_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
 }
 
-fn err_json(code: &str, detail: impl std::fmt::Display) -> String {
+pub(crate) fn err_json(code: &str, detail: impl std::fmt::Display) -> String {
     json!({"ok": false, "error": code, "detail": detail.to_string()}).to_string()
 }
 
@@ -54,7 +56,7 @@ fn string_to_c(s: String) -> *mut c_char {
     CString::new(s).map(|c| c.into_raw()).unwrap_or(std::ptr::null_mut())
 }
 
-fn rt() -> Result<tokio::runtime::Runtime, String> {
+pub(crate) fn rt() -> Result<tokio::runtime::Runtime, String> {
     tokio::runtime::Runtime::new().map_err(|e| format!("runtime: {}", e))
 }
 
@@ -772,6 +774,9 @@ pub fn trouter_start() -> c_int {
         },
         Err(_) => return -2,
     }
+    // UI-driven signaling: the bg loop must not auto-answer incoming
+    // calls (ost honors this; invitations still reach event_hub).
+    std::env::set_var("TEAMS_MANUAL_CALLS", "1");
     let rt = match rt().map(Arc::new) {
         Ok(r) => r,
         Err(_) => return -3,
@@ -813,9 +818,11 @@ pub fn trouter_poll_json() -> String {
 /// Drain queued Trouter events as typed realtime messages.
 ///
 /// `{ok:true, messages:[{chat_id,id,sender,text,time,is_edit,edited_id?}],
-/// resync:bool, skipped:n}`. `resync` is true when a `trouter.message_loss`
-/// frame was seen: the UI must re-fetch visible conversations (push had a
-/// gap). `skipped` counts non-message frames (handshake, presence, calls…).
+/// resync:bool, skipped:n, calls:[{kind,call_id,peer,peer_name,detail?}]}`.
+/// `resync` is true when a `trouter.message_loss` frame was seen: the UI
+/// must re-fetch visible conversations (push had a gap). `skipped` counts
+/// non-message frames (handshake, presence…). `calls` carries incoming
+/// invitations / remote ends (also recorded in the call slot).
 /// NOTE: drains the same queue as [`trouter_poll_json`] — use one consumer.
 pub fn trouter_poll_typed_json() -> String {
     let events = ost::event_hub::drain(64);
@@ -829,11 +836,13 @@ pub fn trouter_poll_typed_json() -> String {
     }
     let mut batch = realtime::parse_batch(&values);
     batch.skipped += unparseable;
+    let call_events = calls::scan_events(&events);
     json!({
         "ok": true,
         "messages": batch.messages,
         "resync": batch.resync,
         "skipped": batch.skipped,
+        "calls": call_events,
     })
     .to_string()
 }
@@ -1014,6 +1023,26 @@ pub extern "C" fn ostmac_presence_set(status: *const c_char) -> *mut c_char {
     }
 }
 
+/// Current call slot JSON. See [`calls::call_status_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_call_status() -> *mut c_char {
+    string_to_c(calls::call_status_json())
+}
+
+/// Place an outgoing call to a thread id (1:1 or channel), signaling
+/// only. Blocks up to `timeout_secs` (clamped 5..120) waiting for the
+/// answer. See [`calls::call_place_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_call_place(
+    thread_id: *const c_char,
+    timeout_secs: c_int,
+) -> *mut c_char {
+    match cstr_to_string(thread_id) {
+        Ok(t) => string_to_c(calls::call_place_json(&t, timeout_secs as i32)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
 /// One other user's presence JSON (`user_id` = Entra ID or UPN).
 /// See [`user_presence_json`]. Caller frees with [`ostmac_free`].
 #[no_mangle]
@@ -1022,6 +1051,31 @@ pub extern "C" fn ostmac_presence_user(user_id: *const c_char) -> *mut c_char {
         Ok(id) => string_to_c(user_presence_json(&id)),
         Err(e) => string_to_c(err_json("arg", e)),
     }
+}
+
+/// Place the echo-bot test call, signaling only. See [`calls::call_echo_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_call_echo(timeout_secs: c_int) -> *mut c_char {
+    string_to_c(calls::call_echo_json(timeout_secs as i32))
+}
+
+/// Accept the ringing incoming call. See [`calls::call_accept_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_call_accept() -> *mut c_char {
+    string_to_c(calls::call_accept_json())
+}
+
+/// End/decline the active call. See [`calls::call_end_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_call_end() -> *mut c_char {
+    string_to_c(calls::call_end_json())
+}
+
+/// Inject the recorder bot into the connected outgoing call.
+/// See [`calls::call_record_inject_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_call_record_inject() -> *mut c_char {
+    string_to_c(calls::call_record_inject_json())
 }
 
 /// Free a string returned by any `ostmac_*` call. Null-safe.
@@ -1417,6 +1471,19 @@ mod tests {
     }
 
     #[test]
+    fn ffi_call_place_null_is_arg_error() {
+        unsafe {
+            let p = ostmac_call_place(std::ptr::null(), 30);
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
     fn presence_envelope_shape() {
         let v: serde_json::Value =
             serde_json::from_str(&presence_envelope("Busy", "InACall")).unwrap();
@@ -1487,6 +1554,48 @@ mod tests {
             assert_eq!(v["ok"], false);
             assert_eq!(v["error"], "arg");
         }
+    }
+
+    #[test]
+    fn ffi_call_status_envelope() {
+        let _t = calls::test_lock();
+        unsafe {
+            let p = ostmac_call_status();
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], true);
+            assert!(v.get("call").is_some());
+        }
+    }
+
+    #[test]
+    fn typed_poll_carries_calls() {
+        let _t = calls::test_lock();
+        let _ = ost::event_hub::drain(1024);
+        ost::event_hub::publish(
+            r#"{"callInvitation":{"callModalities":["Audio"],
+                "links":{"end":"https://c.example/end"}},
+                "participants":{"from":{"id":"8:orgid:aaa","displayName":"Doe, Jane"}},
+                "debugContent":{"callId":"call-9"}}"#
+                .to_string(),
+        );
+        let v: serde_json::Value =
+            serde_json::from_str(&trouter_poll_typed_json()).unwrap();
+        assert_eq!(v["ok"], true);
+        assert_eq!(v["calls"].as_array().unwrap().len(), 1);
+        assert_eq!(v["calls"][0]["kind"], "incoming");
+        assert_eq!(v["calls"][0]["call_id"], "call-9");
+        assert_eq!(v["calls"][0]["peer_name"], "Doe, Jane");
+        // Slot recorded: status shows the ringing call.
+        let s: serde_json::Value =
+            serde_json::from_str(&calls::call_status_json()).unwrap();
+        assert_eq!(s["call"]["state"], "ringing");
+        // Close it so later tests start clean (each clears anyway).
+        let _ = calls::scan_events(&[
+            r#"{"callEnd":{"code":200,"subCode":0,"phrase":"OK"}}"#.to_string()
+        ]);
     }
 
     #[test]

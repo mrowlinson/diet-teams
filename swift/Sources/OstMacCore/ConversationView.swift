@@ -6,15 +6,20 @@ import SwiftUI
 public struct ConversationView: View {
     @ObservedObject public var store: ConversationStore
     @ObservedObject private var presence: PresenceStore
+    @ObservedObject public var call: CallStore
     /// False for 1:1 chats (header shows the chatmate dot).
     private let isGroup: Bool
     @State private var draft = ""
     @State private var lastSeenID: String?
     @FocusState private var boxFocused: Bool
 
-    public init(store: ConversationStore, presence: PresenceStore = PresenceStore(), isGroup: Bool = true) {
+    public init(
+        store: ConversationStore, presence: PresenceStore = PresenceStore(),
+        call: CallStore = CallStore(), isGroup: Bool = true
+    ) {
         self.store = store
         self.presence = presence
+        self.call = call
         self.isGroup = isGroup
     }
 
@@ -95,6 +100,16 @@ public struct ConversationView: View {
                         .clipShape(Capsule())
                 }
                 Spacer()
+                if let id = store.chatID {
+                    Button {
+                        call.place(threadID: id)
+                    } label: {
+                        Image(systemName: "phone")
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(call.busy || (call.call?.isActive ?? false))
+                    .help("Call this chat (signaling only — no audio yet)")
+                }
                 if store.loading { ProgressView().controlSize(.small) }
                 Text("\(store.messages.count)")
                     .font(.caption).monospaced()
