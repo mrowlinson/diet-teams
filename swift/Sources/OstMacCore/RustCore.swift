@@ -141,12 +141,52 @@ public enum RustCore {
         }
     }
 
+    public static func notebooks(groupID: String? = nil) throws -> NotebooksResponse {
+        try withOptionalCString(groupID) { ptr in
+            try call(ostmac_notes(ptr), as: NotebooksResponse.self)
+        }
+    }
+
+    public static func noteSections(notebookID: String, groupID: String? = nil) throws -> NoteSectionsResponse {
+        try notebookID.withCString { nbPtr in
+            try withOptionalCString(groupID) { ptr in
+                try call(ostmac_note_sections(nbPtr, ptr), as: NoteSectionsResponse.self)
+            }
+        }
+    }
+
     public static func reminderDone(listID: String, taskID: String) throws -> ReminderTaskResult {
         try listID.withCString { idPtr in
             try taskID.withCString { taskPtr in
                 try call(ostmac_reminder_done(idPtr, taskPtr), as: ReminderTaskResult.self)
             }
         }
+    }
+
+    public static func notePage(pageID: String, groupID: String? = nil) throws -> NotePageResponse {
+        try pageID.withCString { idPtr in
+            try withOptionalCString(groupID) { ptr in
+                try call(ostmac_note_page(idPtr, ptr), as: NotePageResponse.self)
+            }
+        }
+    }
+
+    public static func noteAppend(pageID: String, text: String, groupID: String? = nil) throws -> NoteAppendResponse {
+        try pageID.withCString { idPtr in
+            try text.withCString { textPtr in
+                try withOptionalCString(groupID) { ptr in
+                    try call(ostmac_note_append(idPtr, textPtr, ptr), as: NoteAppendResponse.self)
+                }
+            }
+        }
+    }
+
+    /// Run `body` with a nullable C string (nil stays NULL for core).
+    private static func withOptionalCString<T>(
+        _ value: String?, _ body: (UnsafePointer<CChar>?) throws -> T
+    ) rethrows -> T {
+        guard let value else { return try body(nil) }
+        return try value.withCString { try body($0) }
     }
 
     public static func trouterStart() -> Int32 { ostmac_trouter_start() }

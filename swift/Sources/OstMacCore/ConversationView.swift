@@ -1,6 +1,6 @@
-// ConversationView.swift — om-conv/om-convrich/om-shared: SwiftUI chat window.
+// ConversationView.swift — om-conv/om-convrich/om-shared/om-notes: SwiftUI chat window.
 // Rich bubbles (mentions, code spans, links), day separators, scroll-up
-// load-more paging, edited markers, failed-send retry, Shared files tab.
+// load-more paging, edited markers, failed-send retry, Shared files + Notes tabs.
 import SwiftUI
 
 public struct ConversationView: View {
@@ -8,6 +8,7 @@ public struct ConversationView: View {
     @ObservedObject private var presence: PresenceStore
     @ObservedObject public var call: CallStore
     @ObservedObject public var shared: SharedFilesStore
+    @ObservedObject public var notes: NotesStore
     /// False for 1:1 chats (header shows the chatmate dot).
     private let isGroup: Bool
     @State private var draft = ""
@@ -18,12 +19,14 @@ public struct ConversationView: View {
     public init(
         store: ConversationStore, presence: PresenceStore = PresenceStore(),
         call: CallStore = CallStore(), shared: SharedFilesStore = SharedFilesStore(),
+        notes: NotesStore = NotesStore(),
         isGroup: Bool = true, initialTab: Int = 0
     ) {
         self.store = store
         self.presence = presence
         self.call = call
         self.shared = shared
+        self.notes = notes
         self.isGroup = isGroup
         _tab = State(initialValue: initialTab)
     }
@@ -35,6 +38,7 @@ public struct ConversationView: View {
             Picker("View", selection: $tab) {
                 Text("Chat").tag(0)
                 Text("Shared").tag(1)
+                Text("Notes").tag(2)
             }
             .pickerStyle(.segmented)
             .padding(.horizontal, 8)
@@ -77,9 +81,11 @@ public struct ConversationView: View {
                 }
                 Divider()
                 sendBox
-            } else {
+            } else if tab == 1 {
                 SharedFilesView(store: shared)
                     .onAppear { syncShared() }
+            } else {
+                NotesView(store: notes)
             }
         }
         .frame(minWidth: 380, minHeight: 480)

@@ -6,6 +6,7 @@ mod files;
 mod graph;
 mod me;
 pub mod media;
+mod notes;
 mod presence;
 mod teams;
 mod todo;
@@ -16,6 +17,7 @@ use anyhow::Result;
 pub use chat::{ChatInfo, MessageInfo, MessagesPage};
 pub use files::SharedFile;
 pub use me::UserInfo;
+pub use notes::{NotePage, NotebookInfo, PageInfo, SectionInfo};
 pub use presence::PresenceInfo;
 pub use teams::TeamInfo;
 pub use todo::{TodoListInfo, TodoTaskInfo};
@@ -32,6 +34,10 @@ pub use chat::{
 pub use files::{download_file_data, list_chat_files_data, upload_file_data};
 pub use media::{fetch_media_data, MediaBytes, MAX_BYTES};
 pub use me::whoami_data;
+pub use notes::{
+    append_note_paragraph_data, list_notebook_sections_data, list_notebooks_data,
+    read_note_page_data,
+};
 pub use presence::get_presence_data;
 pub use teams::list_teams_data;
 pub use todo::{
@@ -107,4 +113,14 @@ pub async fn create_todo_task(list_id: &str, title: &str) -> Result<()> {
 /// Mark one To Do task completed
 pub async fn complete_todo_task(list_id: &str, task_id: &str) -> Result<()> {
     todo::complete_todo_task(list_id, task_id).await
+}
+
+/// OneNote notebooks/sections/pages (read; `--append` edits a page)
+pub async fn notes(
+    group_id: Option<&str>,
+    notebook: Option<&str>,
+    page: Option<&str>,
+    append: Option<&str>,
+) -> Result<()> {
+    notes::notes(group_id, notebook, page, append).await
 }

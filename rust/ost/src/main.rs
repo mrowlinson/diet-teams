@@ -103,6 +103,25 @@ enum Commands {
         path: String,
     },
 
+    /// OneNote notebooks, sections, pages (read; --append edits)
+    Notes {
+        /// M365 group (team) id: read the team notebook instead of the user's
+        #[arg(long)]
+        group: Option<String>,
+
+        /// Notebook id: list its sections and pages
+        #[arg(long)]
+        notebook: Option<String>,
+
+        /// Page id: print page content (text)
+        #[arg(long)]
+        page: Option<String>,
+
+        /// Append this paragraph to --page (requires --page)
+        #[arg(long)]
+        append: Option<String>,
+    },
+
     /// Show current user info (verify auth works)
     Whoami,
 
@@ -224,6 +243,20 @@ async fn main() -> Result<()> {
         Commands::FilesUpload { to, path } => {
             tracing::info!("Uploading file...");
             api::upload_file(&to, &path).await?;
+        }
+        Commands::Notes {
+            group,
+            notebook,
+            page,
+            append,
+        } => {
+            api::notes(
+                group.as_deref(),
+                notebook.as_deref(),
+                page.as_deref(),
+                append.as_deref(),
+            )
+            .await?;
         }
         Commands::Whoami => {
             api::whoami().await?;
