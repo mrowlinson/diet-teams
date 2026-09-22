@@ -31,6 +31,30 @@ public enum RustCore {
         try call(ostmac_sign_out(), as: SignOutResponse.self)
     }
 
+    /// Browser-capture start (auth-code + PKCE, no network): returns the
+    /// session + authorize URL to load in the webview.
+    public static func browserStart() throws -> AuthCodeStart {
+        try call(ostmac_authcode_start(), as: AuthCodeStart.self)
+    }
+
+    /// Browser-capture complete: exchanges the intercepted callback URL
+    /// for tokens (state verified in core). Blocking FFI (network): call
+    /// off the main thread.
+    public static func browserComplete(session: String, callback: String) throws -> AuthCodeComplete {
+        try session.withCString { sPtr in
+            try callback.withCString { cPtr in
+                try call(ostmac_authcode_complete(sPtr, cPtr), as: AuthCodeComplete.self)
+            }
+        }
+    }
+
+    /// Drop one pending browser session (cancel path; never throws fatally).
+    public static func browserCancel(session: String) throws -> AuthCodeCancel {
+        try session.withCString { ptr in
+            try call(ostmac_authcode_cancel(ptr), as: AuthCodeCancel.self)
+        }
+    }
+
     public static func whoami() throws -> WhoamiResponse {
         try call(ostmac_whoami(), as: WhoamiResponse.self)
     }

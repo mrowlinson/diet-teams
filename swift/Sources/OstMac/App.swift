@@ -1,5 +1,5 @@
 // Diet Teams — THE app (om-auth-gate): the main window is gated on the
-// AuthViewModel 11-state gate — unsigned shows the full sign-in UI
+// AuthViewModel 13-state gate — unsigned shows the full sign-in UI
 // (device code, copy/open-browser, polling, expiry/refresh, sign-out)
 // where the chats would be; chats, conversation, and the live feed
 // stay parked until signedIn. Settings embeds the same shared model.
@@ -21,10 +21,16 @@
 // --show-shared opens the conversation on the Shared files tab (shot hook).
 // --show-reminders opens the sidebar on the Reminders browser (shot hook).
 // --show-notes opens the conversation on the Notes tab (shot hook).
+// --show-jump opens the Cmd+K jump palette at launch (shot hook).
+// --show-gif opens the GIF picker popover at launch (shot hook).
+// --show-catchup stretches the demo thread past 20 messages and
+// auto-opens the catch-up sheet with a canned summary (shot hook,
+// offline, throwaway defaults — never the real ones).
 // --auth-state <name> opens the Auth window with a canned state, never
 // touching core/network (names: signed-out, starting, code, polling,
-// signed-in, expired, refreshing, refresh-failed, error). `--state` is
-// an alias. Without it the Auth window shows the live session.
+// browser, browser-working, signed-in, expired, refreshing,
+// refresh-failed, error). `--state` is an alias. Without it the Auth
+// window shows the live session.
 //
 // Realtime routing: the Trouter socket is global (one feed for all
 // chats), so switching chats does NOT restart the socket — the list
@@ -52,6 +58,14 @@ struct OstMacAppMain: App {
         }
     }
 
+    /// --jump-query value (shot hook: preseed the palette filter).
+    static func jumpQuery(args: [String]) -> String {
+        if let i = args.firstIndex(of: "--jump-query"), i + 1 < args.count {
+            return args[i + 1]
+        }
+        return ""
+    }
+
     /// --auth-state value (--state alias); nil = live auth.
     static func authStateName(args: [String]) -> String? {
         for flag in ["--auth-state", "--state"] {
@@ -68,6 +82,8 @@ struct OstMacAppMain: App {
         case "starting": .starting
         case "code": .code(.demo)
         case "polling": .polling(.demo, attempts: 2)
+        case "browser": .browser(.demo)
+        case "browser-working": .browserWorking(.demo)
         case "signed-in": .signedIn
         case "expired": .expired
         case "refreshing": .refreshing
@@ -102,7 +118,7 @@ struct OstMacAppMain: App {
         }
         .defaultSize(width: 600, height: 740)
         Settings {
-            SettingsView(auth: state.auth)
+            SettingsView(auth: state.auth, catchUp: state.catchUp)
         }
         .commands { OstMacCommands() }
     }
@@ -119,6 +135,12 @@ private struct OstMacCommands: Commands {
         }
         CommandMenu("Call") {
             Button("Call A/V Test") { openWindow(id: AppIdentity.avWindowID) }
+        }
+        CommandMenu("Go") {
+            Button("Jump to Chat…") {
+                NotificationCenter.default.post(name: .showJumpPalette, object: nil)
+            }
+            .keyboardShortcut("k", modifiers: .command)
         }
     }
 }
@@ -137,6 +159,9 @@ final class AppState: ObservableObject {
     let call: CallStore
     let notes = NotesStore()
     let showNotes: Bool
+    let catchUp: CatchUpStore
+    /// --show-catchup: long demo thread + canned summary, sheet auto-opens.
+    let showCatchUp: Bool
     @Published var openChatID: String?
     @Published var signedIn: Bool?
     @Published var coreVersion = "?"
@@ -146,6 +171,7 @@ final class AppState: ObservableObject {
     @Published var feedResyncs = 0
     @Published var feedPolls = 0
     @Published var feedError: String?
+    @Published var showJump = false
     @AppStorage("selectedChatID") private var persistedSelection: String?
 
     private let preselectID: String?
@@ -159,7 +185,21 @@ final class AppState: ObservableObject {
     init(args: [String]) {
         isDemo = args.contains("--demo") || args.contains("--demo-rich")
         showNotes = args.contains("--show-notes")
+        showJump = args.contains("--show-jump") // shot hook: palette open at launch
         call = CallStore(demo: isDemo)
+        showCatchUp = args.contains("--show-catchup")
+        if showCatchUp {
+            // Shot hook only: throwaway defaults (never the real ones),
+            // canned summary, no network.
+            let canned = CatchUpCannedTransport(stub: Self.catchUpDemoSummary)
+            let store = CatchUpStore(
+                transport: canned,
+                defaults: UserDefaults(suiteName: "shot-catchup") ?? .standard)
+            store.adopt(CatchUpConfig(enabled: true, apiKey: "demo"))
+            catchUp = store
+        } else {
+            catchUp = CatchUpStore()
+        }
         // Shot hook: --show-call incoming|active seeds the banner offline.
         if let i = args.firstIndex(of: "--show-call"), i + 1 < args.count {
             call.seedDemo(state: args[i + 1])
@@ -304,13 +344,26 @@ final class AppState: ObservableObject {
         open(chatID: id, chatName: channelName)
     }
 
+    /// Jump palette: chats route through the sidebar selection (keeps the
+    /// list highlight in sync); channels/teams open directly by id.
+    func jump(chatID id: String, chatName: String) {
+        if chats.chats.contains(where: { $0.id == id }) {
+            chats.selectedChatID = id // sink opens it (or already open)
+            if openChatID == nil { open(chatID: id, chatName: chatName) }
+        } else {
+            open(chatID: id, chatName: chatName)
+        }
+    }
+
     private func open(chatID id: String, chatName: String?) {
         openChatID = id
         persistedSelection = id
         if isDemo {
             let name = chatName ?? DemoData.name(for: id) ?? id
+            var msgs = DemoData.messages(for: id)
+            if showCatchUp { msgs = Self.longThread(from: msgs) }
             conv.showDemo(
-                chatID: id, chatName: name, messages: DemoData.messages(for: id),
+                chatID: id, chatName: name, messages: msgs,
                 failed: DemoData.failedIDs(for: id))
             notes.showDemo()
         } else {
@@ -327,6 +380,38 @@ final class AppState: ObservableObject {
             team.channels.contains(where: { $0.id == channelID })
         })?.teamId
     }
+
+    /// Shot hook: stretch a demo thread past the catch-up threshold by
+    /// cycling its own messages (ids stay unique).
+    private static func longThread(from base: [ChatMessage]) -> [ChatMessage] {
+        guard !base.isEmpty else { return base }
+        var out = base
+        var n = 0
+        while out.count < CatchUp.threshold + 4 {
+            let m = base[n % base.count]
+            out.append(ChatMessage(
+                id: "catchup-fill-\(n)", sender: m.sender,
+                timestamp: m.timestamp, content: m.content, isOwn: m.isOwn))
+            n += 1
+        }
+        return out
+    }
+
+    /// Canned summary for the --show-catchup shot (offline, no model).
+    static let catchUpDemoSummary = """
+    TL;DR
+    Design sync covered the chat window mocks and the send flow; edits stay in place.
+
+    Key points
+    - Tom shipped new chat window mocks with bubbles and timestamps.
+    - Priya asked that edited messages update in place, not re-sort.
+    - Send flow is an optimistic bubble first, then core confirms.
+
+    Action items
+    - Tom: own code blocks for the richness pass.
+    - Me: double-check the edited marker on the demo bubble.
+    - Unassigned: take screenshots for the review deck.
+    """
 
     /// One live event: count it, refresh the list row (all chats),
     /// route the bubble to the open chat only. 1:1 chats also learn
@@ -430,13 +515,15 @@ struct RootView: View {
                         ConversationView(
                             store: state.conv, presence: state.presence,
                             call: state.call, shared: state.shared, notes: state.notes,
+                            catchUp: state.catchUp,
                             isGroup: state.chats.selectedChat?.is_group ?? true,
                             initialTab: CommandLine.arguments.contains("--show-shared") ? 1
-                                : (state.showNotes ? 2 : 0))
+                                : (state.showNotes ? 2 : 0),
+                            catchUpOpen: state.showCatchUp)
                     }
                 }
             } else {
-                // Gate: the full 11-state sign-in where the chats would be.
+                // Gate: the full 13-state sign-in where the chats would be.
                 AuthView(model: state.auth)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -444,6 +531,18 @@ struct RootView: View {
             StatusBar(call: state.call)
         }
         .frame(minWidth: 760, minHeight: 520)
+        .onReceive(NotificationCenter.default.publisher(for: .showJumpPalette)) { _ in
+            state.showJump = true
+        }
+        .sheet(isPresented: $state.showJump) {
+            JumpPaletteView(
+                targets: JumpTargets.build(chats: state.chats.chats, teams: state.teams.teams),
+                initialQuery: OstMacAppMain.jumpQuery(args: CommandLine.arguments)
+            ) { id, name in
+                state.showJump = false
+                state.jump(chatID: id, chatName: name)
+            }
+        }
         .onAppear {
             // Shot hooks: open About/Settings/Auth/A-V windows from launch args.
             if CommandLine.arguments.contains("--show-about") {
@@ -468,6 +567,7 @@ struct RootView: View {
             Image(systemName: "bubble.left.and.bubble.right")
                 .font(.largeTitle).foregroundStyle(.secondary)
             Text("Select a chat").font(.headline)
+            Text("⌘K to jump").font(.callout).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

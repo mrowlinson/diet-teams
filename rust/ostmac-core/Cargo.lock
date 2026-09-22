@@ -1409,9 +1409,11 @@ name = "ostmac-core"
 version = "1.0.0"
 dependencies = [
  "base64 0.22.1",
+ "rand",
  "reqwest",
  "serde",
  "serde_json",
+ "sha2",
  "teams-cli",
  "tokio",
 ]
