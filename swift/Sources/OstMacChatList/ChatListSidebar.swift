@@ -6,6 +6,7 @@ import SwiftUI
 /// for the conversation lane to consume.
 public struct ChatListSidebar: View {
     @ObservedObject private var model: ChatListViewModel
+    @State private var searchText = ""
 
     public init(model: ChatListViewModel) {
         self.model = model
@@ -44,15 +45,28 @@ public struct ChatListSidebar: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding()
             case .loaded:
-                List(selection: $model.selectedChatID) {
-                    ForEach(model.chats) { chat in
-                        ChatRow(chat: chat).tag(chat.id)
+                let visible = ChatListFormat.filter(model.chats, query: searchText)
+                if visible.isEmpty, !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    VStack(spacing: 8) {
+                        Image(systemName: "magnifyingglass")
+                            .font(.largeTitle).foregroundStyle(.secondary)
+                        Text("No matches").font(.headline)
+                        Text("No chats match \"\(searchText)\".")
+                            .font(.callout).foregroundStyle(.secondary)
                     }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    List(selection: $model.selectedChatID) {
+                        ForEach(visible) { chat in
+                            ChatRow(chat: chat).tag(chat.id)
+                        }
+                    }
+                    .listStyle(.sidebar)
                 }
-                .listStyle(.sidebar)
             }
         }
         .navigationTitle("Chats")
+        .searchable(text: $searchText, prompt: "Filter chats")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button { model.refresh() } label: {

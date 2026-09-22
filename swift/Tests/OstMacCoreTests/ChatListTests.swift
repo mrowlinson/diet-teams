@@ -143,6 +143,31 @@ final class ChatListTests: XCTestCase {
             "8/1")
     }
 
+    // MARK: - Format: filter
+
+    nonisolated static func items() -> [ChatItem] {
+        let r = chatsJSON([
+            chatJSON(id: "1", name: "Team Standup", sender: "Ann", preview: "daily sync"),
+            chatJSON(id: "2", name: "Bob", sender: "Bob", preview: "lunch?"),
+            chatJSON(id: "3", name: "Random", preview: "standup notes"),
+        ].joined(separator: ","))
+        return r.chats
+    }
+
+    func testFilterBlankReturnsAll() {
+        let items = Self.items()
+        XCTAssertEqual(ChatListFormat.filter(items, query: "").count, 3)
+        XCTAssertEqual(ChatListFormat.filter(items, query: "   ").count, 3)
+    }
+
+    func testFilterMatchesNameSenderPreview() {
+        let items = Self.items()
+        XCTAssertEqual(ChatListFormat.filter(items, query: "standup").map(\.id), ["1", "3"])
+        XCTAssertEqual(ChatListFormat.filter(items, query: "BOB").map(\.id), ["2"])
+        XCTAssertEqual(ChatListFormat.filter(items, query: "lunch").map(\.id), ["2"])
+        XCTAssertTrue(ChatListFormat.filter(items, query: "zzz").isEmpty)
+    }
+
     // MARK: - Format: previewLine
 
     func testPreviewLine() {
