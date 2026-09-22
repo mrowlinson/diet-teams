@@ -1,4 +1,5 @@
 // OstMacSpike — minimal SwiftUI shell proving the Rust core FFI.
+import OstMacChatList
 import OstMacCore
 import SwiftUI
 
@@ -6,7 +7,7 @@ import SwiftUI
 struct SpikeApp: App {
     var body: some Scene {
         WindowGroup("OstMac Spike") { ContentView() }
-            .defaultSize(width: 560, height: 480)
+            .defaultSize(width: 900, height: 560)
     }
 }
 
@@ -21,6 +22,7 @@ final class CoreLog: ObservableObject {
 
 struct ContentView: View {
     @StateObject private var log = CoreLog()
+    @StateObject private var chats = ChatListViewModel()
     @State private var coreVersion = "?"
     @State private var initCode: Int32 = -99
     @State private var signedIn: Bool?
@@ -30,42 +32,50 @@ struct ContentView: View {
     @State private var trouterTimer: Timer?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("OstMac spike — Rust core + SwiftUI")
-                .font(.headline)
-            Text("core \(coreVersion) · init=\(initCode) · signed_in=\(signedIn.map(String.init) ?? "?")")
-                .font(.caption).monospaced()
-            HStack {
-                Button("Status") { refreshStatus() }
-                Button("Device start") { deviceStart() }
-                Button("Poll once") { pollOnce() }
-                Button("Chats") { fetchChats() }
-            }
-            HStack {
-                Button(trouterOn ? "Trouter stop" : "Trouter start") { toggleTrouter() }
-                Button("Clear log") { log.lines = [] }
-            }
-            if let s = deviceSession {
-                Text("session: \(s)").font(.caption).monospaced()
-                    .textSelection(.enabled)
-            }
-            Divider()
-            ScrollView {
-                LazyVStack(alignment: .leading) {
-                    ForEach(log.lines.indices, id: \.self) { i in
-                        Text(log.lines[i]).font(.caption).monospaced()
-                            .textSelection(.enabled)
+        NavigationSplitView {
+            ChatListSidebar(model: chats)
+                .navigationSplitViewColumnWidth(min: 240, ideal: 300, max: 420)
+        } detail: {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("OstMac spike — Rust core + SwiftUI")
+                    .font(.headline)
+                Text("core \(coreVersion) · init=\(initCode) · signed_in=\(signedIn.map(String.init) ?? "?")")
+                    .font(.caption).monospaced()
+                Text("selected chat: \(chats.selectedChatID ?? "none")")
+                    .font(.caption).monospaced().foregroundStyle(.secondary)
+                HStack {
+                    Button("Status") { refreshStatus() }
+                    Button("Device start") { deviceStart() }
+                    Button("Poll once") { pollOnce() }
+                    Button("Chats") { fetchChats() }
+                }
+                HStack {
+                    Button(trouterOn ? "Trouter stop" : "Trouter start") { toggleTrouter() }
+                    Button("Clear log") { log.lines = [] }
+                }
+                if let s = deviceSession {
+                    Text("session: \(s)").font(.caption).monospaced()
+                        .textSelection(.enabled)
+                }
+                Divider()
+                ScrollView {
+                    LazyVStack(alignment: .leading) {
+                        ForEach(log.lines.indices, id: \.self) { i in
+                            Text(log.lines[i]).font(.caption).monospaced()
+                                .textSelection(.enabled)
+                        }
                     }
                 }
             }
+            .padding()
         }
-        .padding()
-        .frame(minWidth: 560, minHeight: 480)
+        .frame(minWidth: 700, minHeight: 480)
         .onAppear {
             coreVersion = RustCore.version()
             initCode = RustCore.initialize()
             log.add("init=\(initCode) version=\(coreVersion)")
             refreshStatus()
+            Task { await chats.load() }
         }
         .onDisappear { stopPolling() }
     }
