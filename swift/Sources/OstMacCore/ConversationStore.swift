@@ -15,16 +15,21 @@ import Foundation
 public final class ConversationStore: ObservableObject {
     @Published public private(set) var messages: [ChatMessage] = []
     @Published public private(set) var loading = false
+    @Published public private(set) var loadingMore = false
     @Published public private(set) var error: String?
     @Published public private(set) var didLoad = false
+    @Published public private(set) var failedIDs: Set<String> = []
     public private(set) var chatID: String?
     public private(set) var chatName: String?
     public private(set) var isDemo = false
     private var openGeneration = 0
 
+    /// Opaque cursor for the next older page; nil = end of history.
+    public private(set) var pageToken: String?
+
     public init() {}
 
-    /// Open a chat: fetch full history via core, replace messages.
+    /// Open a chat: fetch newest history page via core, replace messages.
     /// Stale completions are dropped, so fast chat-switching always
     /// lands on the newest selection.
     public func open(chatID: String, chatName: String? = nil, limit: Int32 = 50) {
@@ -34,13 +39,14 @@ public final class ConversationStore: ObservableObject {
         error = nil
         openGeneration += 1
         let gen = openGeneration
+        pageToken = nil
         Task {
-            let fetched: Result<[ChatMessage], Error>
+            let fetched: Result<MessagesResponse, Error>
             do {
                 let resp = try await Task.detached {
                     try RustCore.messages(chatID: chatID, limit: limit)
                 }.value
-                fetched = .success(resp.messages)
+                fetched = .success(resp)
             } catch {
                 fetched = .failure(error)
             }
@@ -48,10 +54,48 @@ public final class ConversationStore: ObservableObject {
             loading = false
             didLoad = true
             switch fetched {
-            case let .success(msgs): messages = msgs
+            case let .success(resp):
+                messages = resp.messages
+                pageToken = resp.page_token
             case let .failure(e): error = String(describing: e)
             }
         }
+    }
+
+    /// True while an older page exists and no load is in flight.
+    public var canLoadMore: Bool {
+        !isDemo && !loading && !loadingMore && pageToken != nil
+    }
+
+    /// Prepend the next older history page (scroll-up load-more).
+    /// No-op without a page token or while a load is in flight.
+    public func loadMore(limit: Int32 = 50) {
+        guard canLoadMore, let id = chatID, let tok = pageToken else { return }
+        loadingMore = true
+        Task {
+            let fetched: Result<MessagesResponse, Error>
+            do {
+                let resp = try await Task.detached {
+                    try RustCore.messagesPage(chatID: id, pageToken: tok, limit: limit)
+                }.value
+                fetched = .success(resp)
+            } catch {
+                fetched = .failure(error)
+            }
+            loadingMore = false
+            switch fetched {
+            case let .success(resp):
+                messages = Self.prepend(resp.messages, to: messages)
+                pageToken = resp.page_token
+            case let .failure(e): error = String(describing: e)
+            }
+        }
+    }
+
+    /// Pure prepend: older page first, existing ids win on overlap.
+    public static func prepend(_ older: [ChatMessage], to list: [ChatMessage]) -> [ChatMessage] {
+        let known = Set(list.map(\.id))
+        return older.filter { !known.contains($0.id) } + list
     }
 
     /// View helper: open once when the host set chatID but never loaded.
@@ -66,9 +110,12 @@ public final class ConversationStore: ObservableObject {
     }
 
     /// Realtime edit carrying only new text; unknown id is a no-op.
+    /// Marks the bubble edited.
     public func ingestEdited(id: String, content: String) {
         guard let i = messages.firstIndex(where: { $0.id == id }) else { return }
+        guard messages[i].content != content else { return }
         messages[i].content = content
+        messages[i].edited = true
     }
 
     /// Realtime feed: typed event → upsert by id (edits collapse onto
@@ -92,6 +139,7 @@ public final class ConversationStore: ObservableObject {
 
     /// Post via core; appends an optimistic own-bubble immediately.
     /// Demo mode appends locally without touching core.
+    /// Core failure marks the bubble failed (per-message state + retry).
     public func send(text: String) {
         let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !body.isEmpty else { return }
@@ -102,8 +150,9 @@ public final class ConversationStore: ObservableObject {
             return
         }
         guard let id = chatID else { return }
+        let pendingID = "pending-\(UUID().uuidString)"
         messages.append(ChatMessage(
-            id: "pending-\(UUID().uuidString)",
+            id: pendingID,
             sender: "Me", timestamp: Self.nowISO(), content: body, isOwn: true))
         Task {
             do {
@@ -111,16 +160,39 @@ public final class ConversationStore: ObservableObject {
                     try RustCore.send(chatID: id, text: body)
                 }.value
             } catch {
+                self.noteSendFailed(id: pendingID)
                 self.error = "send failed: \(error)"
             }
         }
     }
 
-    /// Pure upsert: new id appends; known id rewrites content in place.
+    /// Record a failed optimistic send (test seam + retry bookkeeping).
+    func noteSendFailed(id: String) {
+        failedIDs.insert(id)
+    }
+
+    /// Retry a failed send: clears the flag, re-posts the bubble's text.
+    /// No-op for unknown ids. Returns the text re-sent, if any.
+    @discardableResult
+    public func retry(id: String) -> String? {
+        guard failedIDs.contains(id),
+              let msg = messages.first(where: { $0.id == id })
+        else { return nil }
+        failedIDs.remove(id)
+        send(text: msg.content)
+        return msg.content
+    }
+
+    /// Pure upsert: new id appends; known id rewrites content in place and
+    /// marks the bubble edited.
     public static func upsert(_ message: ChatMessage, into list: [ChatMessage]) -> [ChatMessage] {
         var out = list
         if let i = out.firstIndex(where: { $0.id == message.id }) {
-            out[i].content = message.content
+            // Same-content redelivery is not an edit: no marker.
+            if out[i].content != message.content {
+                out[i].content = message.content
+                out[i].edited = true
+            }
         } else {
             out.append(message)
         }
@@ -175,4 +247,73 @@ public final class ConversationStore: ObservableObject {
             timestamp: "2026-09-22T09:12:05Z",
             content: "Ship it. I'll take screenshots for the review deck."),
     ]
+
+    // MARK: - Rich demo (om-convrich: mentions, code, edits, failure, 2 days)
+
+    /// Canned store exercising every rich state: day separators (yesterday +
+    /// today), @mentions, code blocks, backticks, a link, an edited bubble,
+    /// and one failed own send with retry. Timestamps float off now so the
+    /// separators always read Yesterday/Today. Offline, no sign-in.
+    public static func demoRich() -> ConversationStore {
+        let s = ConversationStore()
+        s.isDemo = true
+        s.chatID = "demo-rich"
+        s.chatName = "Demo — Rich Conversation"
+        s.messages = richDemoMessages()
+        s.didLoad = true
+        s.failedIDs = ["rich-fail"]
+        return s
+    }
+
+    public static func richDemoMessages(now: Date = Date()) -> [ChatMessage] {
+        func iso(_ d: Date) -> String {
+            let f = ISO8601DateFormatter()
+            f.formatOptions = [.withInternetDateTime]
+            return f.string(from: d)
+        }
+        func at(dayOffset: Int, h: Int, m: Int) -> Date {
+            var cal = Calendar.current
+            cal.timeZone = TimeZone.current
+            let base = cal.date(byAdding: .day, value: dayOffset, to: now) ?? now
+            return cal.date(bySettingHour: h, minute: m, second: 0, of: base) ?? base
+        }
+        return [
+            ChatMessage(
+                id: "rich-1", sender: "Priya Nair",
+                timestamp: iso(at(dayOffset: -1, h: 16, m: 2)),
+                content: "Kicking off the richness pass. @Tom Becker can you own code blocks?",
+                raw: "<p>Kicking off the richness pass. <at id=\"8:t\">@Tom Becker</at> can you own code blocks?</p>"),
+            ChatMessage(
+                id: "rich-2", sender: "Tom Becker",
+                timestamp: iso(at(dayOffset: -1, h: 16, m: 5)),
+                content: "On it. Shipped the span miner — see the deploy notes: https://example.com/deploys/42",
+                raw: "<p>On it. Shipped the span miner — see the deploy notes: <a href=\"https://example.com/deploys/42\">https://example.com/deploys/42</a></p>"),
+            ChatMessage(
+                id: "rich-3", sender: "Tom Becker",
+                timestamp: iso(at(dayOffset: -1, h: 16, m: 7)),
+                content: "Usage: run `ostmac conv --rich` then paste the snippet\nlet x = render(msg) // one line",
+                raw: "<p>Usage: run `ostmac conv --rich` then paste the snippet</p><pre>let x = render(msg) // one line</pre>"),
+            ChatMessage(
+                id: "rich-4", sender: "Me",
+                timestamp: iso(at(dayOffset: 0, h: 9, m: 1)),
+                content: "Morning — paging works, backwardLink chains with zero overlap.",
+                isOwn: true),
+            ChatMessage(
+                id: "rich-5", sender: "Priya Nair",
+                timestamp: iso(at(dayOffset: 0, h: 9, m: 4)),
+                content: "Nice. @Me please double-check the edited marker on this bubble.",
+                raw: "<p>Nice. <at id=\"8:me\">@Me</at> please double-check the edited marker on this bubble.</p>",
+                edited: true),
+            ChatMessage(
+                id: "rich-6", sender: "Me",
+                timestamp: iso(at(dayOffset: 0, h: 9, m: 6)),
+                content: "Confirmed — edits stay in place, marker shows. `MessageRender` handles the spans.",
+                isOwn: true),
+            ChatMessage(
+                id: "rich-fail", sender: "Me",
+                timestamp: iso(at(dayOffset: 0, h: 9, m: 8)),
+                content: "This send failed (airplane mode?) — retry from the bubble.",
+                isOwn: true),
+        ]
+    }
 }

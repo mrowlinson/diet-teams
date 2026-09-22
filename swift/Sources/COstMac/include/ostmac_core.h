@@ -26,6 +26,10 @@ char *ostmac_chats(int limit);
 // Message history JSON for one chat (requires sign-in). Caller frees.
 char *ostmac_messages(const char *chat_id, int limit);
 
+// Older history page: page_token is the previous response's opaque cursor.
+// Caller frees.
+char *ostmac_messages_page(const char *chat_id, const char *page_token, int limit);
+
 // Post one message to a chat. Caller frees.
 char *ostmac_send(const char *chat_id, const char *text);
 

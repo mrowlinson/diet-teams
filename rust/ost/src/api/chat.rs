@@ -50,6 +50,14 @@ struct NativeMessage {
 #[derive(Debug, Deserialize)]
 struct MessagesResponse {
     messages: Option<Vec<NativeMessage>>,
+    #[serde(rename = "_metadata")]
+    metadata: Option<MessagesMetadata>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MessagesMetadata {
+    #[serde(rename = "backwardLink")]
+    backward_link: Option<String>,
 }
 
 /// Strip HTML tags from content for CLI display.
@@ -205,6 +213,17 @@ pub struct MessageInfo {
     pub sender: String,
     pub timestamp: String,
     pub content: String,
+    /// Unstripped server HTML (om-convrich: embedders mine `<at>` mentions
+    /// and `<pre>` code blocks from it; `content` stays the stripped text).
+    pub raw: String,
+}
+
+/// One page of history plus the cursor for the next older page.
+pub struct MessagesPage {
+    pub messages: Vec<MessageInfo>,
+    /// Server `_metadata.backwardLink`: full URL of the next older page,
+    /// or None when history is exhausted / the server omits metadata.
+    pub backward_link: Option<String>,
 }
 
 /// List recent chats and return structured data.
@@ -299,16 +318,38 @@ pub async fn list_chats_data(client: &TeamsClient, limit: usize) -> Result<Vec<C
 }
 
 /// Read messages from a specific chat thread and return structured data.
+///
+/// Newest page only; use [`read_messages_page`] with the returned
+/// `backward_link` to walk older history.
 pub async fn read_messages_data(
     client: &TeamsClient,
     chat_id: &str,
     limit: usize,
 ) -> Result<Vec<MessageInfo>> {
-    let base = client.chat_service_url();
-    let url = format!(
-        "{}/v1/users/ME/conversations/{}/messages?pageSize={}",
-        base, chat_id, limit
-    );
+    Ok(read_messages_page(client, chat_id, limit, None)
+        .await?
+        .messages)
+}
+
+/// Read one page of history. `page_url` is None for the newest page or
+/// Some(previous `backward_link`) for the next older page. Messages come
+/// back oldest-first; pages never overlap (verified live 2026-09-22).
+pub async fn read_messages_page(
+    client: &TeamsClient,
+    chat_id: &str,
+    limit: usize,
+    page_url: Option<&str>,
+) -> Result<MessagesPage> {
+    let url = match page_url {
+        Some(u) => with_page_size(u, limit),
+        None => {
+            let base = client.chat_service_url();
+            format!(
+                "{}/v1/users/ME/conversations/{}/messages?pageSize={}",
+                base, chat_id, limit
+            )
+        }
+    };
 
     tracing::debug!("Reading messages from {}", url);
     let resp = client.chat_get(&url).await?;
@@ -364,8 +405,60 @@ pub async fn read_messages_data(
             sender,
             timestamp: time,
             content: text.trim().to_string(),
+            raw: content.to_string(),
         });
     }
 
-    Ok(result)
+    let backward_link = body.metadata.and_then(|m| m.backward_link);
+    Ok(MessagesPage {
+        messages: result,
+        backward_link,
+    })
+}
+
+/// Rewrite the `pageSize=` query value so a followed `backwardLink` honors
+/// the caller's limit. No-op when the marker is absent.
+fn with_page_size(url: &str, limit: usize) -> String {
+    const MARK: &str = "pageSize=";
+    let Some(start) = url.find(MARK) else {
+        return url.to_string();
+    };
+    let val_start = start + MARK.len();
+    let val_end = url[val_start..]
+        .find(|c: char| !c.is_ascii_digit())
+        .map(|i| val_start + i)
+        .unwrap_or(url.len());
+    format!("{}{}{}", &url[..val_start], limit, &url[val_end..])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn page_size_rewrite_mid_and_end() {
+        assert_eq!(
+            with_page_size("https://h/m?pageSize=2&view=x", 50),
+            "https://h/m?pageSize=50&view=x"
+        );
+        assert_eq!(
+            with_page_size("https://h/m?view=x&pageSize=2", 50),
+            "https://h/m?view=x&pageSize=50"
+        );
+        assert_eq!(with_page_size("https://h/m", 50), "https://h/m");
+    }
+
+    #[test]
+    fn metadata_backward_link_parses() {
+        let body: MessagesResponse = serde_json::from_str(
+            r#"{"messages":[],"_metadata":{"backwardLink":"https://h/back"},"tenantId":"t"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            body.metadata.unwrap().backward_link.as_deref(),
+            Some("https://h/back")
+        );
+        let bare: MessagesResponse = serde_json::from_str(r#"{"messages":[]}"#).unwrap();
+        assert!(bare.metadata.is_none());
+    }
 }
