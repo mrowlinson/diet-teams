@@ -1,0 +1,121 @@
+// SharedFilesTests.swift — om-shared lane: model + store + FFI round-trip.
+import XCTest
+
+@testable import OstMacCore
+
+@MainActor
+final class SharedFilesTests: XCTestCase {
+    func testSharedFileDecodesCoreEnvelope() throws {
+        let json = """
+        {"ok":true,"chat_id":"19:x","files":[
+          {"id":"i1","name":"deck.pdf","size":48211,
+           "mime":"application/pdf","web_url":"https://w/deck",
+           "download_url":"https://d/deck","drive_id":"D1",
+           "created":"2026-09-20T10:00:00Z","modified":null,
+           "sender":"Priya Nair"}
+        ]}
+        """.data(using: .utf8)!
+        let resp = try JSONDecoder().decode(SharedFilesResponse.self, from: json)
+        XCTAssertTrue(resp.ok)
+        XCTAssertEqual(resp.chat_id, "19:x")
+        XCTAssertEqual(resp.files.count, 1)
+        let f = resp.files[0]
+        XCTAssertEqual(f.id, "i1")
+        XCTAssertEqual(f.name, "deck.pdf")
+        XCTAssertEqual(f.size, 48211)
+        XCTAssertEqual(f.mime, "application/pdf")
+        XCTAssertEqual(f.web_url, "https://w/deck")
+        XCTAssertEqual(f.download_url, "https://d/deck")
+        XCTAssertEqual(f.drive_id, "D1")
+        XCTAssertEqual(f.sender, "Priya Nair")
+        XCTAssertNil(f.modified)
+    }
+
+    func testSizeLabelBoundaries() {
+        XCTAssertEqual(SharedFile.sizeLabel(0), "0 B")
+        XCTAssertEqual(SharedFile.sizeLabel(1023), "1023 B")
+        XCTAssertEqual(SharedFile.sizeLabel(1024), "1.0 KB")
+        XCTAssertEqual(SharedFile.sizeLabel(48211), "47.1 KB")
+        XCTAssertEqual(SharedFile.sizeLabel(5 * 1024 * 1024), "5.0 MB")
+        XCTAssertEqual(SharedFile.sizeLabel(3 * 1024 * 1024 * 1024), "3.0 GB")
+    }
+
+    func testIconNameMimeAndExtension() {
+        XCTAssertEqual(SharedFile.iconName(mime: "image/png", filename: "x"), "photo")
+        XCTAssertEqual(SharedFile.iconName(mime: "video/mp4", filename: "x"), "film")
+        XCTAssertEqual(SharedFile.iconName(mime: "audio/mpeg", filename: "x"), "music.note")
+        XCTAssertEqual(SharedFile.iconName(mime: "application/pdf", filename: "x"), "doc.richtext")
+        XCTAssertEqual(SharedFile.iconName(mime: "application/zip", filename: "x"), "archivebox")
+        XCTAssertEqual(SharedFile.iconName(mime: nil, filename: "a.png"), "photo")
+        XCTAssertEqual(SharedFile.iconName(mime: nil, filename: "a.pdf"), "doc.richtext")
+        XCTAssertEqual(SharedFile.iconName(mime: nil, filename: "a.docx"), "doc.text")
+        XCTAssertEqual(SharedFile.iconName(mime: nil, filename: "a.xlsx"), "tablecells")
+        XCTAssertEqual(SharedFile.iconName(mime: nil, filename: "a.pptx"), "rectangle.on.rectangle")
+        XCTAssertEqual(SharedFile.iconName(mime: nil, filename: "a.bin"), "doc")
+    }
+
+    func testUpsertPrependsNewReplacesKnown() {
+        let list = [SharedFile(id: "f1", name: "a")]
+        let out = SharedFilesStore.upsert(SharedFile(id: "f2", name: "b"), into: list)
+        XCTAssertEqual(out.map(\.id), ["f2", "f1"])
+        let edit = SharedFilesStore.upsert(SharedFile(id: "f1", name: "a2"), into: out)
+        XCTAssertEqual(edit.map(\.id), ["f2", "f1"])
+        XCTAssertEqual(edit[1].name, "a2")
+    }
+
+    func testDownloadDestinationIsDownloads() {
+        let dest = SharedFilesStore.downloadDestination(filename: "a b.pdf")
+        XCTAssertTrue(dest.hasSuffix("/Downloads/a b.pdf"))
+    }
+
+    func testShowDemoAdoptsFiles() {
+        let store = SharedFilesStore()
+        store.showDemo(chatID: "demo", files: DemoData.sharedFiles(for: "demo"))
+        XCTAssertEqual(store.chatID, "demo")
+        XCTAssertEqual(store.files.count, 3)
+        XCTAssertEqual(store.state, .loaded)
+        let empty = SharedFilesStore()
+        empty.showDemo(chatID: "demo-3", files: DemoData.sharedFiles(for: "demo-3"))
+        XCTAssertEqual(empty.state, .empty)
+    }
+
+    func testDemoUploadFabricatesRow() {
+        let store = SharedFilesStore()
+        store.showDemo(chatID: "demo", files: [])
+        store.upload(path: "/tmp/report.pdf")
+        XCTAssertEqual(store.files.first?.name, "report.pdf")
+        XCTAssertEqual(store.state, .loaded)
+    }
+
+    func testOpenReturnsNilWithoutURL() {
+        var opened: [URL] = []
+        let store = SharedFilesStore(openURL: { opened.append($0); return true })
+        XCTAssertNil(store.open(SharedFile(id: "f", name: "x")))
+        XCTAssertTrue(opened.isEmpty)
+        let got = store.open(SharedFile(id: "f", name: "x", web_url: "https://w/x"))
+        XCTAssertEqual(got?.absoluteString, "https://w/x")
+        XCTAssertEqual(opened.count, 1)
+    }
+
+    func testListErrorSurfacesMessage() async {
+        let store = SharedFilesStore(list: { _, _ in throw CoreCallError.failed("files: boom") })
+        store.open(chatID: "19:x")
+        // Poll until the detached fetch lands (fast, no network).
+        for _ in 0 ..< 50 {
+            if case .error = store.state { break }
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        if case let .error(m) = store.state {
+            XCTAssertEqual(m, "files: boom")
+        } else {
+            XCTFail("expected error state, got \(store.state)")
+        }
+    }
+
+    /// Live FFI round-trip: empty args rejected by core before any network.
+    func testLiveFFIEmptyArgsThrow() {
+        XCTAssertThrowsError(try RustCore.sharedFiles(chatID: ""))
+        XCTAssertThrowsError(try RustCore.sharedUpload(chatID: "19:x", path: "  "))
+        XCTAssertThrowsError(try RustCore.sharedDownload(driveID: "", itemID: "i", dest: "/tmp/x"))
+    }
+}

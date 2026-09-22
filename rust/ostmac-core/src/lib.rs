@@ -10,6 +10,7 @@
 //! - presence: own get/set + per-user get (Graph presence, requires sign-in)
 //! - trouter: background push connection with a polled event channel
 //! - calls: signaling-only place/accept/end + echo-bot + recorder inject
+//! - files: shared files list + upload + download (Graph driveItems)
 //!
 //! Dropped for now: TUI, audio/video, call media.
 
@@ -608,6 +609,108 @@ pub fn send_json(chat_id: &str, text: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Shared files (om-shared lane: Graph driveItems for chats + channels)
+// ---------------------------------------------------------------------------
+
+fn shared_file_to_json(f: &ost::api::SharedFile) -> serde_json::Value {
+    json!({
+        "id": f.id,
+        "name": f.name,
+        "size": f.size,
+        "mime": f.mime,
+        "web_url": f.web_url,
+        "download_url": f.download_url,
+        "drive_id": f.drive_id,
+        "created": f.created,
+        "modified": f.modified,
+        "sender": f.sender,
+    })
+}
+
+/// Shared files for one chat/channel as JSON. Requires sign-in; unsigned
+/// yields `{ok:false}`. Empty `chat_id` is rejected before any network.
+pub fn files_json(chat_id: &str, limit: usize) -> String {
+    if chat_id.trim().is_empty() {
+        return err_json("arg", "empty chat_id");
+    }
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let files = ost::api::list_chat_files_data(&client, chat_id, limit)
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let items: Vec<_> = files.iter().map(shared_file_to_json).collect();
+            Ok(json!({"ok": true, "chat_id": chat_id, "files": items}).to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("files", e),
+    }
+}
+
+/// Upload a local file to a chat/channel and post it as a `reference`
+/// attachment. Small files only (<4 MB, ost rejects larger). Empty args
+/// are rejected before any network. Returns `{ok:true, file:{...}}`.
+pub fn files_upload_json(chat_id: &str, path: &str) -> String {
+    if chat_id.trim().is_empty() {
+        return err_json("arg", "empty chat_id");
+    }
+    if path.trim().is_empty() {
+        return err_json("arg", "empty path");
+    }
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let file = ost::api::upload_file_data(&client, chat_id, path)
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            Ok(json!({"ok": true, "file": shared_file_to_json(&file)}).to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("files_upload", e),
+    }
+}
+
+/// Download one driveItem's content to `dest`. Empty args are rejected
+/// before any network. Returns `{ok:true, path, bytes}`.
+pub fn files_download_json(drive_id: &str, item_id: &str, dest: &str) -> String {
+    if drive_id.trim().is_empty() {
+        return err_json("arg", "empty drive_id");
+    }
+    if item_id.trim().is_empty() {
+        return err_json("arg", "empty item_id");
+    }
+    if dest.trim().is_empty() {
+        return err_json("arg", "empty dest");
+    }
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let n = ost::api::download_file_data(&client, drive_id, item_id, dest)
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            Ok(json!({"ok": true, "path": dest, "bytes": n}).to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("files_download", e),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Presence (om-presence lane: ost CLI get/set + TUI LoadPresence parity)
 // ---------------------------------------------------------------------------
 
@@ -965,6 +1068,53 @@ pub extern "C" fn ostmac_send(chat_id: *const c_char, text: *const c_char) -> *m
     };
     match cstr_to_string(text) {
         Ok(t) => string_to_c(send_json(&id, &t)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
+/// Shared files JSON for one chat/channel. See [`files_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_files(chat_id: *const c_char, limit: c_int) -> *mut c_char {
+    let lim = if limit <= 0 { 20 } else { limit as usize };
+    match cstr_to_string(chat_id) {
+        Ok(id) => string_to_c(files_json(&id, lim)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
+/// Upload a local file to a chat/channel. See [`files_upload_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_files_upload(
+    chat_id: *const c_char,
+    path: *const c_char,
+) -> *mut c_char {
+    let id = match cstr_to_string(chat_id) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    match cstr_to_string(path) {
+        Ok(p) => string_to_c(files_upload_json(&id, &p)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
+/// Download one driveItem's content to `dest`. See [`files_download_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_files_download(
+    drive_id: *const c_char,
+    item_id: *const c_char,
+    dest: *const c_char,
+) -> *mut c_char {
+    let drive = match cstr_to_string(drive_id) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    let item = match cstr_to_string(item_id) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    match cstr_to_string(dest) {
+        Ok(d) => string_to_c(files_download_json(&drive, &item, &d)),
         Err(e) => string_to_c(err_json("arg", e)),
     }
 }
@@ -1611,5 +1761,85 @@ mod tests {
         let b = v["messages"][1]["id"].as_str().unwrap().to_string();
         assert!(a.starts_with("h:"));
         assert_eq!(a, b); // same content => same id => Swift dedupe drops it
+    }
+
+    #[test]
+    fn shared_file_json_shape() {
+        let f = ost::api::SharedFile {
+            id: "item-1".to_string(),
+            name: "deck.pdf".to_string(),
+            size: 48211,
+            mime: Some("application/pdf".to_string()),
+            web_url: Some("https://sp/deck".to_string()),
+            download_url: Some("https://dl/deck".to_string()),
+            drive_id: Some("D1".to_string()),
+            created: Some("2026-09-20T10:00:00Z".to_string()),
+            modified: None,
+            sender: Some("Priya Nair".to_string()),
+        };
+        let v = shared_file_to_json(&f);
+        assert_eq!(v["id"], "item-1");
+        assert_eq!(v["name"], "deck.pdf");
+        assert_eq!(v["size"], 48211);
+        assert_eq!(v["mime"], "application/pdf");
+        assert_eq!(v["drive_id"], "D1");
+        assert_eq!(v["sender"], "Priya Nair");
+        assert!(v["modified"].is_null());
+    }
+
+    #[test]
+    fn files_rejects_empty_args_without_network() {
+        for bad in ["", "   "] {
+            let v: serde_json::Value =
+                serde_json::from_str(&files_json(bad, 20)).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
+        for (id, path) in [("", "/tmp/a"), ("19:x", ""), ("19:x", "  ")] {
+            let v: serde_json::Value =
+                serde_json::from_str(&files_upload_json(id, path)).unwrap();
+            assert_eq!(v["ok"], false, "id={:?} path={:?}", id, path);
+            assert_eq!(v["error"], "arg");
+        }
+        for (d, i, dst) in [("", "i", "/tmp/x"), ("d", "", "/tmp/x"), ("d", "i", "")] {
+            let v: serde_json::Value =
+                serde_json::from_str(&files_download_json(d, i, dst)).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
+    fn ffi_files_null_is_arg_error() {
+        unsafe {
+            let p = ostmac_files(std::ptr::null(), 20);
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
+        let id = CString::new("19:x").unwrap();
+        unsafe {
+            let p = ostmac_files_upload(id.as_ptr(), std::ptr::null());
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
+        let d = CString::new("D1").unwrap();
+        let it = CString::new("I1").unwrap();
+        unsafe {
+            let p = ostmac_files_download(d.as_ptr(), it.as_ptr(), std::ptr::null());
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
     }
 }

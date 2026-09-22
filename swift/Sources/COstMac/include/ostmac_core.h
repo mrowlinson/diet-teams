@@ -41,6 +41,17 @@ char *ostmac_messages_page(const char *chat_id, const char *page_token, int limi
 // Post one message to a chat. Caller frees.
 char *ostmac_send(const char *chat_id, const char *text);
 
+// Shared files JSON for one chat/channel (requires sign-in). Caller frees.
+char *ostmac_files(const char *chat_id, int limit);
+
+// Upload a local file (<4 MB) to a chat/channel + post reference message.
+// Returns {ok, file}. Caller frees.
+char *ostmac_files_upload(const char *chat_id, const char *path);
+
+// Download one driveItem's content to dest path.
+// Returns {ok, path, bytes}. Caller frees.
+char *ostmac_files_download(const char *drive_id, const char *item_id, const char *dest);
+
 // Start background Trouter push: 0 ok, -1 running, -2 no auth, -3 rt fail.
 int ostmac_trouter_start(void);
 
