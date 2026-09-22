@@ -225,6 +225,102 @@ public struct SendResponse: Decodable, Sendable {
     public let chat_id: String?
 }
 
+// MARK: - Calls (om-signal lane: signaling only, no audio/video)
+
+/// One call record from core `ostmac_call_*`. `state` is
+/// placing|ringing|connected|ended|failed; `dir` is in|out.
+public struct CallInfo: Decodable, Sendable, Equatable {
+    public let id: String
+    public let dir: String
+    public let peer: String
+    public let peerName: String
+    public let thread: String
+    public let state: String
+    public let controller: String?
+    public let startedAt: UInt64
+    public let detail: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, dir, peer, thread, state, controller, detail
+        case peerName = "peer_name"
+        case startedAt = "started_at"
+    }
+
+    public var isActive: Bool {
+        state == "placing" || state == "ringing" || state == "connected"
+    }
+
+    public var displayPeer: String {
+        peerName.isEmpty ? (peer.isEmpty ? thread : peer) : peerName
+    }
+
+    public init(
+        id: String, dir: String, peer: String, peerName: String = "",
+        thread: String = "", state: String, controller: String? = nil,
+        startedAt: UInt64 = 0, detail: String? = nil
+    ) {
+        self.id = id
+        self.dir = dir
+        self.peer = peer
+        self.peerName = peerName
+        self.thread = thread
+        self.state = state
+        self.controller = controller
+        self.startedAt = startedAt
+        self.detail = detail
+    }
+}
+
+/// `{ok, call?}` from `ostmac_call_status`.
+public struct CallStatus: Decodable, Sendable {
+    public let ok: Bool
+    public let call: CallInfo?
+}
+
+/// Place/accept/end envelope. Only the keys the action sets are read;
+/// the rest stay nil (one shape for all call actions).
+public struct CallResult: Decodable, Sendable {
+    public let ok: Bool
+    public let placed: Bool?
+    public let accepted: Bool?
+    public let ended: Bool?
+    public let injected: Bool?
+    public let mediaAnswered: Bool?
+    public let rejection: String?
+    public let responseBytes: Int?
+    public let call: CallInfo?
+
+    enum CodingKeys: String, CodingKey {
+        case ok, placed, accepted, ended, injected, rejection, call
+        case mediaAnswered = "media_answered"
+        case responseBytes = "response_bytes"
+    }
+}
+
+/// One typed call event from the feed (`calls[]` in the typed poll).
+/// `kind` is incoming|end|rejected.
+public struct CallEvent: Decodable, Sendable, Equatable {
+    public let kind: String
+    public let callID: String
+    public let peer: String
+    public let peerName: String
+    public let detail: String?
+
+    enum CodingKeys: String, CodingKey {
+        case kind, peer, detail
+        case callID = "call_id"
+        case peerName = "peer_name"
+    }
+
+    public init(kind: String, callID: String, peer: String = "", peerName: String = "", detail: String? = nil) {
+        self.kind = kind
+        self.callID = callID
+        self.peer = peer
+        self.peerName = peerName
+        self.detail = detail
+    }
+}
+
 /// Minimal Any-Decodable for opaque Trouter event payloads.
 public struct AnyJSON: Decodable, Sendable {
     public let value: String

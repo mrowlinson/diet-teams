@@ -5,12 +5,14 @@ import SwiftUI
 
 public struct ConversationView: View {
     @ObservedObject public var store: ConversationStore
+    @ObservedObject public var call: CallStore
     @State private var draft = ""
     @State private var lastSeenID: String?
     @FocusState private var boxFocused: Bool
 
-    public init(store: ConversationStore) {
+    public init(store: ConversationStore, call: CallStore = CallStore()) {
         self.store = store
+        self.call = call
     }
 
     public var body: some View {
@@ -87,6 +89,16 @@ public struct ConversationView: View {
                         .clipShape(Capsule())
                 }
                 Spacer()
+                if let id = store.chatID {
+                    Button {
+                        call.place(threadID: id)
+                    } label: {
+                        Image(systemName: "phone")
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(call.busy || (call.call?.isActive ?? false))
+                    .help("Call this chat (signaling only — no audio yet)")
+                }
                 if store.loading { ProgressView().controlSize(.small) }
                 Text("\(store.messages.count)")
                     .font(.caption).monospaced()

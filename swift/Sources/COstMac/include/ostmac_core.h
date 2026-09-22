@@ -64,6 +64,30 @@ char *ostmac_refresh(void);
 // {ok:true} or {ok:false}. Caller frees. No network.
 char *ostmac_sign_out(void);
 
+// Current call slot JSON: {ok, call:{id,dir,peer,peer_name,thread,
+// state,controller?,started_at,detail?}|null}. Caller frees. No network.
+char *ostmac_call_status(void);
+
+// Place an outgoing call to a thread id (1:1 or channel), signaling
+// only. Blocks up to timeout_secs (clamped 5..120) waiting for the
+// answer: {ok,placed,accepted,rejection?,call}. Caller frees.
+char *ostmac_call_place(const char *thread_id, int timeout_secs);
+
+// Place the echo-bot test call, signaling only. Same envelope as
+// ostmac_call_place. Caller frees.
+char *ostmac_call_echo(int timeout_secs);
+
+// Accept the ringing incoming call:
+// {ok,accepted,media_answered,call}. Caller frees.
+char *ostmac_call_accept(void);
+
+// End/decline the active call: {ok,ended,call}. Caller frees.
+char *ostmac_call_end(void);
+
+// Inject the recorder bot into the connected outgoing call:
+// {ok,injected,response_bytes}. Caller frees.
+char *ostmac_call_record_inject(void);
+
 // Free a string from any ostmac_* call. Null-safe.
 void ostmac_free(char *s);
 
