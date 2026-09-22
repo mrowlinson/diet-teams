@@ -1,4 +1,4 @@
-// AuthGateTests.swift — om-auth-gate lane: 11-state gate helpers.
+// AuthGateTests.swift — om-auth-gate lane: 13-state gate helpers.
 import XCTest
 
 @testable import OstMacCore
@@ -14,7 +14,7 @@ final class AuthGateTests: XCTestCase {
         return try! decodeOrThrow(StatusResponse.self, from: Data(json.utf8))
     }
 
-    /// All 11 states with their gate bit. Only signedIn opens the gate.
+    /// All 13 states with their gate bit. Only signedIn opens the gate.
     nonisolated static func allStates() -> [(AuthState, Bool)] {
         [
             (.unknown, false),
@@ -22,6 +22,8 @@ final class AuthGateTests: XCTestCase {
             (.starting, false),
             (.code(.demo), false),
             (.polling(.demo, attempts: 0), false),
+            (.browser(.demo), false),
+            (.browserWorking(.demo), false),
             (.signedIn, true),
             (.signingOut, false),
             (.expired, false),
@@ -33,7 +35,7 @@ final class AuthGateTests: XCTestCase {
 
     func testGateOpensOnlyWhenSignedIn() {
         let states = Self.allStates()
-        XCTAssertEqual(states.count, 11) // AuthState has exactly 11 cases
+        XCTAssertEqual(states.count, 13) // AuthState has exactly 13 cases
         for (s, open) in states {
             XCTAssertEqual(s.isSignedIn, open, "\(s)")
             XCTAssertEqual(s.allowsContent, open, "\(s)")
@@ -62,6 +64,12 @@ final class AuthGateTests: XCTestCase {
         XCTAssertEqual(
             row(.polling(.demo, attempts: 2)),
             AccountInfo(signedIn: false, detail: "Waiting for browser sign-in… (check 3)"))
+        XCTAssertEqual(
+            row(.browser(.demo)),
+            AccountInfo(signedIn: false, detail: "Signing in with browser…"))
+        XCTAssertEqual(
+            row(.browserWorking(.demo)),
+            AccountInfo(signedIn: false, detail: "Completing browser sign-in…"))
         XCTAssertEqual(
             row(.signedIn, status: Self.status(signedIn: true)),
             AccountInfo(signedIn: true, detail: "Signed in · tokens 7/7"))

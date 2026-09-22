@@ -1,5 +1,5 @@
 // Diet Teams — THE app (om-auth-gate): the main window is gated on the
-// AuthViewModel 11-state gate — unsigned shows the full sign-in UI
+// AuthViewModel 13-state gate — unsigned shows the full sign-in UI
 // (device code, copy/open-browser, polling, expiry/refresh, sign-out)
 // where the chats would be; chats, conversation, and the live feed
 // stay parked until signedIn. Settings embeds the same shared model.
@@ -20,8 +20,9 @@
 // --show-teams opens the sidebar on the Teams browser (shot hook).
 // --auth-state <name> opens the Auth window with a canned state, never
 // touching core/network (names: signed-out, starting, code, polling,
-// signed-in, expired, refreshing, refresh-failed, error). `--state` is
-// an alias. Without it the Auth window shows the live session.
+// browser, browser-working, signed-in, expired, refreshing,
+// refresh-failed, error). `--state` is an alias. Without it the Auth
+// window shows the live session.
 //
 // Realtime routing: the Trouter socket is global (one feed for all
 // chats), so switching chats does NOT restart the socket — the list
@@ -65,6 +66,8 @@ struct OstMacAppMain: App {
         case "starting": .starting
         case "code": .code(.demo)
         case "polling": .polling(.demo, attempts: 2)
+        case "browser": .browser(.demo)
+        case "browser-working": .browserWorking(.demo)
         case "signed-in": .signedIn
         case "expired": .expired
         case "refreshing": .refreshing
@@ -390,7 +393,7 @@ struct RootView: View {
                     }
                 }
             } else {
-                // Gate: the full 11-state sign-in where the chats would be.
+                // Gate: the full 13-state sign-in where the chats would be.
                 AuthView(model: state.auth)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }

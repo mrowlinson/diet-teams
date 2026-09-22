@@ -64,6 +64,32 @@ public struct SignOutResponse: Decodable, Sendable {
     public let ok: Bool
 }
 
+// MARK: - Browser-capture fallback (om-pwauth lane)
+
+/// Auth-code + PKCE start: load `authorize_url` in the webview; the
+/// `redirect_uri` hit carries `?code&state` for `browserComplete`.
+public struct AuthCodeStart: Decodable, Sendable {
+    public let ok: Bool
+    public let session: String
+    public let authorize_url: String
+    public let redirect_uri: String
+    public let expires_in: Int
+}
+
+/// Auth-code complete: `status` is "complete" (tokens saved, same shape
+/// as the device flow) — anything else arrives as a thrown CoreCallError.
+public struct AuthCodeComplete: Decodable, Sendable {
+    public let ok: Bool
+    public let status: String
+    public let tokens: TokenSummary?
+}
+
+/// `{ok:true, cancelled}` after dropping a pending browser session.
+public struct AuthCodeCancel: Decodable, Sendable {
+    public let ok: Bool
+    public let cancelled: Bool
+}
+
 // MARK: - Identity (om-identity-own lane)
 
 /// Current user from core `ostmac_whoami` (Graph /me, core-cached).

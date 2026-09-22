@@ -20,6 +20,21 @@ char *ostmac_device_start(void);
 // pending | complete (+tokens saved) | {ok:false}. Caller frees.
 char *ostmac_device_poll(const char *session);
 
+// Browser-capture fallback start (auth-code + PKCE, no network):
+// {ok, session, authorize_url, redirect_uri, expires_in}.
+// Load authorize_url in a webview; the redirect_uri hit carries ?code&state.
+// Caller frees.
+char *ostmac_authcode_start(void);
+
+// Browser-capture complete: session + intercepted callback URL (or raw
+// query). Verifies state, exchanges the code, saves tokens:
+// {ok, status:"complete", tokens} or {ok:false}. Parse/state failures
+// keep the session (retryable); success drops it. Caller frees.
+char *ostmac_authcode_complete(const char *session, const char *callback);
+
+// Drop one pending browser session: {ok, cancelled}. Caller frees.
+char *ostmac_authcode_cancel(const char *session);
+
 // Current-user JSON (Graph /me): {ok,id,display_name,mail?}.
 // Requires sign-in. Core caches after the first call; sign-out clears.
 // Caller frees.
