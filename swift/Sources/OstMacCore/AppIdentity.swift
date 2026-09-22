@@ -30,7 +30,7 @@ public struct AccountInfo: Equatable, Sendable {
     public static let loading = AccountInfo(signedIn: false, detail: "Loading…")
     public static let unavailable = AccountInfo(signedIn: false, detail: "Status unavailable")
 
-    /// Settings row from the 11-state gate (single source; replaces direct
+    /// Settings row from the 13-state gate (single source; replaces direct
     /// status reads). signedIn is true only for .signedIn; failures show
     /// the message verbatim so the row is always actionable.
     public static func from(authState: AuthState, status: StatusResponse?) -> AccountInfo {
@@ -50,6 +50,10 @@ public struct AccountInfo: Equatable, Sendable {
                     detail: "Waiting for browser sign-in… (check \(attempts + 1))")
             }
             return AccountInfo(signedIn: false, detail: "Waiting for browser sign-in…")
+        case .browser:
+            return AccountInfo(signedIn: false, detail: "Signing in with browser…")
+        case .browserWorking:
+            return AccountInfo(signedIn: false, detail: "Completing browser sign-in…")
         case .signedIn:
             if let status { return summarize(status) }
             return AccountInfo(signedIn: true, detail: "Signed in")
