@@ -23,11 +23,13 @@ let package = Package(
     products: [
         .executable(name: "OstMacSpike", targets: ["OstMacSpike"]),
         .executable(name: "OstMacConv", targets: ["OstMacConv"]),
+        .executable(name: "OstMac", targets: ["OstMac"]),
     ],
     targets: [
         .target(name: "COstMac", publicHeadersPath: "include"),
         .target(name: "OstMacCore", dependencies: ["COstMac"]),
         .target(name: "OstMacChatList", dependencies: ["OstMacCore"]),
+        .target(name: "OstMacApp", dependencies: ["OstMacCore", "OstMacChatList"]),
         .executableTarget(
             name: "OstMacSpike",
             dependencies: ["OstMacCore", "OstMacChatList", "COstMac"],
@@ -38,9 +40,14 @@ let package = Package(
             dependencies: ["OstMacCore", "COstMac"],
             linkerSettings: rustLink
         ),
+        .executableTarget(
+            name: "OstMac",
+            dependencies: ["OstMacApp", "OstMacCore", "OstMacChatList", "COstMac"],
+            linkerSettings: rustLink
+        ),
         .testTarget(
             name: "OstMacCoreTests",
-            dependencies: ["OstMacCore", "OstMacChatList", "COstMac"],
+            dependencies: ["OstMacApp", "OstMacCore", "OstMacChatList", "COstMac"],
             linkerSettings: rustLink
         ),
     ]

@@ -11,8 +11,12 @@ from a minimal SwiftUI shell over a C ABI (JSON over the boundary).
   `swift/Sources/COstMac/include/ostmac_core.h`
 - `swift/` — SPM package: `COstMac` (headers), `OstMacCore` (Swift wrapper),
   `OstMacChatList` (chat sidebar + `ChatSelection` contract for the
-  conversation lane), `OstMacSpike` (SwiftUI shell), `OstMacCoreTests`
-- `scripts/` — `build-rust.sh`, `build-app.sh`, `test.sh`
+  conversation lane), `OstMacSpike` (SwiftUI shell), `OstMacConv`
+  (one-conversation demo), `OstMacApp` + `OstMac` (real app: branding,
+  root window, About, Settings shell), `OstMacCoreTests`
+- `scripts/` — `build-rust.sh`, `build-app.sh`, `build-conv-app.sh`,
+  `package.sh` (signed release `OstMac.app`, `--install` to /Applications),
+  `install.sh`, `make-icon.sh` (renders `OstMac.icns`), `test.sh`
 - `docs/shots/` — viewed screenshots (TUI + SwiftUI shell)
 
 ## Build / run
@@ -20,7 +24,9 @@ from a minimal SwiftUI shell over a C ABI (JSON over the boundary).
 ```sh
 ./scripts/test.sh        # rust tests + swift tests (builds rust first)
 ./scripts/build-app.sh   # OstMacSpike.app
-open swift/.build/release/OstMacSpike.app
+./scripts/package.sh     # signed release tmp/OstMac.app (icon + plist)
+./scripts/install.sh     # copy release app to /Applications
+open /Applications/OstMac.app --args --demo   # offline demo, no sign-in
 ```
 
 Prereqs: Xcode CLT (`swift`, `xcodebuild`), `cargo`. No Linux-only features
@@ -38,6 +44,12 @@ Prereqs: Xcode CLT (`swift`, `xcodebuild`), `cargo`. No Linux-only features
   driven to code prompt. `.app` 7.6M, idle RSS ~94MB (status screen + poll
   loop). Shots: `docs/shots/spike-*.png`.
 - Tests: `cargo test` ostmac-core 6/6, ost 91+91/91+91, `swift test` 6/6.
+- Packaging: real identity (`OstMac`, `dev.ostmac.OstMac`, 0.1.0, macOS
+  14+), chat-bubble `.icns`, main menu (About window, Settings shell with
+  read-only account row, Quit), `scripts/package.sh` (signed release
+  `.app`, `--install`) + `scripts/install.sh`. Release `.app` 8.3M, idle
+  RSS ~137MB (demo, 3 windows open). Signed `Apple Development:
+  Michael Rowlinson (FS59877444)`. Shots: `docs/shots/ostmac-*.png`.
 
 ## Sign-in boundary
 
