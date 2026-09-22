@@ -6,9 +6,11 @@
 // --demo bypasses the gate fully offline.
 //
 // Usage:
-//   OstMac [--demo] [--chat <id> [--name <n>]] [--say <text>]
+//   OstMac [--demo | --demo-rich] [--chat <id> [--name <n>]] [--say <text>]
 //          [--show-about] [--show-settings] [--auth-state <name>]
 // --demo runs fully offline (canned chats/messages, local send echo).
+// --demo-rich is --demo preselected on the rich thread (mentions, code,
+// edited + failed bubbles, Yesterday/Today separators).
 // --chat preselects (or opens directly when absent from the list).
 // --say auto-sends once into the open chat. In live mode that is a REAL
 // send via core — never use it on shared chats for testing.
@@ -135,9 +137,11 @@ final class AppState: ObservableObject {
     private var contentOpened = false
 
     init(args: [String]) {
-        isDemo = args.contains("--demo")
+        isDemo = args.contains("--demo") || args.contains("--demo-rich")
         if let i = args.firstIndex(of: "--chat"), i + 1 < args.count {
             preselectID = args[i + 1]
+        } else if args.contains("--demo-rich") {
+            preselectID = DemoData.richID
         } else {
             preselectID = nil
         }
@@ -256,7 +260,9 @@ final class AppState: ObservableObject {
         persistedSelection = id
         if isDemo {
             let name = chatName ?? DemoData.name(for: id) ?? id
-            conv.showDemo(chatID: id, chatName: name, messages: DemoData.messages(for: id))
+            conv.showDemo(
+                chatID: id, chatName: name, messages: DemoData.messages(for: id),
+                failed: DemoData.failedIDs(for: id))
         } else {
             conv.open(chatID: id, chatName: chatName)
         }

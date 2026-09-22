@@ -50,10 +50,12 @@ final class AppIdentityTests: XCTestCase {
     }
 
     func testDemoChats() {
-        XCTAssertEqual(DemoData.chats.count, 3)
+        XCTAssertEqual(DemoData.chats.count, 4)
         XCTAssertEqual(DemoData.chats[0].id, "demo")
         XCTAssertTrue(DemoData.chats.allSatisfy { !$0.name.isEmpty })
         XCTAssertTrue(DemoData.chats.contains { $0.is_group })
         XCTAssertTrue(DemoData.chats.contains { !$0.is_group })
+        // om-convrich-ui: rich thread merged into the demo dataset.
+        XCTAssertEqual(DemoData.chats.last?.id, DemoData.richID)
     }
 }
