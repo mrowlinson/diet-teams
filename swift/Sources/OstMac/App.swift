@@ -97,7 +97,7 @@ struct OstMacAppMain: App {
         Window("Call A/V", id: AppIdentity.avWindowID) {
             AvPanelView()
         }
-        .defaultSize(width: 600, height: 600)
+        .defaultSize(width: 600, height: 740)
         Settings {
             SettingsView(auth: state.auth)
         }
