@@ -9,8 +9,11 @@ public enum DemoData {
     public static let demoID = "demo"
     public static let avaID = "demo-2"
     public static let standupID = "demo-3"
+    public static let richID = "demo-rich"
 
     /// Sidebar rows. [0] is "demo" (matches ConversationStore.demo()).
+    /// The rich row derives from the rich thread's last message, so its
+    /// preview/sender/time track the floating Today timestamps.
     public static let chats: [ChatItem] = [
         ChatItem(
             chatId: "demo", name: "Demo — Design Sync", is_group: true,
@@ -27,7 +30,19 @@ public enum DemoData {
             last_message_time: "2026-09-21T16:20:11Z",
             last_message_sender: "Tom Becker",
             last_message_preview: "Build is green, packaging lane is next."),
+        richChat(),
     ]
+
+    /// Rich sidebar row: preview/sender/time from the rich thread's tail.
+    public static func richChat(now: Date = Date()) -> ChatItem {
+        let msgs = ConversationStore.richDemoMessages(now: now)
+        let last = msgs.last
+        return ChatItem(
+            chatId: richID, name: "Demo — Rich Conversation", is_group: true,
+            last_message_time: last?.timestamp,
+            last_message_sender: last?.sender,
+            last_message_preview: last?.content)
+    }
 
     public static func chatsResponse() -> ChatsResponse {
         ChatsResponse(ok: true, chats: chats)
@@ -38,8 +53,14 @@ public enum DemoData {
         case demoID: ConversationStore.demoMessages
         case avaID: avaMessages
         case standupID: standupMessages
+        case richID: ConversationStore.richDemoMessages()
         default: []
         }
+    }
+
+    /// Pre-failed bubble ids per demo chat (rich thread's failed own send).
+    public static func failedIDs(for chatID: String) -> Set<String> {
+        chatID == richID ? ["rich-fail"] : []
     }
 
     public static func name(for chatID: String) -> String? {
