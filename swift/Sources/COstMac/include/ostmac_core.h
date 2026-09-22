@@ -47,6 +47,31 @@ char *ostmac_send(const char *chat_id, const char *text);
 // Caller frees.
 char *ostmac_media_fetch(const char *url);
 
+// Shared files JSON for one chat/channel (requires sign-in). Caller frees.
+char *ostmac_files(const char *chat_id, int limit);
+
+// Upload a local file (<4 MB) to a chat/channel + post reference message.
+// Returns {ok, file}. Caller frees.
+char *ostmac_files_upload(const char *chat_id, const char *path);
+
+// Download one driveItem's content to dest path.
+// Returns {ok, path, bytes}. Caller frees.
+char *ostmac_files_download(const char *drive_id, const char *item_id, const char *dest);
+
+// To Do lists JSON (requires sign-in): {ok,lists:[{id,name,wellknown?}]}.
+// Caller frees.
+char *ostmac_reminders(void);
+
+// Tasks for one To Do list: {ok,list_id,tasks:[{id,title,status,
+// importance,due?,reminder?,completed}]}. Caller frees.
+char *ostmac_reminder_tasks(const char *list_id, int limit);
+
+// Create one task in a list: {ok,task}. Caller frees.
+char *ostmac_reminder_add(const char *list_id, const char *title);
+
+// Mark one task completed: {ok,task}. Caller frees.
+char *ostmac_reminder_done(const char *list_id, const char *task_id);
+
 // Start background Trouter push: 0 ok, -1 running, -2 no auth, -3 rt fail.
 int ostmac_trouter_start(void);
 
@@ -90,6 +115,21 @@ char *ostmac_presence_user(const char *user_id);
 // {ok,id,email?,display_name}. {ok:false,error:"not_found"} for unknown
 // users (permanent). Caller frees. Hits network.
 char *ostmac_resolve_mri(const char *mri);
+
+// OneNote notebooks JSON: {ok,notebooks:[{id,name}]}. group_id NULL/empty
+// reads the user's own; otherwise the M365 group (team) notebooks.
+// Requires sign-in. Caller frees. Hits network.
+char *ostmac_notes(const char *group_id);
+
+// One notebook's sections, each with pages:
+// {ok,sections:[{id,name,pages:[{id,title,updated?}]}]}. Caller frees.
+char *ostmac_note_sections(const char *notebook_id, const char *group_id);
+
+// One page's HTML content: {ok,id,title,html}. Caller frees.
+char *ostmac_note_page(const char *page_id, const char *group_id);
+
+// Append one plain-text paragraph to a page: {ok,id}. Caller frees.
+char *ostmac_note_append(const char *page_id, const char *text, const char *group_id);
 
 // Current call slot JSON: {ok, call:{id,dir,peer,peer_name,thread,
 // state,controller?,started_at,detail?}|null}. Caller frees. No network.

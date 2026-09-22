@@ -78,6 +78,42 @@ public enum DemoData {
         TeamsResponse(ok: true, teams: teams)
     }
 
+    /// Canned To Do lists for `--demo` (om-remind lane).
+    public static let reminderLists: [ReminderList] = [
+        ReminderList(listId: "demo-list-tasks", name: "Tasks", wellknown: "defaultList"),
+        ReminderList(listId: "demo-list-groceries", name: "Groceries"),
+    ]
+
+    public static func remindersResponse() -> RemindersResponse {
+        RemindersResponse(ok: true, lists: reminderLists)
+    }
+
+    /// Canned tasks per demo list. Unknown ids stay empty.
+    public static func reminderTasks(for listID: String) -> [ReminderTask] {
+        switch listID {
+        case "demo-list-tasks": return [
+            ReminderTask(
+                taskId: "demo-task-1", title: "Review empty-states mock",
+                importance: "high", due: "2026-09-23T10:00:00.0000000"),
+            ReminderTask(
+                taskId: "demo-task-2", title: "Book dentist",
+                reminder: "2026-09-24T08:00:00.0000000"),
+            ReminderTask(
+                taskId: "demo-task-3", title: "Ship review deck",
+                status: "completed", completed: true),
+        ]
+        case "demo-list-groceries": return [
+            ReminderTask(taskId: "demo-task-4", title: "Oat milk"),
+            ReminderTask(taskId: "demo-task-5", title: "Coffee beans", importance: "high"),
+        ]
+        default: return []
+        }
+    }
+
+    public static func reminderTasksResponse(for listID: String) -> ReminderTasksResponse {
+        ReminderTasksResponse(ok: true, list_id: listID, tasks: reminderTasks(for: listID))
+    }
+
     /// Canned own presence for --demo (Available, offline adopted).
     public static func ownPresence() -> PresenceResponse {
         PresenceResponse(ok: true, availability: "Available", activity: "Available")
@@ -107,6 +143,51 @@ public enum DemoData {
     public static func failedIDs(for chatID: String) -> Set<String> {
         chatID == richID ? ["rich-fail"] : []
     }
+
+    /// Canned shared files for `--demo` (om-shared lane). Design Sync has
+    /// three (pdf + image + sheet, one with a sender); Ava has one; the
+    /// rich thread and channels share the design set; standup is empty.
+    public static func sharedFiles(for chatID: String) -> [SharedFile] {
+        switch chatID {
+        case demoID, richID: return designFiles
+        case avaID: return [avaFile]
+        case standupID: return []
+        default:
+            if chatID.hasPrefix("demo-chan-") { return designFiles }
+            return []
+        }
+    }
+
+    private static let designFiles: [SharedFile] = [
+        SharedFile(
+            id: "demo-f1", name: "onboarding-mocks.pdf", size: 48211,
+            mime: "application/pdf",
+            web_url: "https://example.sharepoint.com/onboarding-mocks.pdf",
+            download_url: "https://example.sharepoint.com/download/onboarding-mocks.pdf",
+            drive_id: "demo-drive-1",
+            created: "2026-09-21T10:02:11Z", sender: "Tom Becker"),
+        SharedFile(
+            id: "demo-f2", name: "empty-states.png", size: 184320,
+            mime: "image/png",
+            web_url: "https://example.sharepoint.com/empty-states.png",
+            download_url: "https://example.sharepoint.com/download/empty-states.png",
+            drive_id: "demo-drive-1",
+            created: "2026-09-22T08:41:02Z", sender: "Ava Lindqvist"),
+        SharedFile(
+            id: "demo-f3", name: "launch-checklist.xlsx", size: 9216,
+            mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            web_url: "https://example.sharepoint.com/launch-checklist.xlsx",
+            drive_id: "demo-drive-1",
+            created: "2026-09-20T16:20:11Z", sender: "Priya Nair"),
+    ]
+
+    private static let avaFile = SharedFile(
+        id: "demo-f-ava1", name: "standup-notes.md", size: 2048,
+        mime: "text/markdown",
+        web_url: "https://example.sharepoint.com/standup-notes.md",
+        download_url: "https://example.sharepoint.com/download/standup-notes.md",
+        drive_id: "demo-drive-2",
+        created: "2026-09-22T08:47:33Z", sender: "Ava Lindqvist")
 
     public static func name(for chatID: String) -> String? {
         if let chat = chats.first(where: { $0.id == chatID }) { return chat.name }
@@ -205,4 +286,93 @@ public enum DemoData {
             timestamp: "2026-09-21T16:20:11Z",
             content: "Build is green, packaging lane is next."),
     ]
+
+    // MARK: - Notes (om-notes lane: canned OneNote for --demo)
+
+    public static let notebooks: [NotebookItem] = [
+        NotebookItem(notebookId: "demo-nb-work", name: "Design Sync Notes"),
+        NotebookItem(notebookId: "demo-nb-team", name: "Team Wiki"),
+    ]
+
+    public static func notebooksResponse() -> NotebooksResponse {
+        NotebooksResponse(ok: true, notebooks: notebooks)
+    }
+
+    public static func noteSections(for notebookID: String) -> [NoteSectionItem] {
+        switch notebookID {
+        case "demo-nb-work":
+            return [
+                NoteSectionItem(sectionId: "demo-sec-sync", name: "Syncs", pages: [
+                    NotePageItem(
+                        pageId: "demo-page-kickoff", title: "Kickoff Notes",
+                        updated: "2026-09-22T09:12:05Z"),
+                    NotePageItem(
+                        pageId: "demo-page-empty", title: "Empty States Review",
+                        updated: "2026-09-21T16:20:11Z"),
+                ]),
+                NoteSectionItem(sectionId: "demo-sec-ideas", name: "Ideas", pages: [
+                    NotePageItem(pageId: "demo-page-roadmap", title: "Roadmap Draft"),
+                ]),
+            ]
+        case "demo-nb-team":
+            return [
+                NoteSectionItem(sectionId: "demo-sec-wiki", name: "General", pages: [
+                    NotePageItem(pageId: "demo-page-onboard", title: "Onboarding"),
+                ]),
+            ]
+        default:
+            return []
+        }
+    }
+
+    private static let demoPageBodies: [String: (title: String, html: String)] = [
+        "demo-page-kickoff": ("Kickoff Notes",
+            "<html><head><title>Kickoff Notes</title></head><body>" +
+                "<h1>Kickoff Notes</h1>" +
+                "<p>Goals: ship the chat window, keep edits in place.</p>" +
+                "<p>Owners: Priya (design), Tom (render), Me (core).</p>" +
+                "</body></html>"),
+        "demo-page-empty": ("Empty States Review",
+            "<html><head><title>Empty States Review</title></head><body>" +
+                "<h1>Empty States Review</h1>" +
+                "<p>Illustration approved. Copy still TBD.</p>" +
+                "</body></html>"),
+        "demo-page-roadmap": ("Roadmap Draft",
+            "<html><head><title>Roadmap Draft</title></head><body>" +
+                "<h1>Roadmap Draft</h1>" +
+                "<p>Q4: notes, search, polish.</p>" +
+                "</body></html>"),
+        "demo-page-onboard": ("Onboarding",
+            "<html><head><title>Onboarding</title></head><body>" +
+                "<h1>Onboarding</h1>" +
+                "<p>Welcome! Start with the Design Sync notebook.</p>" +
+                "</body></html>"),
+    ]
+
+    /// Paragraphs appended in this demo session (pageID → bodies).
+    private static var demoAppended: [String: [String]] = [:]
+
+    public static func notePage(for pageID: String) -> NotePageResponse? {
+        guard let base = demoPageBodies[pageID] else { return nil }
+        var html = base.html
+        for para in demoAppended[pageID] ?? [] {
+            let escaped = para
+                .replacingOccurrences(of: "&", with: "&amp;")
+                .replacingOccurrences(of: "<", with: "&lt;")
+                .replacingOccurrences(of: ">", with: "&gt;")
+            html = html.replacingOccurrences(
+                of: "</body></html>", with: "<p>\(escaped)</p></body></html>")
+        }
+        return NotePageResponse(ok: true, id: pageID, title: base.title, html: html)
+    }
+
+    /// Offline append (demo Notes tab): records the paragraph locally.
+    public static func appendDemo(pageID: String, text: String) {
+        demoAppended[pageID, default: []].append(text)
+    }
+
+    /// Reset demo appends (tests).
+    public static func resetDemoAppends() {
+        demoAppended = [:]
+    }
 }

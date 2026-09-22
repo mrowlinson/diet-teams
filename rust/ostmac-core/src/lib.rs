@@ -9,8 +9,11 @@
 //! - send: post one message to a chat (requires sign-in)
 //! - presence: own get/set + per-user get (Graph presence, requires sign-in)
 //! - resolve_mri: Teams `8:orgid:` MRI to Graph user (requires sign-in)
+//! - reminders: Microsoft To Do lists/tasks/add/complete (Graph, sign-in)
+//! - notes: OneNote notebooks/sections/pages read + paragraph append
 //! - trouter: background push connection with a polled event channel
 //! - calls: signaling-only place/accept/end + echo-bot + recorder inject
+//! - files: shared files list + upload + download (Graph driveItems)
 //!
 //! Dropped for now: TUI, audio/video, call media.
 
@@ -53,6 +56,14 @@ pub(crate) fn cstr_to_string(p: *const c_char) -> Result<String, String> {
         .to_str()
         .map(|s| s.to_string())
         .map_err(|e| format!("invalid utf-8: {}", e))
+}
+
+/// Optional C string: null decodes to `None` (used for group scopes).
+pub(crate) fn opt_cstr_to_string(p: *const c_char) -> Result<Option<String>, String> {
+    if p.is_null() {
+        return Ok(None);
+    }
+    cstr_to_string(p).map(Some)
 }
 
 pub(crate) fn string_to_c(s: String) -> *mut c_char {
@@ -610,6 +621,7 @@ pub fn send_json(chat_id: &str, text: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
 // Media (om-richmedia lane: auth'd inline-image fetch for `<img>` mining)
 // ---------------------------------------------------------------------------
 
@@ -651,6 +663,108 @@ pub fn media_fetch_json(url: &str) -> String {
     match run() {
         Ok(s) => s,
         Err(e) => err_json("media", e),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Shared files (om-shared lane: Graph driveItems for chats + channels)
+// ---------------------------------------------------------------------------
+
+fn shared_file_to_json(f: &ost::api::SharedFile) -> serde_json::Value {
+    json!({
+        "id": f.id,
+        "name": f.name,
+        "size": f.size,
+        "mime": f.mime,
+        "web_url": f.web_url,
+        "download_url": f.download_url,
+        "drive_id": f.drive_id,
+        "created": f.created,
+        "modified": f.modified,
+        "sender": f.sender,
+    })
+}
+
+/// Shared files for one chat/channel as JSON. Requires sign-in; unsigned
+/// yields `{ok:false}`. Empty `chat_id` is rejected before any network.
+pub fn files_json(chat_id: &str, limit: usize) -> String {
+    if chat_id.trim().is_empty() {
+        return err_json("arg", "empty chat_id");
+    }
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let files = ost::api::list_chat_files_data(&client, chat_id, limit)
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let items: Vec<_> = files.iter().map(shared_file_to_json).collect();
+            Ok(json!({"ok": true, "chat_id": chat_id, "files": items}).to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("files", e),
+    }
+}
+
+/// Upload a local file to a chat/channel and post it as a `reference`
+/// attachment. Small files only (<4 MB, ost rejects larger). Empty args
+/// are rejected before any network. Returns `{ok:true, file:{...}}`.
+pub fn files_upload_json(chat_id: &str, path: &str) -> String {
+    if chat_id.trim().is_empty() {
+        return err_json("arg", "empty chat_id");
+    }
+    if path.trim().is_empty() {
+        return err_json("arg", "empty path");
+    }
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let file = ost::api::upload_file_data(&client, chat_id, path)
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            Ok(json!({"ok": true, "file": shared_file_to_json(&file)}).to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("files_upload", e),
+    }
+}
+
+/// Download one driveItem's content to `dest`. Empty args are rejected
+/// before any network. Returns `{ok:true, path, bytes}`.
+pub fn files_download_json(drive_id: &str, item_id: &str, dest: &str) -> String {
+    if drive_id.trim().is_empty() {
+        return err_json("arg", "empty drive_id");
+    }
+    if item_id.trim().is_empty() {
+        return err_json("arg", "empty item_id");
+    }
+    if dest.trim().is_empty() {
+        return err_json("arg", "empty dest");
+    }
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let n = ost::api::download_file_data(&client, drive_id, item_id, dest)
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            Ok(json!({"ok": true, "path": dest, "bytes": n}).to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("files_download", e),
     }
 }
 
@@ -875,6 +989,319 @@ pub fn resolve_mri_json(mri: &str) -> String {
         Ok(s) => s,
         Err(e) if is_not_found(&e) => err_json("not_found", e),
         Err(e) => err_json("resolve_mri", e),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Reminders (om-remind lane: Microsoft To Do via Graph /me/todo)
+// ---------------------------------------------------------------------------
+
+fn todo_list_to_json(l: &ost::api::TodoListInfo) -> serde_json::Value {
+    json!({
+        "id": l.id,
+        "name": l.name,
+        "wellknown": l.wellknown,
+    })
+}
+
+fn todo_task_to_json(t: &ost::api::TodoTaskInfo) -> serde_json::Value {
+    json!({
+        "id": t.id,
+        "title": t.title,
+        "status": t.status,
+        "importance": t.importance,
+        "due": t.due,
+        "reminder": t.reminder,
+        "completed": t.completed,
+    })
+}
+
+/// To Do lists as JSON. Requires sign-in; unsigned yields `{ok:false}`.
+pub fn reminders_json() -> String {
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let lists = ost::api::list_todo_lists_data(&client)
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let items: Vec<_> = lists.iter().map(todo_list_to_json).collect();
+            Ok(json!({"ok": true, "lists": items}).to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("reminders", e),
+    }
+}
+
+/// Reject a Graph path-segment id before any network. Mirrors the ost
+/// guard so Swift gets `arg` errors without a client build.
+fn todo_id_ok(what: &str, id: &str) -> Result<(), String> {
+    if id.trim().is_empty() {
+        return Err(err_json("arg", format!("empty {}", what)));
+    }
+    if id.contains('/')
+        || id.contains('?')
+        || id.contains('#')
+        || id.chars().any(|c| c.is_whitespace())
+    {
+        return Err(err_json(
+            "arg",
+            format!("{} must not contain '/', '?', '#' or whitespace", what),
+        ));
+    }
+    Ok(())
+}
+
+/// Tasks for one To Do list as JSON. Requires sign-in; unsigned yields
+/// `{ok:false}`. Bad `list_id` is rejected before any network.
+pub fn reminder_tasks_json(list_id: &str, limit: usize) -> String {
+    if let Err(e) = todo_id_ok("list_id", list_id) {
+        return e;
+    }
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let tasks = ost::api::list_todo_tasks_data(&client, list_id, limit)
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let items: Vec<_> = tasks.iter().map(todo_task_to_json).collect();
+            Ok(json!({"ok": true, "list_id": list_id, "tasks": items}).to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("reminder_tasks", e),
+    }
+}
+
+/// Create one task in a list. Returns `{ok:true, task}` or `{ok:false}`.
+/// Empty `list_id`/`title` are rejected before any network.
+pub fn reminder_add_json(list_id: &str, title: &str) -> String {
+    if let Err(e) = todo_id_ok("list_id", list_id) {
+        return e;
+    }
+    if title.trim().is_empty() {
+        return err_json("arg", "empty title");
+    }
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let task = ost::api::create_todo_task_data(&client, list_id, title)
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            Ok(json!({"ok": true, "task": todo_task_to_json(&task)}).to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("reminder_add", e),
+    }
+}
+
+/// Mark one task completed. Returns `{ok:true, task}` or `{ok:false}`.
+/// Bad ids are rejected before any network.
+pub fn reminder_done_json(list_id: &str, task_id: &str) -> String {
+    if let Err(e) = todo_id_ok("list_id", list_id) {
+        return e;
+    }
+    if let Err(e) = todo_id_ok("task_id", task_id) {
+        return e;
+    }
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let task = ost::api::complete_todo_task_data(&client, list_id, task_id)
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            Ok(json!({"ok": true, "task": todo_task_to_json(&task)}).to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("reminder_done", e),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Notes (om-notes lane: OneNote read + paragraph append)
+// ---------------------------------------------------------------------------
+
+fn notebook_to_json(n: &ost::api::NotebookInfo) -> serde_json::Value {
+    json!({
+        "id": n.id,
+        "name": n.name,
+    })
+}
+
+fn note_page_meta_to_json(p: &ost::api::PageInfo) -> serde_json::Value {
+    json!({
+        "id": p.id,
+        "title": p.title,
+        "updated": p.updated,
+    })
+}
+
+fn note_section_to_json(s: &ost::api::SectionInfo) -> serde_json::Value {
+    let pages: Vec<_> = s.pages.iter().map(note_page_meta_to_json).collect();
+    json!({
+        "id": s.id,
+        "name": s.name,
+        "pages": pages,
+    })
+}
+
+/// Normalize the optional group scope: `None`/blank reads the user's own
+/// OneNote; otherwise the id must be path-safe (no `/`, no whitespace).
+fn notes_group(group_id: Option<&str>) -> Result<Option<String>, String> {
+    match group_id.map(str::trim) {
+        None | Some("") => Ok(None),
+        Some(g) => {
+            if g.contains('/') || g.chars().any(|c| c.is_whitespace()) {
+                return Err("group_id must not contain '/' or whitespace".to_string());
+            }
+            Ok(Some(g.to_string()))
+        }
+    }
+}
+
+/// List OneNote notebooks as JSON. `group_id` (`None`/blank = the user's
+/// own) reads the M365 group (team) notebooks instead. Requires sign-in.
+pub fn notes_json(group_id: Option<&str>) -> String {
+    let group = match notes_group(group_id) {
+        Ok(g) => g,
+        Err(e) => return err_json("arg", e),
+    };
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let notebooks = ost::api::list_notebooks_data(&client, group.as_deref())
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let items: Vec<_> = notebooks.iter().map(notebook_to_json).collect();
+            Ok(json!({"ok": true, "notebooks": items}).to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("notes", e),
+    }
+}
+
+/// One notebook's sections, each with its pages. Empty `notebook_id` is
+/// rejected before any network.
+pub fn note_sections_json(notebook_id: &str, group_id: Option<&str>) -> String {
+    if notebook_id.trim().is_empty() {
+        return err_json("arg", "empty notebook_id");
+    }
+    let group = match notes_group(group_id) {
+        Ok(g) => g,
+        Err(e) => return err_json("arg", e),
+    };
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let sections = ost::api::list_notebook_sections_data(
+                &client,
+                notebook_id.trim(),
+                group.as_deref(),
+            )
+            .await
+            .map_err(|e| format!("{:#}", e))?;
+            let items: Vec<_> = sections.iter().map(note_section_to_json).collect();
+            Ok(json!({"ok": true, "sections": items}).to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("note_sections", e),
+    }
+}
+
+/// One page's HTML content. Empty `page_id` is rejected before any network.
+pub fn note_page_json(page_id: &str, group_id: Option<&str>) -> String {
+    if page_id.trim().is_empty() {
+        return err_json("arg", "empty page_id");
+    }
+    let group = match notes_group(group_id) {
+        Ok(g) => g,
+        Err(e) => return err_json("arg", e),
+    };
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let page = ost::api::read_note_page_data(&client, page_id.trim(), group.as_deref())
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            Ok(json!({
+                "ok": true,
+                "id": page.id,
+                "title": page.title,
+                "html": page.html,
+            })
+            .to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("note_page", e),
+    }
+}
+
+/// Append one plain-text paragraph to a page. Empty `page_id`/`text` are
+/// rejected before any network. Returns `{ok:true, id}`.
+pub fn note_append_json(page_id: &str, text: &str, group_id: Option<&str>) -> String {
+    if page_id.trim().is_empty() {
+        return err_json("arg", "empty page_id");
+    }
+    if text.trim().is_empty() {
+        return err_json("arg", "empty text");
+    }
+    let group = match notes_group(group_id) {
+        Ok(g) => g,
+        Err(e) => return err_json("arg", e),
+    };
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            ost::api::append_note_paragraph_data(
+                &client,
+                page_id.trim(),
+                text,
+                group.as_deref(),
+            )
+            .await
+            .map_err(|e| format!("{:#}", e))?;
+            Ok(json!({"ok": true, "id": page_id.trim()}).to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("note_append", e),
     }
 }
 
@@ -1111,6 +1538,105 @@ pub extern "C" fn ostmac_media_fetch(url: *const c_char) -> *mut c_char {
     }
 }
 
+/// Shared files JSON for one chat/channel. See [`files_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_files(chat_id: *const c_char, limit: c_int) -> *mut c_char {
+    let lim = if limit <= 0 { 20 } else { limit as usize };
+    match cstr_to_string(chat_id) {
+        Ok(id) => string_to_c(files_json(&id, lim)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
+/// Upload a local file to a chat/channel. See [`files_upload_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_files_upload(
+    chat_id: *const c_char,
+    path: *const c_char,
+) -> *mut c_char {
+    let id = match cstr_to_string(chat_id) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    match cstr_to_string(path) {
+        Ok(p) => string_to_c(files_upload_json(&id, &p)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
+/// To Do lists JSON (requires sign-in). See [`reminders_json`].
+/// Caller frees with [`ostmac_free`].
+#[no_mangle]
+pub extern "C" fn ostmac_reminders() -> *mut c_char {
+    string_to_c(reminders_json())
+}
+
+/// Tasks for one To Do list. See [`reminder_tasks_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_reminder_tasks(
+    list_id: *const c_char,
+    limit: c_int,
+) -> *mut c_char {
+    let lim = if limit <= 0 { 50 } else { limit as usize };
+    match cstr_to_string(list_id) {
+        Ok(id) => string_to_c(reminder_tasks_json(&id, lim)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
+/// Download one driveItem's content to `dest`. See [`files_download_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_files_download(
+    drive_id: *const c_char,
+    item_id: *const c_char,
+    dest: *const c_char,
+) -> *mut c_char {
+    let drive = match cstr_to_string(drive_id) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    let item = match cstr_to_string(item_id) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    match cstr_to_string(dest) {
+        Ok(d) => string_to_c(files_download_json(&drive, &item, &d)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
+/// Create one task in a list. See [`reminder_add_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_reminder_add(
+    list_id: *const c_char,
+    title: *const c_char,
+) -> *mut c_char {
+    let id = match cstr_to_string(list_id) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    match cstr_to_string(title) {
+        Ok(t) => string_to_c(reminder_add_json(&id, &t)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
+/// Mark one task completed. See [`reminder_done_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_reminder_done(
+    list_id: *const c_char,
+    task_id: *const c_char,
+) -> *mut c_char {
+    let id = match cstr_to_string(list_id) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    match cstr_to_string(task_id) {
+        Ok(t) => string_to_c(reminder_done_json(&id, &t)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
 /// Start background Trouter push. See [`trouter_start`].
 #[no_mangle]
 pub extern "C" fn ostmac_trouter_start() -> c_int {
@@ -1162,6 +1688,73 @@ pub extern "C" fn ostmac_presence() -> *mut c_char {
 pub extern "C" fn ostmac_presence_set(status: *const c_char) -> *mut c_char {
     match cstr_to_string(status) {
         Ok(s) => string_to_c(set_presence_json(&s)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
+/// OneNote notebooks JSON (requires sign-in). `group_id` null/empty reads
+/// the user's own; otherwise the M365 group (team) notebooks. See
+/// [`notes_json`]. Caller frees with [`ostmac_free`].
+#[no_mangle]
+pub extern "C" fn ostmac_notes(group_id: *const c_char) -> *mut c_char {
+    match opt_cstr_to_string(group_id) {
+        Ok(g) => string_to_c(notes_json(g.as_deref())),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
+/// One notebook's sections (each with pages) as JSON.
+/// See [`note_sections_json`]. Caller frees with [`ostmac_free`].
+#[no_mangle]
+pub extern "C" fn ostmac_note_sections(
+    notebook_id: *const c_char,
+    group_id: *const c_char,
+) -> *mut c_char {
+    let nb = match cstr_to_string(notebook_id) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    match opt_cstr_to_string(group_id) {
+        Ok(g) => string_to_c(note_sections_json(&nb, g.as_deref())),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
+/// One page's HTML content as JSON. See [`note_page_json`].
+/// Caller frees with [`ostmac_free`].
+#[no_mangle]
+pub extern "C" fn ostmac_note_page(
+    page_id: *const c_char,
+    group_id: *const c_char,
+) -> *mut c_char {
+    let id = match cstr_to_string(page_id) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    match opt_cstr_to_string(group_id) {
+        Ok(g) => string_to_c(note_page_json(&id, g.as_deref())),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
+/// Append one plain-text paragraph to a page: `{ok:true, id}`.
+/// See [`note_append_json`]. Caller frees with [`ostmac_free`].
+#[no_mangle]
+pub extern "C" fn ostmac_note_append(
+    page_id: *const c_char,
+    text: *const c_char,
+    group_id: *const c_char,
+) -> *mut c_char {
+    let id = match cstr_to_string(page_id) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    let tx = match cstr_to_string(text) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    match opt_cstr_to_string(group_id) {
+        Ok(g) => string_to_c(note_append_json(&id, &tx, g.as_deref())),
         Err(e) => string_to_c(err_json("arg", e)),
     }
 }
@@ -1819,6 +2412,232 @@ mod tests {
     }
 
     #[test]
+    fn todo_json_shapes() {
+        let l = ost::api::TodoListInfo {
+            id: "L1".to_string(),
+            name: "Tasks".to_string(),
+            wellknown: Some("defaultList".to_string()),
+        };
+        let v = todo_list_to_json(&l);
+        assert_eq!(v["id"], "L1");
+        assert_eq!(v["name"], "Tasks");
+        assert_eq!(v["wellknown"], "defaultList");
+        let l2 = ost::api::TodoListInfo {
+            id: "L2".to_string(),
+            name: "Groceries".to_string(),
+            wellknown: None,
+        };
+        assert!(todo_list_to_json(&l2)["wellknown"].is_null());
+
+        let t = ost::api::TodoTaskInfo {
+            id: "T1".to_string(),
+            title: "Buy milk".to_string(),
+            status: "notStarted".to_string(),
+            importance: "high".to_string(),
+            due: Some("2026-09-23T12:00:00.0000000".to_string()),
+            reminder: None,
+            completed: false,
+        };
+        let v = todo_task_to_json(&t);
+        assert_eq!(v["title"], "Buy milk");
+        assert_eq!(v["status"], "notStarted");
+        assert_eq!(v["importance"], "high");
+        assert_eq!(v["due"], "2026-09-23T12:00:00.0000000");
+        assert!(v["reminder"].is_null());
+        assert_eq!(v["completed"], false);
+    }
+
+    #[test]
+    fn reminder_tasks_rejects_bad_list_id_without_network() {
+        for bad in ["", "   ", "a/b", "a?b", "a#b", "a b"] {
+            let v: serde_json::Value =
+                serde_json::from_str(&reminder_tasks_json(bad, 10)).unwrap();
+            assert_eq!(v["ok"], false, "id {:?}", bad);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
+    fn notes_group_normalizes_scope() {
+        assert_eq!(notes_group(None).unwrap(), None);
+        assert_eq!(notes_group(Some("")).unwrap(), None);
+        assert_eq!(notes_group(Some("  ")).unwrap(), None);
+        assert_eq!(
+            notes_group(Some(" team-1 ")).unwrap(),
+            Some("team-1".to_string())
+        );
+        for bad in ["a/b", "a b", "../me"] {
+            assert!(notes_group(Some(bad)).is_err(), "group {:?}", bad);
+        }
+    }
+
+    #[test]
+    fn reminder_add_rejects_bad_args_without_network() {
+        for (id, title) in [
+            ("", "hi"),
+            ("L1", ""),
+            ("L1", "   "),
+            ("a/b", "hi"),
+            ("L1?x", "hi"),
+        ] {
+            let v: serde_json::Value =
+                serde_json::from_str(&reminder_add_json(id, title)).unwrap();
+            assert_eq!(v["ok"], false, "id={:?} title={:?}", id, title);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
+    fn notes_json_shapes() {
+        let n = ost::api::NotebookInfo {
+            id: "nb-1".to_string(),
+            name: "Work".to_string(),
+        };
+        let v = notebook_to_json(&n);
+        assert_eq!(v["id"], "nb-1");
+        assert_eq!(v["name"], "Work");
+        let s = ost::api::SectionInfo {
+            id: "s-1".to_string(),
+            name: "Notes".to_string(),
+            pages: vec![
+                ost::api::PageInfo {
+                    id: "p-1".to_string(),
+                    title: "Kickoff".to_string(),
+                    updated: Some("2026-09-22T10:00:00Z".to_string()),
+                },
+                ost::api::PageInfo {
+                    id: "p-2".to_string(),
+                    title: "Untitled".to_string(),
+                    updated: None,
+                },
+            ],
+        };
+        let v = note_section_to_json(&s);
+        assert_eq!(v["name"], "Notes");
+        assert_eq!(v["pages"].as_array().unwrap().len(), 2);
+        assert_eq!(v["pages"][0]["title"], "Kickoff");
+        assert_eq!(v["pages"][0]["updated"], "2026-09-22T10:00:00Z");
+        assert!(v["pages"][1]["updated"].is_null());
+    }
+
+    #[test]
+    fn notes_rejects_bad_args_without_network() {
+        for bad in ["", "   "] {
+            let v: serde_json::Value =
+                serde_json::from_str(&note_sections_json(bad, None)).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+            let v: serde_json::Value =
+                serde_json::from_str(&note_page_json(bad, None)).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+            let v: serde_json::Value =
+                serde_json::from_str(&note_append_json(bad, "hi", None)).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
+        // Empty append text rejected (valid page id).
+        let v: serde_json::Value =
+            serde_json::from_str(&note_append_json("p-1", "  ", None)).unwrap();
+        assert_eq!(v["ok"], false);
+        assert_eq!(v["error"], "arg");
+        // Bad group scope rejected on every entry point.
+        for s in [
+            notes_json(Some("a/b")),
+            note_sections_json("nb-1", Some("a b")),
+            note_page_json("p-1", Some("../me")),
+            note_append_json("p-1", "hi", Some("a/b")),
+        ] {
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
+    fn reminder_done_rejects_bad_ids_without_network() {
+        for (list, task) in [("", "T1"), ("L1", ""), ("L1", "a/b"), ("a b", "T1")] {
+            let v: serde_json::Value =
+                serde_json::from_str(&reminder_done_json(list, task)).unwrap();
+            assert_eq!(v["ok"], false, "list={:?} task={:?}", list, task);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
+    fn ffi_reminder_nulls_are_arg_errors() {
+        let id = CString::new("L1").unwrap();
+        unsafe {
+            let p = ostmac_reminder_tasks(std::ptr::null(), 10);
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["error"], "arg");
+
+            let p = ostmac_reminder_add(id.as_ptr(), std::ptr::null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["error"], "arg");
+
+            let p = ostmac_reminder_done(std::ptr::null(), id.as_ptr());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
+    fn opt_cstr_null_decodes_to_none() {
+        // Null group scope decodes to None (user's own OneNote) without
+        // touching the network; arg validation for ids still applies.
+        assert_eq!(opt_cstr_to_string(std::ptr::null()).unwrap(), None);
+        let g = CString::new("team-1").unwrap();
+        assert_eq!(
+            opt_cstr_to_string(g.as_ptr()).unwrap(),
+            Some("team-1".to_string())
+        );
+        // FFI still rejects a bad group before any network.
+        let bad = CString::new("a/b").unwrap();
+        unsafe {
+            let p = ostmac_notes(bad.as_ptr());
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
+    fn ffi_note_ids_null_is_arg_error() {
+        unsafe {
+            let p = ostmac_note_sections(std::ptr::null(), std::ptr::null());
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+
+            let p = ostmac_note_page(std::ptr::null(), std::ptr::null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["error"], "arg");
+
+            let id = CString::new("p-1").unwrap();
+            let p = ostmac_note_append(id.as_ptr(), std::ptr::null(), std::ptr::null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
     fn typed_poll_id_fallback_is_stable() {
         let _ = ost::event_hub::drain(1024);
         let raw = r#"{"content":"x","messagetype":"Text","from":"8:x","threadId":"19:t@thread.v2"}"#;
@@ -1904,6 +2723,52 @@ mod tests {
     }
 
     #[test]
+    fn shared_file_json_shape() {
+        let f = ost::api::SharedFile {
+            id: "item-1".to_string(),
+            name: "deck.pdf".to_string(),
+            size: 48211,
+            mime: Some("application/pdf".to_string()),
+            web_url: Some("https://sp/deck".to_string()),
+            download_url: Some("https://dl/deck".to_string()),
+            drive_id: Some("D1".to_string()),
+            created: Some("2026-09-20T10:00:00Z".to_string()),
+            modified: None,
+            sender: Some("Priya Nair".to_string()),
+        };
+        let v = shared_file_to_json(&f);
+        assert_eq!(v["id"], "item-1");
+        assert_eq!(v["name"], "deck.pdf");
+        assert_eq!(v["size"], 48211);
+        assert_eq!(v["mime"], "application/pdf");
+        assert_eq!(v["drive_id"], "D1");
+        assert_eq!(v["sender"], "Priya Nair");
+        assert!(v["modified"].is_null());
+    }
+
+    #[test]
+    fn files_rejects_empty_args_without_network() {
+        for bad in ["", "   "] {
+            let v: serde_json::Value =
+                serde_json::from_str(&files_json(bad, 20)).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
+        for (id, path) in [("", "/tmp/a"), ("19:x", ""), ("19:x", "  ")] {
+            let v: serde_json::Value =
+                serde_json::from_str(&files_upload_json(id, path)).unwrap();
+            assert_eq!(v["ok"], false, "id={:?} path={:?}", id, path);
+            assert_eq!(v["error"], "arg");
+        }
+        for (d, i, dst) in [("", "i", "/tmp/x"), ("d", "", "/tmp/x"), ("d", "i", "")] {
+            let v: serde_json::Value =
+                serde_json::from_str(&files_download_json(d, i, dst)).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
     fn not_found_matches_graph_404_text() {
         assert!(is_not_found("HTTP 404 for https://graph.microsoft.com/v1.0/users/x: {}"));
         assert!(!is_not_found("HTTP 401 for https://graph.microsoft.com/v1.0/me: denied"));
@@ -1928,6 +2793,40 @@ mod tests {
         let m = CString::new("8:skypeids:aaa").unwrap();
         unsafe {
             let p = ostmac_resolve_mri(m.as_ptr());
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
+    fn ffi_files_null_is_arg_error() {
+        unsafe {
+            let p = ostmac_files(std::ptr::null(), 20);
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
+        let id = CString::new("19:x").unwrap();
+        unsafe {
+            let p = ostmac_files_upload(id.as_ptr(), std::ptr::null());
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
+        let d = CString::new("D1").unwrap();
+        let it = CString::new("I1").unwrap();
+        unsafe {
+            let p = ostmac_files_download(d.as_ptr(), it.as_ptr(), std::ptr::null());
             assert!(!p.is_null());
             let s = CStr::from_ptr(p).to_string_lossy().into_owned();
             ostmac_free(p);

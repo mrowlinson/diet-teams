@@ -59,6 +59,49 @@ needing maintainer buy-in. Minor PRs stand alone; majors are separate PRs.
     cap, https-only); `needs_auth` keeps the Skype token on Microsoft
     hosts, public URLs fetch bare. Image-only bubbles (empty stripped
     text) survive the filter. Re-exported in `src/api/mod.rs`.
+13. `src/tui/` deleted + `Tui` subcommand + `mod tui` wiring (`main.rs`,
+    `lib.rs`) + `ratatui`/`crossterm`/`tokio-stream`/`unicode-width` deps —
+    [major][LOCAL-ONLY, do not upstream] **drop TUI from our vendored copy**.
+    Diet Teams (SwiftUI) replaces the UI; the TUI is eisbaw's product, we
+    keep our copy lean (CLI debug surface + `ostmac-core` lib only). All CLI
+    subcommands (`chats`/`read`/`send`/`call-test`/etc) unchanged. 8 TUI unit
+    tests drop with the module; zero failures expected elsewhere.
+14. `src/api/files.rs` (new) + `src/api/client.rs` + `src/api/mod.rs` +
+    `src/main.rs` — **chat shared files via Graph driveItems (om-shared lane)**.
+    `SharedFile`/`list_chat_files_data`/`download_file_data`/`upload_file_data`
+    re-exported in `src/api/mod.rs`. Chats: Graph `/me/chats/{id}/messages`
+    `reference` attachments resolved via `/shares/{u!b64}/driveItem` (deduped
+    by item id, folders skipped); channels: team scan + `filesFolder` +
+    `/drives/{d}/items/{i}/children`. CLI: `files`, `files-download`,
+    `files-upload`. `client.rs` gains `graph_put_bytes` (drive PUT). Upload is
+    small-file PUT only (<4 MB, chat folder "Microsoft Teams Chat Files") +
+    `reference` message post (attachment id = GUID from driveItem eTag,
+    contentUrl = webDavUrl/webUrl). No auth scope change: existing Graph token
+    (`/.default`) already carries Files.Read/Write. Unit tests: share-id
+    round-trip, segment encoding, eTag GUID scan, children/message parsing,
+    attachment preference.
+
+15. `src/api/todo.rs` (new) + `src/api/mod.rs` + `src/api/client.rs` +
+    `src/main.rs` — **Microsoft To Do lists/tasks (om-remind lane)**.
+    Graph `/me/todo/lists`, `/lists/{id}/tasks` (GET), create (POST),
+    complete (PATCH `status: completed`). `TodoListInfo`/`TodoTaskInfo`
+    + `*_data` fns re-exported; CLI `todo` (bare lists, `--list`,
+    `--add/--to`, `--done/--to`). `client.rs` gains generic `graph_patch`.
+    Auth: existing Graph token, NO scope widening (Teams client id already
+    consents Tasks.ReadWrite; 403 surfaces as the call detail). Ids breaking
+    the path (`/`, `?`, `#`, whitespace) rejected pre-network. TUI untouched.
+
+16. `src/api/notes.rs` (new) + `src/api/client.rs` (`graph_patch_raw`) +
+    `src/main.rs` (`Notes` cmd) — **OneNote read + paragraph append
+    (om-notes lane)**. `list_notebooks_data` (`/me` or `/groups/{id}` scoped),
+    `list_notebook_sections_data` (sections with nested pages; failed pages
+    fetch warns + empties, teams.rs parity), `read_note_page_data` (raw HTML,
+    title scraped from `<title>`), `append_note_paragraph_data` (PATCH with
+    hand-rolled multipart Commands, no new deps). CLI: `notes [--group]`,
+    `--notebook` lists sections+pages, `--page` prints stripped text,
+    `--page --append` appends then prints. Auth scopes unchanged: the
+    existing Graph `/.default` exchange covers OneNote (delegated perms ride
+    the first-party client); no new consent requested.
 
 ## Upstream PRs (2026-09-22, base 0892144; main red on sdp E0308 until #5)
 

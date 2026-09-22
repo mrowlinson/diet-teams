@@ -112,6 +112,79 @@ impl TeamsClient {
         check_response(resp, &url).await
     }
 
+    /// PUT bytes to Microsoft Graph API (drive upload). `content_type` is
+    /// the file MIME; Graph accepts `application/octet-stream` for all.
+    pub async fn graph_put_bytes(
+        &self,
+        path: &str,
+        bytes: Vec<u8>,
+        content_type: &str,
+    ) -> Result<reqwest::Response> {
+        let token = self.graph_token()?;
+        let url = format!("{}{}", GRAPH_BASE, path);
+        tracing::debug!("Graph PUT {} ({} bytes)", url, bytes.len());
+
+        let resp = self
+            .http
+            .put(&url)
+            .bearer_auth(&token)
+            .header(reqwest::header::CONTENT_TYPE, content_type.to_string())
+            .body(bytes)
+            .send()
+            .await
+            .with_context(|| format!("Graph PUT {} failed", url))?;
+
+        check_response(resp, &url).await
+    }
+
+    /// PATCH request to Microsoft Graph API (Bearer [REDACTED] with Graph token).
+    /// OstMac (om-remind): To Do task completion flips `status` via PATCH.
+    pub async fn graph_patch(
+        &self,
+        path: &str,
+        body: &serde_json::Value,
+    ) -> Result<reqwest::Response> {
+        let token = self.graph_token()?;
+        let url = format!("{}{}", GRAPH_BASE, path);
+        tracing::debug!("Graph PATCH {}", url);
+
+        let resp = self
+            .http
+            .patch(&url)
+            .bearer_auth(&token)
+            .json(body)
+            .send()
+            .await
+            .with_context(|| format!("Graph PATCH {} failed", url))?;
+
+        check_response(resp, &url).await
+    }
+
+    /// PATCH request to Microsoft Graph API with a raw body (Bearer [REDACTED] auth).
+    /// Used by the OneNote edit path (multipart/form-data Commands).
+    pub async fn graph_patch_raw(
+        &self,
+        path: &str,
+        content_type: &str,
+        body: Vec<u8>,
+    ) -> Result<reqwest::Response> {
+        let token = self.graph_token()?;
+        let url = format!("{}{}", GRAPH_BASE, path);
+        tracing::debug!("Graph PATCH {}", url);
+
+        let resp = self
+            .http
+            .patch(&url)
+            .bearer_auth(&token)
+            .header("Content-Type", content_type)
+            .body(body)
+            .send()
+            .await
+            .with_context(|| format!("Graph PATCH {} failed", url))?;
+
+        check_response(resp, &url).await
+    }
+
     /// GET request to Teams/Skype API (X-SkypeToken header).
     pub async fn teams_get(&self, url: &str) -> Result<reqwest::Response> {
         let token = self.skype_token()?;

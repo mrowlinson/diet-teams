@@ -9,7 +9,6 @@ mod config;
 mod event_hub;
 mod models;
 mod trouter;
-mod tui;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -72,6 +71,57 @@ enum Commands {
     /// List joined teams and their channels
     Teams,
 
+    /// List shared files in a chat or channel
+    Files {
+        /// Chat or channel ID (from `chats` / `teams` output)
+        chat_id: String,
+
+        /// Maximum number of files to show
+        #[arg(short, long, default_value = "20")]
+        limit: usize,
+    },
+
+    /// Download a shared file by drive+item id
+    FilesDownload {
+        /// Drive ID (from `files` JSON via library; shown in verbose logs)
+        drive_id: String,
+
+        /// DriveItem ID
+        item_id: String,
+
+        /// Destination file path
+        out: String,
+    },
+
+    /// Upload a local file to a chat or channel (<4 MB)
+    FilesUpload {
+        /// Chat or channel ID (from `chats` / `teams` output)
+        #[arg(short, long)]
+        to: String,
+
+        /// Local file path
+        path: String,
+    },
+
+    /// OneNote notebooks, sections, pages (read; --append edits)
+    Notes {
+        /// M365 group (team) id: read the team notebook instead of the user's
+        #[arg(long)]
+        group: Option<String>,
+
+        /// Notebook id: list its sections and pages
+        #[arg(long)]
+        notebook: Option<String>,
+
+        /// Page id: print page content (text)
+        #[arg(long)]
+        page: Option<String>,
+
+        /// Append this paragraph to --page (requires --page)
+        #[arg(long)]
+        append: Option<String>,
+    },
+
     /// Show current user info (verify auth works)
     Whoami,
 
@@ -83,6 +133,31 @@ enum Commands {
         /// New status: available, busy, dnd, away, offline
         #[arg(short, long)]
         set: Option<String>,
+    },
+
+    /// Microsoft To Do lists and tasks (Graph /me/todo).
+    /// Bare: show lists. --list <id>: tasks in that list.
+    /// --add <title> --to <id>: create. --done <task> --to <id>: complete.
+    Todo {
+        /// Show tasks for this list id (default: show lists)
+        #[arg(long)]
+        list: Option<String>,
+
+        /// Maximum tasks to show
+        #[arg(short, long, default_value = "50")]
+        limit: usize,
+
+        /// Create a task with this title (requires --to)
+        #[arg(long)]
+        add: Option<String>,
+
+        /// Target list id for --add / --done
+        #[arg(long)]
+        to: Option<String>,
+
+        /// Complete this task id (requires --to)
+        #[arg(long)]
+        done: Option<String>,
     },
 
     /// Place a test call to yourself (self-call)
@@ -123,40 +198,14 @@ enum Commands {
     /// Test camera capture: record 3 seconds then play back in SDL2 window
     #[cfg(feature = "video-capture")]
     CamTest,
-
-    /// Launch the terminal user interface
-    Tui,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    // Initialize logging differently for TUI vs CLI mode.
-    // TUI mode captures logs to a buffer (displayed in debug pane).
-    // CLI mode logs to stderr as usual.
     let filter_str = if cli.verbose { "debug" } else { "info" };
 
-    if matches!(cli.command, Commands::Tui) {
-        // TUI mode: capture logs to a buffer for in-TUI display.
-        let log_buffer = tui::LogBuffer::new();
-        tracing_subscriber::registry()
-            .with(
-                tracing_subscriber::EnvFilter::try_from_default_env()
-                    .unwrap_or_else(|_| filter_str.into()),
-            )
-            .with(
-                tracing_subscriber::fmt::layer()
-                    .with_target(false)
-                    .with_ansi(false)
-                    .with_writer(log_buffer.clone()),
-            )
-            .init();
-
-        return tui::run(log_buffer).await;
-    }
-
-    // CLI mode: log to stderr.
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -179,6 +228,35 @@ async fn main() -> Result<()> {
         }
         Commands::Teams => {
             api::list_teams().await?;
+        }
+        Commands::Files { chat_id, limit } => {
+            tracing::info!("Fetching shared files...");
+            api::list_files(&chat_id, limit).await?;
+        }
+        Commands::FilesDownload {
+            drive_id,
+            item_id,
+            out,
+        } => {
+            api::download_file(&drive_id, &item_id, &out).await?;
+        }
+        Commands::FilesUpload { to, path } => {
+            tracing::info!("Uploading file...");
+            api::upload_file(&to, &path).await?;
+        }
+        Commands::Notes {
+            group,
+            notebook,
+            page,
+            append,
+        } => {
+            api::notes(
+                group.as_deref(),
+                notebook.as_deref(),
+                page.as_deref(),
+                append.as_deref(),
+            )
+            .await?;
         }
         Commands::Whoami => {
             api::whoami().await?;
@@ -228,8 +306,31 @@ async fn main() -> Result<()> {
                 api::get_presence().await?;
             }
         },
-        // TUI is handled above with early return.
-        Commands::Tui => unreachable!(),
+        Commands::Todo {
+            list,
+            limit,
+            add,
+            to,
+            done,
+        } => {
+            if let Some(title) = add {
+                let Some(list_id) = to else {
+                    anyhow::bail!("--add requires --to <list-id>");
+                };
+                tracing::info!("Creating To Do task...");
+                api::create_todo_task(&list_id, &title).await?;
+            } else if let Some(task_id) = done {
+                let Some(list_id) = to else {
+                    anyhow::bail!("--done requires --to <list-id>");
+                };
+                tracing::info!("Completing To Do task...");
+                api::complete_todo_task(&list_id, &task_id).await?;
+            } else if let Some(list_id) = list {
+                api::list_todo_tasks(&list_id, limit).await?;
+            } else {
+                api::list_todo_lists().await?;
+            }
+        }
     }
 
     Ok(())

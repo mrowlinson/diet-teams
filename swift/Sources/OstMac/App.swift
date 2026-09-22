@@ -18,6 +18,9 @@
 // send via core — never use it on shared chats for testing.
 // --show-about / --show-settings / --show-av open those windows at launch (shot hooks).
 // --show-teams opens the sidebar on the Teams browser (shot hook).
+// --show-shared opens the conversation on the Shared files tab (shot hook).
+// --show-reminders opens the sidebar on the Reminders browser (shot hook).
+// --show-notes opens the conversation on the Notes tab (shot hook).
 // --auth-state <name> opens the Auth window with a canned state, never
 // touching core/network (names: signed-out, starting, code, polling,
 // signed-in, expired, refreshing, refresh-failed, error). `--state` is
@@ -125,11 +128,15 @@ final class AppState: ObservableObject {
     let isDemo: Bool
     let chats: ChatListViewModel
     let teams: TeamsViewModel
+    let reminders: RemindersViewModel
     let conv = ConversationStore()
+    let shared = SharedFilesStore()
     let feed = RealtimeFeed()
     let auth = AuthViewModel()
     let presence = PresenceStore()
     let call: CallStore
+    let notes = NotesStore()
+    let showNotes: Bool
     @Published var openChatID: String?
     @Published var signedIn: Bool?
     @Published var coreVersion = "?"
@@ -151,6 +158,7 @@ final class AppState: ObservableObject {
 
     init(args: [String]) {
         isDemo = args.contains("--demo") || args.contains("--demo-rich")
+        showNotes = args.contains("--show-notes")
         call = CallStore(demo: isDemo)
         // Shot hook: --show-call incoming|active seeds the banner offline.
         if let i = args.firstIndex(of: "--show-call"), i + 1 < args.count {
@@ -176,6 +184,10 @@ final class AppState: ObservableObject {
         if isDemo {
             chats = ChatListViewModel(fetcher: { _ in DemoData.chatsResponse() })
             teams = TeamsViewModel(fetcher: { DemoData.teamsResponse() })
+            reminders = RemindersViewModel(
+                listsFetcher: { DemoData.remindersResponse() },
+                tasksFetcher: { DemoData.reminderTasksResponse(for: $0) },
+                localEdits: true)
             presence.adoptOwn(DemoData.ownPresence())
             for (chatID, peer) in DemoData.peerPresence() {
                 presence.adoptChatPeer(chatID: chatID, response: peer)
@@ -183,6 +195,7 @@ final class AppState: ObservableObject {
         } else {
             chats = ChatListViewModel()
             teams = TeamsViewModel()
+            reminders = RemindersViewModel()
         }
         chats.$selectedChatID
             .dropFirst()
@@ -225,6 +238,7 @@ final class AppState: ObservableObject {
         contentOpened = true
         await chats.load()
         await teams.load()
+        await reminders.load()
         if chats.state == .loaded {
             // Core's signed_in is aad-centric; a loaded list proves
             // working auth regardless.
@@ -298,9 +312,20 @@ final class AppState: ObservableObject {
             conv.showDemo(
                 chatID: id, chatName: name, messages: DemoData.messages(for: id),
                 failed: DemoData.failedIDs(for: id))
+            notes.showDemo()
         } else {
             conv.open(chatID: id, chatName: chatName)
+            // Notes scope: channels read the team (M365 group) notebook;
+            // plain chats read the user's own OneNote (no shared notebook).
+            notes.open(groupID: teamID(forChannel: id))
         }
+    }
+
+    /// Team id owning a channel id, or nil for plain chats/unknown ids.
+    func teamID(forChannel channelID: String) -> String? {
+        teams.teams.first(where: { team in
+            team.channels.contains(where: { $0.id == channelID })
+        })?.teamId
     }
 
     /// One live event: count it, refresh the list row (all chats),
@@ -351,6 +376,7 @@ final class AppState: ObservableObject {
             if contentOpened {
                 chats.refresh()
                 teams.refresh()
+                reminders.refresh()
                 if !isDemo {
                     feed.start()
                     presence.refreshOwnSoon()
@@ -375,6 +401,14 @@ struct RootView: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(\.openSettings) private var openSettings
 
+    /// Shot-hook section: --show-reminders wins over --show-teams.
+    static var initialSection: SidebarSection {
+        let args = CommandLine.arguments
+        if args.contains("--show-reminders") { return .reminders }
+        if args.contains("--show-teams") { return .teams }
+        return .chats
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             CallBanner(store: state.call)
@@ -382,9 +416,10 @@ struct RootView: View {
                 NavigationSplitView {
                     SidebarColumn(
                         chats: state.chats, teams: state.teams,
+                        reminders: state.reminders,
                         presence: state.presence,
                         openChatID: state.openChatID,
-                        initialSection: CommandLine.arguments.contains("--show-teams") ? .teams : .chats,
+                        initialSection: RootView.initialSection,
                         onOpenChannel: { id, name in state.openChannel(channelID: id, channelName: name) }
                     )
                     .navigationSplitViewColumnWidth(min: 240, ideal: 300, max: 420)
@@ -394,8 +429,10 @@ struct RootView: View {
                     } else {
                         ConversationView(
                             store: state.conv, presence: state.presence,
-                            call: state.call,
-                            isGroup: state.chats.selectedChat?.is_group ?? true)
+                            call: state.call, shared: state.shared, notes: state.notes,
+                            isGroup: state.chats.selectedChat?.is_group ?? true,
+                            initialTab: CommandLine.arguments.contains("--show-shared") ? 1
+                                : (state.showNotes ? 2 : 0))
                     }
                 }
             } else {

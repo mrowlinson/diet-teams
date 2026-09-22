@@ -1,69 +1,107 @@
-// ConversationView.swift — om-conv/om-convrich: SwiftUI chat window.
+// ConversationView.swift — om-conv/om-convrich/om-shared/om-notes: SwiftUI chat window.
 // Rich bubbles (mentions, code spans, links), day separators, scroll-up
-// load-more paging, edited markers, failed-send retry.
+// load-more paging, edited markers, failed-send retry, Shared files + Notes tabs.
 import SwiftUI
 
 public struct ConversationView: View {
     @ObservedObject public var store: ConversationStore
     @ObservedObject private var presence: PresenceStore
     @ObservedObject public var call: CallStore
+    @ObservedObject public var shared: SharedFilesStore
+    @ObservedObject public var notes: NotesStore
     /// False for 1:1 chats (header shows the chatmate dot).
     private let isGroup: Bool
     @State private var draft = ""
     @State private var lastSeenID: String?
+    @State private var tab: Int
     @FocusState private var boxFocused: Bool
 
     public init(
         store: ConversationStore, presence: PresenceStore = PresenceStore(),
-        call: CallStore = CallStore(), isGroup: Bool = true
+        call: CallStore = CallStore(), shared: SharedFilesStore = SharedFilesStore(),
+        notes: NotesStore = NotesStore(),
+        isGroup: Bool = true, initialTab: Int = 0
     ) {
         self.store = store
         self.presence = presence
         self.call = call
+        self.shared = shared
+        self.notes = notes
         self.isGroup = isGroup
+        _tab = State(initialValue: initialTab)
     }
 
     public var body: some View {
         VStack(spacing: 0) {
             header
             Divider()
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 10) {
-                        loadMoreRow
-                        if store.messages.isEmpty, !store.loading {
-                            Text("No messages yet.")
-                                .foregroundStyle(.secondary)
-                                .padding(.top, 24)
-                        }
-                        ForEach(sections, id: \.key) { section in
-                            DaySeparator(label: section.label)
-                            ForEach(section.messages) { msg in
-                                MessageBubble(
-                                    message: msg,
-                                    failed: store.failedIDs.contains(msg.id),
-                                    onRetry: { _ = store.retry(id: msg.id) }
-                                )
-                                .id(msg.id)
+            Picker("View", selection: $tab) {
+                Text("Chat").tag(0)
+                Text("Shared").tag(1)
+                Text("Notes").tag(2)
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .onChange(of: tab) { syncShared() }
+            Divider()
+            if tab == 0 {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 10) {
+                            loadMoreRow
+                            if store.messages.isEmpty, !store.loading {
+                                Text("No messages yet.")
+                                    .foregroundStyle(.secondary)
+                                    .padding(.top, 24)
+                            }
+                            ForEach(sections, id: \.key) { section in
+                                DaySeparator(label: section.label)
+                                ForEach(section.messages) { msg in
+                                    MessageBubble(
+                                        message: msg,
+                                        failed: store.failedIDs.contains(msg.id),
+                                        onRetry: { _ = store.retry(id: msg.id) }
+                                    )
+                                    .id(msg.id)
+                                }
                             }
                         }
+                        .padding()
                     }
-                    .padding()
+                    .defaultScrollAnchor(.bottom)
+                    .onChange(of: store.messages.count) {
+                        scrollOnNew(proxy)
+                    }
+                    .onAppear {
+                        store.openIfNeeded()
+                        scrollToBottom(proxy, animated: false)
+                        lastSeenID = store.messages.last?.id
+                    }
                 }
-                .defaultScrollAnchor(.bottom)
-                .onChange(of: store.messages.count) {
-                    scrollOnNew(proxy)
-                }
-                .onAppear {
-                    store.openIfNeeded()
-                    scrollToBottom(proxy, animated: false)
-                    lastSeenID = store.messages.last?.id
-                }
+                Divider()
+                sendBox
+            } else if tab == 1 {
+                SharedFilesView(store: shared)
+                    .onAppear { syncShared() }
+            } else {
+                NotesView(store: notes)
             }
-            Divider()
-            sendBox
         }
         .frame(minWidth: 380, minHeight: 480)
+        .onChange(of: store.chatID) { syncShared() }
+    }
+
+    /// Lazily load the Shared tab when selected (no unsigned core calls
+    /// from the Chat tab). Demo mode adopts canned files offline.
+    private func syncShared() {
+        guard tab == 1, let id = store.chatID else { return }
+        guard shared.chatID != id else { return }
+        if store.isDemo {
+            shared.showDemo(chatID: id, files: DemoData.sharedFiles(for: id))
+        } else {
+            shared.open(chatID: id)
+        }
     }
 
     private var sections: [MessageRender.DaySection] {

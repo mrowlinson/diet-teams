@@ -2,12 +2,14 @@
 import OstMacCore
 import SwiftUI
 
-/// Sidebar column hosting the chats list and the teams/channels browser
-/// behind a segmented switcher. Channel taps open as conversations via
-/// `onOpenChannel` (channel id + "Team > #channel" display name).
+/// Sidebar column hosting the chats list, the teams/channels browser,
+/// and the reminders browser behind a segmented switcher. Channel taps
+/// open as conversations via `onOpenChannel` (channel id +
+/// "Team > #channel" display name).
 public struct SidebarColumn: View {
     @ObservedObject private var chats: ChatListViewModel
     @ObservedObject private var teams: TeamsViewModel
+    @ObservedObject private var reminders: RemindersViewModel
     @ObservedObject private var presence: PresenceStore
     private let openChatID: String?
     private let onOpenChannel: (String, String) -> Void
@@ -15,6 +17,7 @@ public struct SidebarColumn: View {
 
     public init(
         chats: ChatListViewModel, teams: TeamsViewModel,
+        reminders: RemindersViewModel,
         presence: PresenceStore = PresenceStore(),
         openChatID: String? = nil,
         initialSection: SidebarSection = .chats,
@@ -22,6 +25,7 @@ public struct SidebarColumn: View {
     ) {
         self.chats = chats
         self.teams = teams
+        self.reminders = reminders
         self.presence = presence
         self.openChatID = openChatID
         _section = State(initialValue: initialSection)
@@ -33,6 +37,7 @@ public struct SidebarColumn: View {
             Picker("Section", selection: $section) {
                 Text("Chats").tag(SidebarSection.chats)
                 Text("Teams").tag(SidebarSection.teams)
+                Text("Reminders").tag(SidebarSection.reminders)
             }
             .pickerStyle(.segmented)
             .labelsHidden()
@@ -43,6 +48,8 @@ public struct SidebarColumn: View {
                 ChatListSidebar(model: chats, presence: presence)
             case .teams:
                 TeamsBrowser(model: teams, openChatID: openChatID, onOpen: onOpenChannel)
+            case .reminders:
+                RemindersBrowser(model: reminders)
             }
         }
     }
@@ -51,4 +58,5 @@ public struct SidebarColumn: View {
 public enum SidebarSection {
     case chats
     case teams
+    case reminders
 }

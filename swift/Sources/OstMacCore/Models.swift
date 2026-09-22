@@ -176,6 +176,89 @@ public struct TrouterPoll: Decodable, Sendable {
     public let events: [AnyJSON]
 }
 
+// MARK: - Reminders (om-remind lane: Microsoft To Do via Graph /me/todo)
+
+/// One To Do list from core `ostmac_reminders`: `{"id","name","wellknown?"}`.
+public struct ReminderList: Decodable, Sendable, Identifiable, Equatable {
+    public var id: String { listId }
+    public let listId: String
+    public let name: String
+    public let wellknown: String?
+
+    enum CodingKeys: String, CodingKey {
+        case listId = "id"
+        case name, wellknown
+    }
+
+    /// Host-side construction (demo data, previews). Wire decoding is untouched.
+    public init(listId: String, name: String, wellknown: String? = nil) {
+        self.listId = listId
+        self.name = name
+        self.wellknown = wellknown
+    }
+}
+
+public struct RemindersResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let lists: [ReminderList]
+
+    /// Host-side construction (demo data, previews). Wire decoding is untouched.
+    public init(ok: Bool, lists: [ReminderList]) {
+        self.ok = ok
+        self.lists = lists
+    }
+}
+
+/// One To Do task from core `ostmac_reminder_tasks`: `{"id","title",
+/// "status","importance","due?","reminder?","completed"}`.
+public struct ReminderTask: Decodable, Sendable, Identifiable, Equatable {
+    public var id: String { taskId }
+    public let taskId: String
+    public let title: String
+    public let status: String
+    public let importance: String
+    public let due: String?
+    public let reminder: String?
+    public let completed: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case taskId = "id"
+        case title, status, importance, due, reminder, completed
+    }
+
+    /// Host-side construction (demo data, previews). Wire decoding is untouched.
+    public init(
+        taskId: String, title: String, status: String = "notStarted",
+        importance: String = "normal", due: String? = nil,
+        reminder: String? = nil, completed: Bool = false
+    ) {
+        self.taskId = taskId
+        self.title = title
+        self.status = status
+        self.importance = importance
+        self.due = due
+        self.reminder = reminder
+        self.completed = completed
+    }
+
+    /// "2026-09-23T12:00:00.0000000" -> "12:00 23 Sep" (ChatMessage rules).
+    public var displayDue: String? {
+        due.map { ChatMessage.shortTime($0) }
+    }
+}
+
+public struct ReminderTasksResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let list_id: String?
+    public let tasks: [ReminderTask]
+}
+
+/// `{ok,task}` from `ostmac_reminder_add` / `ostmac_reminder_done`.
+public struct ReminderTaskResult: Decodable, Sendable {
+    public let ok: Bool
+    public let task: ReminderTask
+}
+
 // MARK: - Conversation (om-conv lane)
 
 /// One chat message. Wire format from core `ostmac_messages`:
@@ -308,6 +391,107 @@ public struct MediaResponse: Decodable, Sendable {
     }
 }
 
+// MARK: - Shared files (om-shared lane)
+
+/// One shared file from core `ostmac_files` (Graph driveItem projection).
+/// `download_url` is a pre-authenticated short-lived URL: Swift downloads
+/// directly (no bearer). `drive_id`+`id` drive `ostmac_files_download`
+/// when the pre-signed URL expired.
+public struct SharedFile: Decodable, Sendable, Identifiable, Equatable {
+    public let id: String
+    public let name: String
+    public let size: UInt64
+    public let mime: String?
+    public let web_url: String?
+    public let download_url: String?
+    public let drive_id: String?
+    public let created: String?
+    public let modified: String?
+    public let sender: String?
+
+    public init(
+        id: String, name: String, size: UInt64 = 0,
+        mime: String? = nil, web_url: String? = nil,
+        download_url: String? = nil, drive_id: String? = nil,
+        created: String? = nil, modified: String? = nil,
+        sender: String? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.size = size
+        self.mime = mime
+        self.web_url = web_url
+        self.download_url = download_url
+        self.drive_id = drive_id
+        self.created = created
+        self.modified = modified
+        self.sender = sender
+    }
+
+    /// "48211" -> "47.1 KB" (1 decimal, B/KB/MB/GB).
+    public var sizeLabel: String {
+        Self.sizeLabel(size)
+    }
+
+    public static func sizeLabel(_ bytes: UInt64) -> String {
+        if bytes < 1024 { return "\(bytes) B" }
+        let kb = Double(bytes) / 1024
+        if kb < 1024 { return String(format: "%.1f KB", kb) }
+        let mb = kb / 1024
+        if mb < 1024 { return String(format: "%.1f MB", mb) }
+        return String(format: "%.1f GB", mb / 1024)
+    }
+
+    /// SF Symbol for the mime/extension (doc, image, film, music, archive).
+    public var iconName: String {
+        Self.iconName(mime: mime, filename: name)
+    }
+
+    public static func iconName(mime: String?, filename: String) -> String {
+        let m = (mime ?? "").lowercased()
+        if m.hasPrefix("image/") { return "photo" }
+        if m.hasPrefix("video/") { return "film" }
+        if m.hasPrefix("audio/") { return "music.note" }
+        if m == "application/pdf" { return "doc.richtext" }
+        if m.contains("zip") || m.contains("tar") || m.contains("gzip") { return "archivebox" }
+        let ext = (filename as NSString).pathExtension.lowercased()
+        switch ext {
+        case "png", "jpg", "jpeg", "gif", "heic", "webp": return "photo"
+        case "mov", "mp4", "m4v": return "film"
+        case "mp3", "m4a", "wav": return "music.note"
+        case "pdf": return "doc.richtext"
+        case "zip", "tar", "gz": return "archivebox"
+        case "doc", "docx", "pages", "txt", "md": return "doc.text"
+        case "xls", "xlsx", "numbers", "csv": return "tablecells"
+        case "ppt", "pptx", "key": return "rectangle.on.rectangle"
+        default: return "doc"
+        }
+    }
+}
+
+public struct SharedFilesResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let chat_id: String?
+    public let files: [SharedFile]
+
+    public init(ok: Bool, chat_id: String? = nil, files: [SharedFile]) {
+        self.ok = ok
+        self.chat_id = chat_id
+        self.files = files
+    }
+}
+
+public struct SharedFileUploadResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let file: SharedFile
+}
+
+public struct SharedFileDownloadResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let path: String
+    public let bytes: UInt64
+}
+
 // MARK: - Presence (om-presence lane)
 
 /// Own presence from core `ostmac_presence` / `ostmac_presence_set`
@@ -417,6 +601,117 @@ public struct HealthReport: Sendable {
         self.tokens = tokens
         self.probes = probes
         self.accountUPN = accountUPN
+    }
+}
+
+// MARK: - Notes (om-notes lane: OneNote read + paragraph append)
+
+/// One OneNote notebook. Wire format from core `ostmac_notes`:
+/// `{"id","name"}`.
+public struct NotebookItem: Decodable, Sendable, Identifiable, Equatable {
+    public var id: String { notebookId }
+    public let notebookId: String
+    public let name: String
+
+    enum CodingKeys: String, CodingKey {
+        case notebookId = "id"
+        case name
+    }
+
+    /// Host-side construction (demo data, previews, mock fetchers).
+    public init(notebookId: String, name: String) {
+        self.notebookId = notebookId
+        self.name = name
+    }
+}
+
+public struct NotebooksResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let notebooks: [NotebookItem]
+
+    /// Host-side construction (demo data, previews, mock fetchers).
+    public init(ok: Bool, notebooks: [NotebookItem]) {
+        self.ok = ok
+        self.notebooks = notebooks
+    }
+}
+
+/// One OneNote page (metadata; content arrives via `ostmac_note_page`).
+public struct NotePageItem: Decodable, Sendable, Identifiable, Equatable {
+    public var id: String { pageId }
+    public let pageId: String
+    public let title: String
+    public let updated: String?
+
+    enum CodingKeys: String, CodingKey {
+        case pageId = "id"
+        case title, updated
+    }
+
+    /// Host-side construction (demo data, previews, mock fetchers).
+    public init(pageId: String, title: String, updated: String? = nil) {
+        self.pageId = pageId
+        self.title = title
+        self.updated = updated
+    }
+}
+
+/// One OneNote section with its pages (nested by core to save round trips).
+public struct NoteSectionItem: Decodable, Sendable, Identifiable, Equatable {
+    public var id: String { sectionId }
+    public let sectionId: String
+    public let name: String
+    public let pages: [NotePageItem]
+
+    enum CodingKeys: String, CodingKey {
+        case sectionId = "id"
+        case name, pages
+    }
+
+    /// Host-side construction (demo data, previews, mock fetchers).
+    public init(sectionId: String, name: String, pages: [NotePageItem]) {
+        self.sectionId = sectionId
+        self.name = name
+        self.pages = pages
+    }
+}
+
+public struct NoteSectionsResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let sections: [NoteSectionItem]
+
+    /// Host-side construction (demo data, previews, mock fetchers).
+    public init(ok: Bool, sections: [NoteSectionItem]) {
+        self.ok = ok
+        self.sections = sections
+    }
+}
+
+/// One page's content. `title` is empty when the page ships no `<title>`.
+public struct NotePageResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let id: String
+    public let title: String
+    public let html: String
+
+    /// Host-side construction (demo data, previews, mock fetchers).
+    public init(ok: Bool, id: String, title: String, html: String) {
+        self.ok = ok
+        self.id = id
+        self.title = title
+        self.html = html
+    }
+}
+
+/// `{ok,id}` after a paragraph append.
+public struct NoteAppendResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let id: String
+
+    /// Host-side construction (demo data, previews, mock fetchers).
+    public init(ok: Bool, id: String) {
+        self.ok = ok
+        self.id = id
     }
 }
 
