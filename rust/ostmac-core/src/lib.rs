@@ -1,8 +1,10 @@
 //! ostmac-core: minimal embeddable surface over vendored `ost`.
 //!
-//! Exposes exactly three capabilities to Swift (via C ABI, JSON over the FFI):
+//! Exposes five capabilities to Swift (via C ABI, JSON over the FFI):
 //! - auth: RFC 8628 device-code `start` (get URL+code) and single-shot `poll`
 //! - chats: structured chat list (requires sign-in)
+//! - messages: full history for one chat (requires sign-in)
+//! - send: post one message to a chat (requires sign-in)
 //! - trouter: background push connection with a polled event channel
 //!
 //! Dropped for now: TUI, audio/video, call media.
@@ -338,6 +340,71 @@ pub fn chats_json(limit: usize) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Messages (one chat: history + send)
+// ---------------------------------------------------------------------------
+
+fn message_to_json(m: &ost::api::MessageInfo) -> serde_json::Value {
+    json!({
+        "id": m.id,
+        "sender": m.sender,
+        "timestamp": m.timestamp,
+        "content": m.content,
+    })
+}
+
+/// Full message history for one chat as JSON. Requires sign-in; unsigned
+/// yields `{ok:false}`. Empty `chat_id` is rejected before any network.
+pub fn messages_json(chat_id: &str, limit: usize) -> String {
+    if chat_id.trim().is_empty() {
+        return err_json("arg", "empty chat_id");
+    }
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let msgs = ost::api::read_messages_data(&client, chat_id, limit)
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let items: Vec<_> = msgs.iter().map(message_to_json).collect();
+            Ok(json!({"ok": true, "chat_id": chat_id, "messages": items}).to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("messages", e),
+    }
+}
+
+/// Post one message to a chat. Returns `{ok:true, chat_id}` or `{ok:false}`.
+/// Empty `chat_id`/`text` are rejected before any network.
+pub fn send_json(chat_id: &str, text: &str) -> String {
+    if chat_id.trim().is_empty() {
+        return err_json("arg", "empty chat_id");
+    }
+    if text.trim().is_empty() {
+        return err_json("arg", "empty text");
+    }
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            ost::api::send_message_with_client(&client, chat_id, text)
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            Ok(json!({"ok": true, "chat_id": chat_id}).to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("send", e),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Trouter event channel
 // ---------------------------------------------------------------------------
 
@@ -472,6 +539,29 @@ pub extern "C" fn ostmac_chats(limit: c_int) -> *mut c_char {
     string_to_c(chats_json(lim))
 }
 
+/// Message history JSON for one chat. See [`messages_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_messages(chat_id: *const c_char, limit: c_int) -> *mut c_char {
+    let lim = if limit <= 0 { 50 } else { limit as usize };
+    match cstr_to_string(chat_id) {
+        Ok(id) => string_to_c(messages_json(&id, lim)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
+/// Post one message to a chat. See [`send_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_send(chat_id: *const c_char, text: *const c_char) -> *mut c_char {
+    let id = match cstr_to_string(chat_id) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    match cstr_to_string(text) {
+        Ok(t) => string_to_c(send_json(&id, &t)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
 /// Start background Trouter push. See [`trouter_start`].
 #[no_mangle]
 pub extern "C" fn ostmac_trouter_start() -> c_int {
@@ -534,6 +624,69 @@ mod tests {
         assert_eq!(v["id"], "19:abc@thread");
         assert_eq!(v["is_group"], true);
         assert_eq!(v["last_message_preview"], "p");
+    }
+
+    #[test]
+    fn message_json_shape() {
+        let m = ost::api::MessageInfo {
+            id: "m1".to_string(),
+            sender: "A Sender".to_string(),
+            timestamp: "2026-09-22T12:00:00Z".to_string(),
+            content: "hi".to_string(),
+        };
+        let v = message_to_json(&m);
+        assert_eq!(v["id"], "m1");
+        assert_eq!(v["sender"], "A Sender");
+        assert_eq!(v["timestamp"], "2026-09-22T12:00:00Z");
+        assert_eq!(v["content"], "hi");
+    }
+
+    #[test]
+    fn messages_empty_chat_id_is_error() {
+        for bad in ["", "   "] {
+            let v: serde_json::Value =
+                serde_json::from_str(&messages_json(bad, 10)).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
+    fn send_empty_args_is_error() {
+        for (id, text) in [("", "hi"), ("19:x", ""), ("19:x", "  ")] {
+            let v: serde_json::Value =
+                serde_json::from_str(&send_json(id, text)).unwrap();
+            assert_eq!(v["ok"], false, "id={:?} text={:?}", id, text);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
+    fn ffi_messages_null_is_arg_error() {
+        unsafe {
+            let p = ostmac_messages(std::ptr::null(), 10);
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
+    fn ffi_send_empty_text_roundtrip() {
+        let id = CString::new("19:x").unwrap();
+        let tx = CString::new("").unwrap();
+        unsafe {
+            let p = ostmac_send(id.as_ptr(), tx.as_ptr());
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
     }
 
     #[test]

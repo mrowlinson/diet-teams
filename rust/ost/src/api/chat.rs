@@ -199,6 +199,9 @@ pub struct ChatInfo {
 
 /// A single message for TUI display.
 pub struct MessageInfo {
+    /// Server message id; embedders match realtime edits by this.
+    /// OstMac: synthetic `timestamp@sender` fallback when the server omits it.
+    pub id: String,
     pub sender: String,
     pub timestamp: String,
     pub content: String,
@@ -327,8 +330,19 @@ pub async fn read_messages_data(
         if !msgtype.contains("Text") && !msgtype.contains("RichText") {
             continue;
         }
+        // OstMac om-conv: skip media payloads. RichText/Media_CallRecording
+        // strips to "TitlePlay" fragments and RichText/Media_CallTranscript
+        // to raw JSON; neither is a readable bubble (see task-0011).
+        if msgtype.contains("Media_") {
+            continue;
+        }
 
-        let sender = msg.im_display_name.as_deref().unwrap_or("?").to_string();
+        let sender = msg
+            .im_display_name
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or("?")
+            .to_string();
         let time = msg
             .original_arrival_time
             .as_deref()
@@ -342,7 +356,11 @@ pub async fn read_messages_data(
             continue;
         }
 
+        // OstMac: keep the server id so embedders can match realtime edits.
+        let id = msg.id.as_deref().filter(|s| !s.is_empty()).map(String::from);
+        let id = id.unwrap_or_else(|| format!("{}@{}", time, sender));
         result.push(MessageInfo {
+            id,
             sender,
             timestamp: time,
             content: text.trim().to_string(),

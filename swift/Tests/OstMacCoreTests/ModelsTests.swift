@@ -62,6 +62,32 @@ final class ModelsTests: XCTestCase {
         XCTAssertTrue(r.chats[0].is_group)
     }
 
+    func testMessagesDecode() throws {
+        let json = """
+        {"ok":true,"chat_id":"19:a@thread","messages":[
+        {"id":"m1","sender":"A","timestamp":"2026-02-14T12:53:06Z","content":"hi"},
+        {"id":"m2","sender":"B","timestamp":"2026-02-14T12:54:00Z","content":"yo"}]}
+        """
+        let r = try decodeOrThrow(MessagesResponse.self, from: Data(json.utf8))
+        XCTAssertEqual(r.chat_id, "19:a@thread")
+        XCTAssertEqual(r.messages.count, 2)
+        XCTAssertEqual(r.messages[0].id, "m1")
+        XCTAssertFalse(r.messages[0].isOwn)
+    }
+
+    func testSendDecode() throws {
+        let r = try decodeOrThrow(
+            SendResponse.self,
+            from: Data(#"{"ok":true,"chat_id":"19:a@thread"}"#.utf8))
+        XCTAssertEqual(r.chat_id, "19:a@thread")
+    }
+
+    func testShortTime() {
+        XCTAssertEqual(ChatMessage.shortTime("2026-02-14T12:53:06.9690000Z"), "12:53 14 Feb")
+        XCTAssertEqual(ChatMessage.shortTime(""), "?")
+        XCTAssertEqual(ChatMessage.shortTime("abc"), "abc")
+    }
+
     func testTrouterEventsDecode() throws {
         let json = """
         {"ok":true,"events":[{"kind":"msg"},{"n":1},null,"x"]}

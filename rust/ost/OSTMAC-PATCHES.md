@@ -16,3 +16,11 @@ vendored so the spike can build on macOS and expose a library surface.
 4. `Cargo.toml` (`[lib]` name `ost` + `[[bin]]`) + `src/lib.rs` (new) —
    **library surface**. Same modules as the binary, `pub`, so `ostmac-core`
    reuses auth/api/trouter without forking. Binary untouched.
+5. `src/api/chat.rs` — **message ids for embedders (om-conv lane)**.
+   `MessageInfo` gains `id` (server `NativeMessage.id`, synthetic
+   `timestamp@sender` fallback) so Swift can match realtime edits in place.
+   TUI mapping is field-wise reads; only the constructor here changed.
+6. `src/api/chat.rs` `read_messages_data` — **skip media payloads (om-conv)**.
+   `RichText/Media_*` stripped to "TitlePlay" fragments (CallRecording) or
+   raw JSON (CallTranscript); now skipped. Empty display names fall back to
+   `"?"` like missing ones. TUI list benefits identically.

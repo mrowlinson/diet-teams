@@ -75,6 +75,95 @@ public struct TrouterPoll: Decodable, Sendable {
     public let events: [AnyJSON]
 }
 
+// MARK: - Conversation (om-conv lane)
+
+/// One chat message. Wire format from core `ostmac_messages`:
+/// `{"id","sender","timestamp","content"}`.
+/// `isOwn` is host-side only (core never sends it; defaults false) and
+/// drives bubble alignment. The realtime lane feeds this same model into
+/// `ConversationStore.ingest(_:)`; matching `id` => in-place edit update.
+public struct ChatMessage: Decodable, Sendable, Identifiable, Equatable {
+    public let id: String
+    public let sender: String
+    public let timestamp: String
+    public var content: String
+    public var isOwn: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case id, sender, timestamp, content
+    }
+
+    public init(
+        id: String, sender: String, timestamp: String,
+        content: String, isOwn: Bool = false
+    ) {
+        self.id = id
+        self.sender = sender
+        self.timestamp = timestamp
+        self.content = content
+        self.isOwn = isOwn
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        sender = try c.decode(String.self, forKey: .sender)
+        timestamp = try c.decode(String.self, forKey: .timestamp)
+        content = try c.decode(String.self, forKey: .content)
+        isOwn = false
+    }
+
+    /// "2026-09-22T12:53:06.9690000Z" -> "12:53" (today) or "12:53 22 Sep".
+    /// Falls back to the raw prefix when the timestamp is missing/odd.
+    public var displayTime: String {
+        Self.shortTime(timestamp)
+    }
+
+    public static func shortTime(_ iso: String) -> String {
+        let trimmed = iso.trimmingCharacters(in: .whitespaces)
+        guard trimmed.count >= 16 else {
+            return trimmed.isEmpty ? "?" : trimmed
+        }
+        // Fast path: fixed-offset slice, no Date parsing on the hot path.
+        // "2026-09-22T12:53:06..." -> date "2026-09-22", clock "12:53".
+        let datePart = String(trimmed.prefix(10))
+        let clockPart: String = {
+            let idx = trimmed.index(trimmed.startIndex, offsetBy: 11)
+            let end = trimmed.index(idx, offsetBy: 5, limitedBy: trimmed.endIndex)
+            return end.map { String(trimmed[idx ..< $0]) } ?? String(trimmed.dropFirst(11).prefix(5))
+        }()
+        let today: String = {
+            let f = DateFormatter()
+            f.dateFormat = "yyyy-MM-dd"
+            f.timeZone = TimeZone.current
+            return f.string(from: Date())
+        }()
+        if datePart == today { return clockPart }
+        let monthDay: String = {
+            let parts = datePart.split(separator: "-")
+            guard parts.count == 3 else { return datePart }
+            let months = [
+                "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+            ]
+            let m = Int(parts[1]).flatMap { (1 ... 12).contains($0) ? months[$0 - 1] : nil } ?? String(parts[1])
+            return "\(Int(parts[2]) ?? 0) \(m)"
+        }()
+        return "\(clockPart) \(monthDay)"
+    }
+}
+
+public struct MessagesResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let chat_id: String?
+    public let messages: [ChatMessage]
+}
+
+public struct SendResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let chat_id: String?
+}
+
 /// Minimal Any-Decodable for opaque Trouter event payloads.
 public struct AnyJSON: Decodable, Sendable {
     public let value: String
