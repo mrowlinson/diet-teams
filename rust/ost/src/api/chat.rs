@@ -393,7 +393,9 @@ pub async fn read_messages_page(
         let content = msg.content.as_deref().unwrap_or("");
         let text = strip_html(content);
 
-        if text.trim().is_empty() {
+        // OstMac om-richmedia: image-only bubbles strip to "" but are
+        // real messages — keep them (the embedder mines `<img>` from raw).
+        if text.trim().is_empty() && !has_image(content) {
             continue;
         }
 
@@ -416,6 +418,14 @@ pub async fn read_messages_page(
     })
 }
 
+/// True when raw HTML carries an `<img` tag (case-insensitive).
+/// Image-only messages strip to empty text but must survive filtering.
+fn has_image(html: &str) -> bool {
+    html.as_bytes()
+        .windows(4)
+        .any(|w| w.eq_ignore_ascii_case(b"<img"))
+}
+
 /// Rewrite the `pageSize=` query value so a followed `backwardLink` honors
 /// the caller's limit. No-op when the marker is absent.
 fn with_page_size(url: &str, limit: usize) -> String {
@@ -434,6 +444,17 @@ fn with_page_size(url: &str, limit: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn image_tag_detection() {
+        assert!(has_image(r#"<p><img src="https://h/v1/objects/0/views/imgo"></p>"#));
+        assert!(has_image(r#"<IMG SRC="https://h/x.png">"#));
+        assert!(has_image(r#"<p>hi <img
+src="x">"#));
+        assert!(!has_image("<p>plain text</p>"));
+        assert!(!has_image("<p>image word, no tag</p>"));
+        assert!(!has_image(""));
+    }
 
     #[test]
     fn page_size_rewrite_mid_and_end() {

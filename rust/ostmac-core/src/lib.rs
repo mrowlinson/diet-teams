@@ -608,6 +608,51 @@ pub fn send_json(chat_id: &str, text: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Media (om-richmedia lane: auth'd inline-image fetch for `<img>` mining)
+// ---------------------------------------------------------------------------
+
+fn media_envelope(data: &[u8], content_type: &Option<String>) -> String {
+    use base64::Engine;
+    json!({
+        "ok": true,
+        "data_base64": base64::engine::general_purpose::STANDARD.encode(data),
+        "content_type": content_type,
+    })
+    .to_string()
+}
+
+/// Fetch one inline-image URL as `{ok:true, data_base64, content_type?}`.
+/// Microsoft media hosts attach the Skype token; public hosts fetch without
+/// auth (see `ost::api::media`). Empty/non-https URLs are rejected before
+/// any network. Requires sign-in for auth'd hosts; unsigned yields
+/// `{ok:false}`. Caller frees.
+pub fn media_fetch_json(url: &str) -> String {
+    let u = url.trim();
+    if u.is_empty() {
+        return err_json("arg", "empty url");
+    }
+    if !u.starts_with("https://") {
+        return err_json("arg", "media URL must be https");
+    }
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let mb = ost::api::fetch_media_data(&client, u)
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            Ok(media_envelope(&mb.data, &mb.content_type))
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("media", e),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Presence (om-presence lane: ost CLI get/set + TUI LoadPresence parity)
 // ---------------------------------------------------------------------------
 
@@ -969,6 +1014,15 @@ pub extern "C" fn ostmac_send(chat_id: *const c_char, text: *const c_char) -> *m
     }
 }
 
+/// Fetch one inline-image URL. See [`media_fetch_json`]. Caller frees.
+#[no_mangle]
+pub extern "C" fn ostmac_media_fetch(url: *const c_char) -> *mut c_char {
+    match cstr_to_string(url) {
+        Ok(u) => string_to_c(media_fetch_json(&u)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
 /// Start background Trouter push. See [`trouter_start`].
 #[no_mangle]
 pub extern "C" fn ostmac_trouter_start() -> c_int {
@@ -1184,6 +1238,47 @@ mod tests {
         for bad in ["", "   "] {
             let v: serde_json::Value =
                 serde_json::from_str(&messages_json(bad, 10)).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
+    fn media_fetch_rejects_bad_args_without_network() {
+        for bad in ["", "   ", "http://h/x.png", "ftp://h/x", "demo://x"] {
+            let v: serde_json::Value =
+                serde_json::from_str(&media_fetch_json(bad)).unwrap();
+            assert_eq!(v["ok"], false, "url={:?}", bad);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
+    fn media_envelope_carries_base64_and_type() {
+        let v: serde_json::Value =
+            serde_json::from_str(&media_envelope(&[0x89, b'P', b'N', b'G'], &Some("image/png".to_string())))
+                .unwrap();
+        assert_eq!(v["ok"], true);
+        assert_eq!(v["content_type"], "image/png");
+        let raw = base64::Engine::decode(
+            &base64::engine::general_purpose::STANDARD,
+            v["data_base64"].as_str().unwrap(),
+        )
+        .unwrap();
+        assert_eq!(raw, vec![0x89, b'P', b'N', b'G']);
+        let untyped: serde_json::Value =
+            serde_json::from_str(&media_envelope(&[], &None)).unwrap();
+        assert!(untyped["content_type"].is_null());
+    }
+
+    #[test]
+    fn ffi_media_fetch_null_is_arg_error() {
+        unsafe {
+            let p = ostmac_media_fetch(std::ptr::null());
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
             assert_eq!(v["ok"], false);
             assert_eq!(v["error"], "arg");
         }

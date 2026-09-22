@@ -41,6 +41,12 @@ char *ostmac_messages_page(const char *chat_id, const char *page_token, int limi
 // Post one message to a chat. Caller frees.
 char *ostmac_send(const char *chat_id, const char *text);
 
+// Fetch one inline-image URL: {ok, data_base64, content_type?}.
+// Microsoft media hosts attach the Skype token; public hosts fetch
+// without auth. https only. Requires sign-in for auth'd hosts.
+// Caller frees.
+char *ostmac_media_fetch(const char *url);
+
 // Start background Trouter push: 0 ok, -1 running, -2 no auth, -3 rt fail.
 int ostmac_trouter_start(void);
 

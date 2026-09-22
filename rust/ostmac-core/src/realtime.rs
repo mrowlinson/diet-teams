@@ -47,6 +47,8 @@ pub struct RealtimeMessage {
     pub is_edit: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub edited_id: Option<String>,
+    /// Unstripped server HTML (om-richmedia: streaming `<img>` mining).
+    pub raw: String,
 }
 
 /// Result of parsing one batch of raw events.
@@ -231,6 +233,7 @@ fn message_from_object(
         time,
         is_edit,
         edited_id,
+        raw: content,
     })
 }
 

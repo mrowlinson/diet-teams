@@ -65,6 +65,18 @@ public enum RustCore {
         }
     }
 
+    /// One fetched inline image: decoded bytes + content type, if any.
+    /// Blocking FFI (network): call off the main thread.
+    public static func mediaFetch(url: String) throws -> (data: Data, contentType: String?) {
+        let resp: MediaResponse = try url.withCString { ptr in
+            try call(ostmac_media_fetch(ptr), as: MediaResponse.self)
+        }
+        guard let data = Data(base64Encoded: resp.data_base64) else {
+            throw CoreCallError.failed("media: bad base64 from core")
+        }
+        return (data, resp.content_type)
+    }
+
     public static func presence() throws -> PresenceResponse {
         try call(ostmac_presence(), as: PresenceResponse.self)
     }

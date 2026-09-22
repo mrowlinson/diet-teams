@@ -208,10 +208,26 @@ struct MessageBubble: View {
                             .foregroundStyle(message.isOwn ? .white.opacity(0.7) : .secondary)
                     }
                 }
-                Text(MessageRender.attributedBody(for: message))
-                    .font(.body)
-                    .tint(message.isOwn ? .white : .accentColor)
-                    .textSelection(.enabled)
+                let rendered = MessageRender.renderText(for: message)
+                let images = MessageRender.images(fromRaw: message.raw)
+                if !rendered.isEmpty {
+                    Text(MessageRender.attributedBody(for: message))
+                        .font(.body)
+                        .tint(message.isOwn ? .white : .accentColor)
+                        .textSelection(.enabled)
+                }
+                let emoticons = images.filter(\.isEmoticon)
+                let photos = images.filter { !$0.isEmoticon }
+                if !emoticons.isEmpty {
+                    HStack(spacing: 4) {
+                        ForEach(Array(emoticons.enumerated()), id: \.offset) { _, img in
+                            RemoteEmoticon(url: img.url, messageID: message.id, alt: img.alt)
+                        }
+                    }
+                }
+                ForEach(Array(photos.enumerated()), id: \.offset) { _, img in
+                    RemoteImage(url: img.url, messageID: message.id, alt: img.alt)
+                }
                 if failed {
                     HStack(spacing: 6) {
                         Text("Not delivered")

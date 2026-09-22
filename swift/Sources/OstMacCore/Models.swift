@@ -278,6 +278,22 @@ public struct SendResponse: Decodable, Sendable {
     public let chat_id: String?
 }
 
+// MARK: - Rich media (om-richmedia lane)
+
+/// One fetched inline image: base64 bytes + the server's content type.
+public struct MediaResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let data_base64: String
+    public let content_type: String?
+
+    /// Host-side construction (tests, mock fetchers). Wire decoding untouched.
+    public init(ok: Bool, data_base64: String, content_type: String? = nil) {
+        self.ok = ok
+        self.data_base64 = data_base64
+        self.content_type = content_type
+    }
+}
+
 // MARK: - Presence (om-presence lane)
 
 /// Own presence from core `ostmac_presence` / `ostmac_presence_set`
