@@ -7,6 +7,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @ObservedObject private var auth: AuthViewModel
+    @AppStorage("tenorAPIKey") private var tenorAPIKey = ""
     private let fixedAccount: AccountInfo?
 
     /// Live view: shares the app's AuthViewModel (single source of truth).
@@ -35,6 +36,13 @@ struct SettingsView: View {
                 Section("Sign in") {
                     AuthView(model: auth)
                 }
+            }
+            Section("GIFs (Tenor)") {
+                SecureField("Tenor API key", text: $tenorAPIKey)
+                    .textContentType(.password)
+                Text("Bring your own free key (Google Cloud Console → Tenor API). Empty = GIF picker stays off; nothing is sent anywhere.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             Section("Application") {
                 LabeledContent("Version", value: AppIdentity.version)

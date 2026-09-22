@@ -18,6 +18,8 @@
 // send via core — never use it on shared chats for testing.
 // --show-about / --show-settings / --show-av open those windows at launch (shot hooks).
 // --show-teams opens the sidebar on the Teams browser (shot hook).
+// --show-jump opens the Cmd+K jump palette at launch (shot hook).
+// --show-gif opens the GIF picker popover at launch (shot hook).
 // --auth-state <name> opens the Auth window with a canned state, never
 // touching core/network (names: signed-out, starting, code, polling,
 // signed-in, expired, refreshing, refresh-failed, error). `--state` is
@@ -47,6 +49,14 @@ struct OstMacAppMain: App {
         } else {
             cannedAuth = nil
         }
+    }
+
+    /// --jump-query value (shot hook: preseed the palette filter).
+    static func jumpQuery(args: [String]) -> String {
+        if let i = args.firstIndex(of: "--jump-query"), i + 1 < args.count {
+            return args[i + 1]
+        }
+        return ""
     }
 
     /// --auth-state value (--state alias); nil = live auth.
@@ -117,6 +127,12 @@ private struct OstMacCommands: Commands {
         CommandMenu("Call") {
             Button("Call A/V Test") { openWindow(id: AppIdentity.avWindowID) }
         }
+        CommandMenu("Go") {
+            Button("Jump to Chat…") {
+                NotificationCenter.default.post(name: .showJumpPalette, object: nil)
+            }
+            .keyboardShortcut("k", modifiers: .command)
+        }
     }
 }
 
@@ -139,6 +155,7 @@ final class AppState: ObservableObject {
     @Published var feedResyncs = 0
     @Published var feedPolls = 0
     @Published var feedError: String?
+    @Published var showJump = false
     @AppStorage("selectedChatID") private var persistedSelection: String?
 
     private let preselectID: String?
@@ -151,6 +168,7 @@ final class AppState: ObservableObject {
 
     init(args: [String]) {
         isDemo = args.contains("--demo") || args.contains("--demo-rich")
+        showJump = args.contains("--show-jump") // shot hook: palette open at launch
         call = CallStore(demo: isDemo)
         // Shot hook: --show-call incoming|active seeds the banner offline.
         if let i = args.firstIndex(of: "--show-call"), i + 1 < args.count {
@@ -290,6 +308,17 @@ final class AppState: ObservableObject {
         open(chatID: id, chatName: channelName)
     }
 
+    /// Jump palette: chats route through the sidebar selection (keeps the
+    /// list highlight in sync); channels/teams open directly by id.
+    func jump(chatID id: String, chatName: String) {
+        if chats.chats.contains(where: { $0.id == id }) {
+            chats.selectedChatID = id // sink opens it (or already open)
+            if openChatID == nil { open(chatID: id, chatName: chatName) }
+        } else {
+            open(chatID: id, chatName: chatName)
+        }
+    }
+
     private func open(chatID id: String, chatName: String?) {
         openChatID = id
         persistedSelection = id
@@ -398,6 +427,18 @@ struct RootView: View {
             StatusBar(call: state.call)
         }
         .frame(minWidth: 760, minHeight: 520)
+        .onReceive(NotificationCenter.default.publisher(for: .showJumpPalette)) { _ in
+            state.showJump = true
+        }
+        .sheet(isPresented: $state.showJump) {
+            JumpPaletteView(
+                targets: JumpTargets.build(chats: state.chats.chats, teams: state.teams.teams),
+                initialQuery: OstMacAppMain.jumpQuery(args: CommandLine.arguments)
+            ) { id, name in
+                state.showJump = false
+                state.jump(chatID: id, chatName: name)
+            }
+        }
         .onAppear {
             // Shot hooks: open About/Settings/Auth/A-V windows from launch args.
             if CommandLine.arguments.contains("--show-about") {
@@ -422,6 +463,7 @@ struct RootView: View {
             Image(systemName: "bubble.left.and.bubble.right")
                 .font(.largeTitle).foregroundStyle(.secondary)
             Text("Select a chat").font(.headline)
+            Text("⌘K to jump").font(.callout).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

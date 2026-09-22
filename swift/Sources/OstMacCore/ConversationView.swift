@@ -11,6 +11,8 @@ public struct ConversationView: View {
     private let isGroup: Bool
     @State private var draft = ""
     @State private var lastSeenID: String?
+    @State private var showGIFs = false
+    @AppStorage("tenorAPIKey") private var tenorAPIKey = ""
     @FocusState private var boxFocused: Bool
 
     public init(
@@ -129,6 +131,25 @@ public struct ConversationView: View {
 
     private var sendBox: some View {
         HStack {
+            Button {
+                showGIFs = true
+            } label: {
+                Text("GIF")
+                    .font(.caption).bold()
+                    .padding(.horizontal, 6).padding(.vertical, 3)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color.secondary, lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .help("Insert a GIF (Tenor)")
+            .popover(isPresented: $showGIFs, arrowEdge: .top) {
+                TenorPickerView(apiKey: tenorAPIKey) { url in
+                    insertGIF(url)
+                    showGIFs = false
+                }
+            }
             TextField("Message", text: $draft)
                 .textFieldStyle(.roundedBorder)
                 .focused($boxFocused)
@@ -138,7 +159,11 @@ public struct ConversationView: View {
                 .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
         .padding()
-        .onAppear { boxFocused = true }
+        .onAppear {
+            boxFocused = true
+            // Shot hook: --show-gif opens the picker at launch.
+            if CommandLine.arguments.contains("--show-gif") { showGIFs = true }
+        }
     }
 
     private func submit() {
@@ -146,6 +171,17 @@ public struct ConversationView: View {
         guard !body.isEmpty else { return }
         draft = ""
         store.send(text: body)
+    }
+
+    /// Append a picked GIF URL to the draft (space-separated); the user
+    /// still hits Send. Pure join so tests can pin the format.
+    private func insertGIF(_ url: String) {
+        draft = Self.appendGIF(url, to: draft)
+        boxFocused = true
+    }
+
+    static func appendGIF(_ url: String, to draft: String) -> String {
+        draft.isEmpty ? url : "\(draft) \(url)"
     }
 
     /// Auto-scroll only when the tail actually advanced (new message), never
