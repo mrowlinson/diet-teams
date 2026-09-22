@@ -31,3 +31,14 @@ vendored so the spike can build on macOS and expose a library surface.
    re-exported in `src/api/mod.rs`. `MessageInfo` gains `raw` (unstripped
    HTML for mention/code mining). `read_messages_data` keeps its signature
    (delegates, newest page). TUI untouched.
+8. `src/api/notes.rs` (new) + `src/api/client.rs` (`graph_patch_raw`) +
+   `src/main.rs` (`Notes` cmd) — **OneNote read + paragraph append
+   (om-notes lane)**. `list_notebooks_data` (`/me` or `/groups/{id}` scoped),
+   `list_notebook_sections_data` (sections with nested pages; failed pages
+   fetch warns + empties, teams.rs parity), `read_note_page_data` (raw HTML,
+   title scraped from `<title>`), `append_note_paragraph_data` (PATCH with
+   hand-rolled multipart Commands, no new deps). CLI: `notes [--group]`,
+   `--notebook` lists sections+pages, `--page` prints stripped text,
+   `--page --append` appends then prints. Auth scopes unchanged: the
+   existing Graph `/.default` exchange covers OneNote (delegated perms ride
+   the first-party client); no new consent requested.

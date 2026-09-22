@@ -141,4 +141,93 @@ public enum DemoData {
             timestamp: "2026-09-21T16:20:11Z",
             content: "Build is green, packaging lane is next."),
     ]
+
+    // MARK: - Notes (om-notes lane: canned OneNote for --demo)
+
+    public static let notebooks: [NotebookItem] = [
+        NotebookItem(notebookId: "demo-nb-work", name: "Design Sync Notes"),
+        NotebookItem(notebookId: "demo-nb-team", name: "Team Wiki"),
+    ]
+
+    public static func notebooksResponse() -> NotebooksResponse {
+        NotebooksResponse(ok: true, notebooks: notebooks)
+    }
+
+    public static func noteSections(for notebookID: String) -> [NoteSectionItem] {
+        switch notebookID {
+        case "demo-nb-work":
+            return [
+                NoteSectionItem(sectionId: "demo-sec-sync", name: "Syncs", pages: [
+                    NotePageItem(
+                        pageId: "demo-page-kickoff", title: "Kickoff Notes",
+                        updated: "2026-09-22T09:12:05Z"),
+                    NotePageItem(
+                        pageId: "demo-page-empty", title: "Empty States Review",
+                        updated: "2026-09-21T16:20:11Z"),
+                ]),
+                NoteSectionItem(sectionId: "demo-sec-ideas", name: "Ideas", pages: [
+                    NotePageItem(pageId: "demo-page-roadmap", title: "Roadmap Draft"),
+                ]),
+            ]
+        case "demo-nb-team":
+            return [
+                NoteSectionItem(sectionId: "demo-sec-wiki", name: "General", pages: [
+                    NotePageItem(pageId: "demo-page-onboard", title: "Onboarding"),
+                ]),
+            ]
+        default:
+            return []
+        }
+    }
+
+    private static let demoPageBodies: [String: (title: String, html: String)] = [
+        "demo-page-kickoff": ("Kickoff Notes",
+            "<html><head><title>Kickoff Notes</title></head><body>" +
+                "<h1>Kickoff Notes</h1>" +
+                "<p>Goals: ship the chat window, keep edits in place.</p>" +
+                "<p>Owners: Priya (design), Tom (render), Me (core).</p>" +
+                "</body></html>"),
+        "demo-page-empty": ("Empty States Review",
+            "<html><head><title>Empty States Review</title></head><body>" +
+                "<h1>Empty States Review</h1>" +
+                "<p>Illustration approved. Copy still TBD.</p>" +
+                "</body></html>"),
+        "demo-page-roadmap": ("Roadmap Draft",
+            "<html><head><title>Roadmap Draft</title></head><body>" +
+                "<h1>Roadmap Draft</h1>" +
+                "<p>Q4: notes, search, polish.</p>" +
+                "</body></html>"),
+        "demo-page-onboard": ("Onboarding",
+            "<html><head><title>Onboarding</title></head><body>" +
+                "<h1>Onboarding</h1>" +
+                "<p>Welcome! Start with the Design Sync notebook.</p>" +
+                "</body></html>"),
+    ]
+
+    /// Paragraphs appended in this demo session (pageID → bodies).
+    private static var demoAppended: [String: [String]] = [:]
+
+    public static func notePage(for pageID: String) -> NotePageResponse? {
+        guard let base = demoPageBodies[pageID] else { return nil }
+        var html = base.html
+        for para in demoAppended[pageID] ?? [] {
+            let escaped = para
+                .replacingOccurrences(of: "&", with: "&amp;")
+                .replacingOccurrences(of: "<", with: "&lt;")
+                .replacingOccurrences(of: ">", with: "&gt;")
+            html = html.replacingOccurrences(
+                of: "</body></html>", with: "<p>\(escaped)</p></body></html>")
+        }
+        return NotePageResponse(ok: true, id: pageID, title: base.title, html: html)
+    }
+
+    /// Offline append (demo Notes tab): records the paragraph locally.
+    public static func appendDemo(pageID: String, text: String) {
+        demoAppended[pageID, default: []].append(text)
+    }
+
+    /// Reset demo appends (tests).
+    public static func resetDemoAppends() {
+        demoAppended = [:]
+    }
 }

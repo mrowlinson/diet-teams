@@ -8,6 +8,7 @@
 //! - messages: full history for one chat (requires sign-in)
 //! - send: post one message to a chat (requires sign-in)
 //! - presence: own get/set + per-user get (Graph presence, requires sign-in)
+//! - notes: OneNote notebooks/sections/pages read + paragraph append
 //! - trouter: background push connection with a polled event channel
 //! - calls: signaling-only place/accept/end + echo-bot + recorder inject
 //!
@@ -51,6 +52,14 @@ pub(crate) fn cstr_to_string(p: *const c_char) -> Result<String, String> {
         .to_str()
         .map(|s| s.to_string())
         .map_err(|e| format!("invalid utf-8: {}", e))
+}
+
+/// Optional C string: null decodes to `None` (used for group scopes).
+pub(crate) fn opt_cstr_to_string(p: *const c_char) -> Result<Option<String>, String> {
+    if p.is_null() {
+        return Ok(None);
+    }
+    cstr_to_string(p).map(Some)
 }
 
 pub(crate) fn string_to_c(s: String) -> *mut c_char {
@@ -746,6 +755,176 @@ pub fn user_presence_json(user_id: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Notes (om-notes lane: OneNote read + paragraph append)
+// ---------------------------------------------------------------------------
+
+fn notebook_to_json(n: &ost::api::NotebookInfo) -> serde_json::Value {
+    json!({
+        "id": n.id,
+        "name": n.name,
+    })
+}
+
+fn note_page_meta_to_json(p: &ost::api::PageInfo) -> serde_json::Value {
+    json!({
+        "id": p.id,
+        "title": p.title,
+        "updated": p.updated,
+    })
+}
+
+fn note_section_to_json(s: &ost::api::SectionInfo) -> serde_json::Value {
+    let pages: Vec<_> = s.pages.iter().map(note_page_meta_to_json).collect();
+    json!({
+        "id": s.id,
+        "name": s.name,
+        "pages": pages,
+    })
+}
+
+/// Normalize the optional group scope: `None`/blank reads the user's own
+/// OneNote; otherwise the id must be path-safe (no `/`, no whitespace).
+fn notes_group(group_id: Option<&str>) -> Result<Option<String>, String> {
+    match group_id.map(str::trim) {
+        None | Some("") => Ok(None),
+        Some(g) => {
+            if g.contains('/') || g.chars().any(|c| c.is_whitespace()) {
+                return Err("group_id must not contain '/' or whitespace".to_string());
+            }
+            Ok(Some(g.to_string()))
+        }
+    }
+}
+
+/// List OneNote notebooks as JSON. `group_id` (`None`/blank = the user's
+/// own) reads the M365 group (team) notebooks instead. Requires sign-in.
+pub fn notes_json(group_id: Option<&str>) -> String {
+    let group = match notes_group(group_id) {
+        Ok(g) => g,
+        Err(e) => return err_json("arg", e),
+    };
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let notebooks = ost::api::list_notebooks_data(&client, group.as_deref())
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let items: Vec<_> = notebooks.iter().map(notebook_to_json).collect();
+            Ok(json!({"ok": true, "notebooks": items}).to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("notes", e),
+    }
+}
+
+/// One notebook's sections, each with its pages. Empty `notebook_id` is
+/// rejected before any network.
+pub fn note_sections_json(notebook_id: &str, group_id: Option<&str>) -> String {
+    if notebook_id.trim().is_empty() {
+        return err_json("arg", "empty notebook_id");
+    }
+    let group = match notes_group(group_id) {
+        Ok(g) => g,
+        Err(e) => return err_json("arg", e),
+    };
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let sections = ost::api::list_notebook_sections_data(
+                &client,
+                notebook_id.trim(),
+                group.as_deref(),
+            )
+            .await
+            .map_err(|e| format!("{:#}", e))?;
+            let items: Vec<_> = sections.iter().map(note_section_to_json).collect();
+            Ok(json!({"ok": true, "sections": items}).to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("note_sections", e),
+    }
+}
+
+/// One page's HTML content. Empty `page_id` is rejected before any network.
+pub fn note_page_json(page_id: &str, group_id: Option<&str>) -> String {
+    if page_id.trim().is_empty() {
+        return err_json("arg", "empty page_id");
+    }
+    let group = match notes_group(group_id) {
+        Ok(g) => g,
+        Err(e) => return err_json("arg", e),
+    };
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let page = ost::api::read_note_page_data(&client, page_id.trim(), group.as_deref())
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            Ok(json!({
+                "ok": true,
+                "id": page.id,
+                "title": page.title,
+                "html": page.html,
+            })
+            .to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("note_page", e),
+    }
+}
+
+/// Append one plain-text paragraph to a page. Empty `page_id`/`text` are
+/// rejected before any network. Returns `{ok:true, id}`.
+pub fn note_append_json(page_id: &str, text: &str, group_id: Option<&str>) -> String {
+    if page_id.trim().is_empty() {
+        return err_json("arg", "empty page_id");
+    }
+    if text.trim().is_empty() {
+        return err_json("arg", "empty text");
+    }
+    let group = match notes_group(group_id) {
+        Ok(g) => g,
+        Err(e) => return err_json("arg", e),
+    };
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            ost::api::append_note_paragraph_data(
+                &client,
+                page_id.trim(),
+                text,
+                group.as_deref(),
+            )
+            .await
+            .map_err(|e| format!("{:#}", e))?;
+            Ok(json!({"ok": true, "id": page_id.trim()}).to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("note_append", e),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Trouter event channel
 // ---------------------------------------------------------------------------
 
@@ -1020,6 +1199,73 @@ pub extern "C" fn ostmac_presence() -> *mut c_char {
 pub extern "C" fn ostmac_presence_set(status: *const c_char) -> *mut c_char {
     match cstr_to_string(status) {
         Ok(s) => string_to_c(set_presence_json(&s)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
+/// OneNote notebooks JSON (requires sign-in). `group_id` null/empty reads
+/// the user's own; otherwise the M365 group (team) notebooks. See
+/// [`notes_json`]. Caller frees with [`ostmac_free`].
+#[no_mangle]
+pub extern "C" fn ostmac_notes(group_id: *const c_char) -> *mut c_char {
+    match opt_cstr_to_string(group_id) {
+        Ok(g) => string_to_c(notes_json(g.as_deref())),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
+/// One notebook's sections (each with pages) as JSON.
+/// See [`note_sections_json`]. Caller frees with [`ostmac_free`].
+#[no_mangle]
+pub extern "C" fn ostmac_note_sections(
+    notebook_id: *const c_char,
+    group_id: *const c_char,
+) -> *mut c_char {
+    let nb = match cstr_to_string(notebook_id) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    match opt_cstr_to_string(group_id) {
+        Ok(g) => string_to_c(note_sections_json(&nb, g.as_deref())),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
+/// One page's HTML content as JSON. See [`note_page_json`].
+/// Caller frees with [`ostmac_free`].
+#[no_mangle]
+pub extern "C" fn ostmac_note_page(
+    page_id: *const c_char,
+    group_id: *const c_char,
+) -> *mut c_char {
+    let id = match cstr_to_string(page_id) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    match opt_cstr_to_string(group_id) {
+        Ok(g) => string_to_c(note_page_json(&id, g.as_deref())),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
+/// Append one plain-text paragraph to a page: `{ok:true, id}`.
+/// See [`note_append_json`]. Caller frees with [`ostmac_free`].
+#[no_mangle]
+pub extern "C" fn ostmac_note_append(
+    page_id: *const c_char,
+    text: *const c_char,
+    group_id: *const c_char,
+) -> *mut c_char {
+    let id = match cstr_to_string(page_id) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    let tx = match cstr_to_string(text) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    match opt_cstr_to_string(group_id) {
+        Ok(g) => string_to_c(note_append_json(&id, &tx, g.as_deref())),
         Err(e) => string_to_c(err_json("arg", e)),
     }
 }
@@ -1597,6 +1843,136 @@ mod tests {
         let _ = calls::scan_events(&[
             r#"{"callEnd":{"code":200,"subCode":0,"phrase":"OK"}}"#.to_string()
         ]);
+    }
+
+    #[test]
+    fn notes_group_normalizes_scope() {
+        assert_eq!(notes_group(None).unwrap(), None);
+        assert_eq!(notes_group(Some("")).unwrap(), None);
+        assert_eq!(notes_group(Some("  ")).unwrap(), None);
+        assert_eq!(
+            notes_group(Some(" team-1 ")).unwrap(),
+            Some("team-1".to_string())
+        );
+        for bad in ["a/b", "a b", "../me"] {
+            assert!(notes_group(Some(bad)).is_err(), "group {:?}", bad);
+        }
+    }
+
+    #[test]
+    fn notes_json_shapes() {
+        let n = ost::api::NotebookInfo {
+            id: "nb-1".to_string(),
+            name: "Work".to_string(),
+        };
+        let v = notebook_to_json(&n);
+        assert_eq!(v["id"], "nb-1");
+        assert_eq!(v["name"], "Work");
+        let s = ost::api::SectionInfo {
+            id: "s-1".to_string(),
+            name: "Notes".to_string(),
+            pages: vec![
+                ost::api::PageInfo {
+                    id: "p-1".to_string(),
+                    title: "Kickoff".to_string(),
+                    updated: Some("2026-09-22T10:00:00Z".to_string()),
+                },
+                ost::api::PageInfo {
+                    id: "p-2".to_string(),
+                    title: "Untitled".to_string(),
+                    updated: None,
+                },
+            ],
+        };
+        let v = note_section_to_json(&s);
+        assert_eq!(v["name"], "Notes");
+        assert_eq!(v["pages"].as_array().unwrap().len(), 2);
+        assert_eq!(v["pages"][0]["title"], "Kickoff");
+        assert_eq!(v["pages"][0]["updated"], "2026-09-22T10:00:00Z");
+        assert!(v["pages"][1]["updated"].is_null());
+    }
+
+    #[test]
+    fn notes_rejects_bad_args_without_network() {
+        for bad in ["", "   "] {
+            let v: serde_json::Value =
+                serde_json::from_str(&note_sections_json(bad, None)).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+            let v: serde_json::Value =
+                serde_json::from_str(&note_page_json(bad, None)).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+            let v: serde_json::Value =
+                serde_json::from_str(&note_append_json(bad, "hi", None)).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
+        // Empty append text rejected (valid page id).
+        let v: serde_json::Value =
+            serde_json::from_str(&note_append_json("p-1", "  ", None)).unwrap();
+        assert_eq!(v["ok"], false);
+        assert_eq!(v["error"], "arg");
+        // Bad group scope rejected on every entry point.
+        for s in [
+            notes_json(Some("a/b")),
+            note_sections_json("nb-1", Some("a b")),
+            note_page_json("p-1", Some("../me")),
+            note_append_json("p-1", "hi", Some("a/b")),
+        ] {
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
+    fn opt_cstr_null_decodes_to_none() {
+        // Null group scope decodes to None (user's own OneNote) without
+        // touching the network; arg validation for ids still applies.
+        assert_eq!(opt_cstr_to_string(std::ptr::null()).unwrap(), None);
+        let g = CString::new("team-1").unwrap();
+        assert_eq!(
+            opt_cstr_to_string(g.as_ptr()).unwrap(),
+            Some("team-1".to_string())
+        );
+        // FFI still rejects a bad group before any network.
+        let bad = CString::new("a/b").unwrap();
+        unsafe {
+            let p = ostmac_notes(bad.as_ptr());
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
+    fn ffi_note_ids_null_is_arg_error() {
+        unsafe {
+            let p = ostmac_note_sections(std::ptr::null(), std::ptr::null());
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+
+            let p = ostmac_note_page(std::ptr::null(), std::ptr::null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["error"], "arg");
+
+            let id = CString::new("p-1").unwrap();
+            let p = ostmac_note_append(id.as_ptr(), std::ptr::null(), std::ptr::null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["error"], "arg");
+        }
     }
 
     #[test]

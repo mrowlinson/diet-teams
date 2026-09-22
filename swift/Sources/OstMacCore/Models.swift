@@ -313,6 +313,117 @@ public struct UserPresenceResponse: Decodable, Sendable {
     }
 }
 
+// MARK: - Notes (om-notes lane: OneNote read + paragraph append)
+
+/// One OneNote notebook. Wire format from core `ostmac_notes`:
+/// `{"id","name"}`.
+public struct NotebookItem: Decodable, Sendable, Identifiable, Equatable {
+    public var id: String { notebookId }
+    public let notebookId: String
+    public let name: String
+
+    enum CodingKeys: String, CodingKey {
+        case notebookId = "id"
+        case name
+    }
+
+    /// Host-side construction (demo data, previews, mock fetchers).
+    public init(notebookId: String, name: String) {
+        self.notebookId = notebookId
+        self.name = name
+    }
+}
+
+public struct NotebooksResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let notebooks: [NotebookItem]
+
+    /// Host-side construction (demo data, previews, mock fetchers).
+    public init(ok: Bool, notebooks: [NotebookItem]) {
+        self.ok = ok
+        self.notebooks = notebooks
+    }
+}
+
+/// One OneNote page (metadata; content arrives via `ostmac_note_page`).
+public struct NotePageItem: Decodable, Sendable, Identifiable, Equatable {
+    public var id: String { pageId }
+    public let pageId: String
+    public let title: String
+    public let updated: String?
+
+    enum CodingKeys: String, CodingKey {
+        case pageId = "id"
+        case title, updated
+    }
+
+    /// Host-side construction (demo data, previews, mock fetchers).
+    public init(pageId: String, title: String, updated: String? = nil) {
+        self.pageId = pageId
+        self.title = title
+        self.updated = updated
+    }
+}
+
+/// One OneNote section with its pages (nested by core to save round trips).
+public struct NoteSectionItem: Decodable, Sendable, Identifiable, Equatable {
+    public var id: String { sectionId }
+    public let sectionId: String
+    public let name: String
+    public let pages: [NotePageItem]
+
+    enum CodingKeys: String, CodingKey {
+        case sectionId = "id"
+        case name, pages
+    }
+
+    /// Host-side construction (demo data, previews, mock fetchers).
+    public init(sectionId: String, name: String, pages: [NotePageItem]) {
+        self.sectionId = sectionId
+        self.name = name
+        self.pages = pages
+    }
+}
+
+public struct NoteSectionsResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let sections: [NoteSectionItem]
+
+    /// Host-side construction (demo data, previews, mock fetchers).
+    public init(ok: Bool, sections: [NoteSectionItem]) {
+        self.ok = ok
+        self.sections = sections
+    }
+}
+
+/// One page's content. `title` is empty when the page ships no `<title>`.
+public struct NotePageResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let id: String
+    public let title: String
+    public let html: String
+
+    /// Host-side construction (demo data, previews, mock fetchers).
+    public init(ok: Bool, id: String, title: String, html: String) {
+        self.ok = ok
+        self.id = id
+        self.title = title
+        self.html = html
+    }
+}
+
+/// `{ok,id}` after a paragraph append.
+public struct NoteAppendResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let id: String
+
+    /// Host-side construction (demo data, previews, mock fetchers).
+    public init(ok: Bool, id: String) {
+        self.ok = ok
+        self.id = id
+    }
+}
+
 // MARK: - Calls (om-signal lane: signaling only, no audio/video)
 
 /// One call record from core `ostmac_call_*`. `state` is

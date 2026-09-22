@@ -80,6 +80,21 @@ char *ostmac_presence_set(const char *status);
 // {ok,id,availability,activity}. Caller frees. Hits network.
 char *ostmac_presence_user(const char *user_id);
 
+// OneNote notebooks JSON: {ok,notebooks:[{id,name}]}. group_id NULL/empty
+// reads the user's own; otherwise the M365 group (team) notebooks.
+// Requires sign-in. Caller frees. Hits network.
+char *ostmac_notes(const char *group_id);
+
+// One notebook's sections, each with pages:
+// {ok,sections:[{id,name,pages:[{id,title,updated?}]}]}. Caller frees.
+char *ostmac_note_sections(const char *notebook_id, const char *group_id);
+
+// One page's HTML content: {ok,id,title,html}. Caller frees.
+char *ostmac_note_page(const char *page_id, const char *group_id);
+
+// Append one plain-text paragraph to a page: {ok,id}. Caller frees.
+char *ostmac_note_append(const char *page_id, const char *text, const char *group_id);
+
 // Current call slot JSON: {ok, call:{id,dir,peer,peer_name,thread,
 // state,controller?,started_at,detail?}|null}. Caller frees. No network.
 char *ostmac_call_status(void);

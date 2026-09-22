@@ -7,26 +7,49 @@ public struct ConversationView: View {
     @ObservedObject public var store: ConversationStore
     @ObservedObject private var presence: PresenceStore
     @ObservedObject public var call: CallStore
+    @ObservedObject public var notes: NotesStore
     /// False for 1:1 chats (header shows the chatmate dot).
     private let isGroup: Bool
     @State private var draft = ""
     @State private var lastSeenID: String?
+    @State private var tab: Int
     @FocusState private var boxFocused: Bool
 
     public init(
         store: ConversationStore, presence: PresenceStore = PresenceStore(),
-        call: CallStore = CallStore(), isGroup: Bool = true
+        call: CallStore = CallStore(), notes: NotesStore = NotesStore(),
+        isGroup: Bool = true, initialTab: Int = 0
     ) {
         self.store = store
         self.presence = presence
         self.call = call
+        self.notes = notes
         self.isGroup = isGroup
+        self._tab = State(initialValue: initialTab)
     }
 
     public var body: some View {
         VStack(spacing: 0) {
             header
+            Picker("", selection: $tab) {
+                Text("Chat").tag(0)
+                Text("Notes").tag(1)
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal)
+            .padding(.bottom, 6)
             Divider()
+            if tab == 0 {
+                chatPane
+            } else {
+                NotesView(store: notes)
+            }
+        }
+        .frame(minWidth: 380, minHeight: 480)
+    }
+
+    private var chatPane: some View {
+        VStack(spacing: 0) {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 10) {
@@ -63,7 +86,6 @@ public struct ConversationView: View {
             Divider()
             sendBox
         }
-        .frame(minWidth: 380, minHeight: 480)
     }
 
     private var sections: [MessageRender.DaySection] {
