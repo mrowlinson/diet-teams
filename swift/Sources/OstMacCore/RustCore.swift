@@ -77,6 +77,30 @@ public enum RustCore {
         return (data, resp.content_type)
     }
 
+    public static func sharedFiles(chatID: String, limit: Int32 = 20) throws -> SharedFilesResponse {
+        try chatID.withCString { ptr in
+            try call(ostmac_files(ptr, limit), as: SharedFilesResponse.self)
+        }
+    }
+
+    public static func sharedUpload(chatID: String, path: String) throws -> SharedFileUploadResponse {
+        try chatID.withCString { idPtr in
+            try path.withCString { pathPtr in
+                try call(ostmac_files_upload(idPtr, pathPtr), as: SharedFileUploadResponse.self)
+            }
+        }
+    }
+
+    public static func sharedDownload(driveID: String, itemID: String, dest: String) throws -> SharedFileDownloadResponse {
+        try driveID.withCString { dPtr in
+            try itemID.withCString { iPtr in
+                try dest.withCString { destPtr in
+                    try call(ostmac_files_download(dPtr, iPtr, destPtr), as: SharedFileDownloadResponse.self)
+                }
+            }
+        }
+    }
+
     public static func presence() throws -> PresenceResponse {
         try call(ostmac_presence(), as: PresenceResponse.self)
     }

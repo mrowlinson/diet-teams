@@ -2,6 +2,7 @@
 
 mod chat;
 pub mod client;
+mod files;
 mod graph;
 mod me;
 pub mod media;
@@ -12,6 +13,7 @@ use anyhow::Result;
 
 // Re-export data types for TUI integration
 pub use chat::{ChatInfo, MessageInfo, MessagesPage};
+pub use files::SharedFile;
 pub use me::UserInfo;
 pub use presence::PresenceInfo;
 pub use teams::TeamInfo;
@@ -25,6 +27,7 @@ pub use teams::ChannelInfo;
 pub use chat::{
     list_chats_data, read_messages_data, read_messages_page, send_message_with_client,
 };
+pub use files::{download_file_data, list_chat_files_data, upload_file_data};
 pub use media::{fetch_media_data, MediaBytes, MAX_BYTES};
 pub use me::whoami_data;
 pub use presence::get_presence_data;
@@ -63,4 +66,19 @@ pub async fn whoami() -> Result<()> {
 /// List joined teams and their channels
 pub async fn list_teams() -> Result<()> {
     teams::list_teams().await
+}
+
+/// List shared files in a chat or channel
+pub async fn list_files(chat_id: &str, limit: usize) -> Result<()> {
+    files::list_files(chat_id, limit).await
+}
+
+/// Download a shared file by drive+item id
+pub async fn download_file(drive_id: &str, item_id: &str, dest: &str) -> Result<()> {
+    files::download_file(drive_id, item_id, dest).await
+}
+
+/// Upload a local file to a chat or channel
+pub async fn upload_file(chat_id: &str, local_path: &str) -> Result<()> {
+    files::upload_file(chat_id, local_path).await
 }

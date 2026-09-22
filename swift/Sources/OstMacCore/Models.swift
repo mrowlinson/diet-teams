@@ -308,6 +308,107 @@ public struct MediaResponse: Decodable, Sendable {
     }
 }
 
+// MARK: - Shared files (om-shared lane)
+
+/// One shared file from core `ostmac_files` (Graph driveItem projection).
+/// `download_url` is a pre-authenticated short-lived URL: Swift downloads
+/// directly (no bearer). `drive_id`+`id` drive `ostmac_files_download`
+/// when the pre-signed URL expired.
+public struct SharedFile: Decodable, Sendable, Identifiable, Equatable {
+    public let id: String
+    public let name: String
+    public let size: UInt64
+    public let mime: String?
+    public let web_url: String?
+    public let download_url: String?
+    public let drive_id: String?
+    public let created: String?
+    public let modified: String?
+    public let sender: String?
+
+    public init(
+        id: String, name: String, size: UInt64 = 0,
+        mime: String? = nil, web_url: String? = nil,
+        download_url: String? = nil, drive_id: String? = nil,
+        created: String? = nil, modified: String? = nil,
+        sender: String? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.size = size
+        self.mime = mime
+        self.web_url = web_url
+        self.download_url = download_url
+        self.drive_id = drive_id
+        self.created = created
+        self.modified = modified
+        self.sender = sender
+    }
+
+    /// "48211" -> "47.1 KB" (1 decimal, B/KB/MB/GB).
+    public var sizeLabel: String {
+        Self.sizeLabel(size)
+    }
+
+    public static func sizeLabel(_ bytes: UInt64) -> String {
+        if bytes < 1024 { return "\(bytes) B" }
+        let kb = Double(bytes) / 1024
+        if kb < 1024 { return String(format: "%.1f KB", kb) }
+        let mb = kb / 1024
+        if mb < 1024 { return String(format: "%.1f MB", mb) }
+        return String(format: "%.1f GB", mb / 1024)
+    }
+
+    /// SF Symbol for the mime/extension (doc, image, film, music, archive).
+    public var iconName: String {
+        Self.iconName(mime: mime, filename: name)
+    }
+
+    public static func iconName(mime: String?, filename: String) -> String {
+        let m = (mime ?? "").lowercased()
+        if m.hasPrefix("image/") { return "photo" }
+        if m.hasPrefix("video/") { return "film" }
+        if m.hasPrefix("audio/") { return "music.note" }
+        if m == "application/pdf" { return "doc.richtext" }
+        if m.contains("zip") || m.contains("tar") || m.contains("gzip") { return "archivebox" }
+        let ext = (filename as NSString).pathExtension.lowercased()
+        switch ext {
+        case "png", "jpg", "jpeg", "gif", "heic", "webp": return "photo"
+        case "mov", "mp4", "m4v": return "film"
+        case "mp3", "m4a", "wav": return "music.note"
+        case "pdf": return "doc.richtext"
+        case "zip", "tar", "gz": return "archivebox"
+        case "doc", "docx", "pages", "txt", "md": return "doc.text"
+        case "xls", "xlsx", "numbers", "csv": return "tablecells"
+        case "ppt", "pptx", "key": return "rectangle.on.rectangle"
+        default: return "doc"
+        }
+    }
+}
+
+public struct SharedFilesResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let chat_id: String?
+    public let files: [SharedFile]
+
+    public init(ok: Bool, chat_id: String? = nil, files: [SharedFile]) {
+        self.ok = ok
+        self.chat_id = chat_id
+        self.files = files
+    }
+}
+
+public struct SharedFileUploadResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let file: SharedFile
+}
+
+public struct SharedFileDownloadResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let path: String
+    public let bytes: UInt64
+}
+
 // MARK: - Presence (om-presence lane)
 
 /// Own presence from core `ostmac_presence` / `ostmac_presence_set`

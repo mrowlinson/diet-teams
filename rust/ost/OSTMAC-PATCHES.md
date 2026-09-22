@@ -66,6 +66,20 @@ needing maintainer buy-in. Minor PRs stand alone; majors are separate PRs.
     keep our copy lean (CLI debug surface + `ostmac-core` lib only). All CLI
     subcommands (`chats`/`read`/`send`/`call-test`/etc) unchanged. 8 TUI unit
     tests drop with the module; zero failures expected elsewhere.
+14. `src/api/files.rs` (new) + `src/api/client.rs` + `src/api/mod.rs` +
+    `src/main.rs` — **chat shared files via Graph driveItems (om-shared lane)**.
+    `SharedFile`/`list_chat_files_data`/`download_file_data`/`upload_file_data`
+    re-exported in `src/api/mod.rs`. Chats: Graph `/me/chats/{id}/messages`
+    `reference` attachments resolved via `/shares/{u!b64}/driveItem` (deduped
+    by item id, folders skipped); channels: team scan + `filesFolder` +
+    `/drives/{d}/items/{i}/children`. CLI: `files`, `files-download`,
+    `files-upload`. `client.rs` gains `graph_put_bytes` (drive PUT). Upload is
+    small-file PUT only (<4 MB, chat folder "Microsoft Teams Chat Files") +
+    `reference` message post (attachment id = GUID from driveItem eTag,
+    contentUrl = webDavUrl/webUrl). No auth scope change: existing Graph token
+    (`/.default`) already carries Files.Read/Write. Unit tests: share-id
+    round-trip, segment encoding, eTag GUID scan, children/message parsing,
+    attachment preference.
 
 ## Upstream PRs (2026-09-22, base 0892144; main red on sdp E0308 until #5)
 

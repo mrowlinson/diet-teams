@@ -108,6 +108,51 @@ public enum DemoData {
         chatID == richID ? ["rich-fail"] : []
     }
 
+    /// Canned shared files for `--demo` (om-shared lane). Design Sync has
+    /// three (pdf + image + sheet, one with a sender); Ava has one; the
+    /// rich thread and channels share the design set; standup is empty.
+    public static func sharedFiles(for chatID: String) -> [SharedFile] {
+        switch chatID {
+        case demoID, richID: return designFiles
+        case avaID: return [avaFile]
+        case standupID: return []
+        default:
+            if chatID.hasPrefix("demo-chan-") { return designFiles }
+            return []
+        }
+    }
+
+    private static let designFiles: [SharedFile] = [
+        SharedFile(
+            id: "demo-f1", name: "onboarding-mocks.pdf", size: 48211,
+            mime: "application/pdf",
+            web_url: "https://example.sharepoint.com/onboarding-mocks.pdf",
+            download_url: "https://example.sharepoint.com/download/onboarding-mocks.pdf",
+            drive_id: "demo-drive-1",
+            created: "2026-09-21T10:02:11Z", sender: "Tom Becker"),
+        SharedFile(
+            id: "demo-f2", name: "empty-states.png", size: 184320,
+            mime: "image/png",
+            web_url: "https://example.sharepoint.com/empty-states.png",
+            download_url: "https://example.sharepoint.com/download/empty-states.png",
+            drive_id: "demo-drive-1",
+            created: "2026-09-22T08:41:02Z", sender: "Ava Lindqvist"),
+        SharedFile(
+            id: "demo-f3", name: "launch-checklist.xlsx", size: 9216,
+            mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            web_url: "https://example.sharepoint.com/launch-checklist.xlsx",
+            drive_id: "demo-drive-1",
+            created: "2026-09-20T16:20:11Z", sender: "Priya Nair"),
+    ]
+
+    private static let avaFile = SharedFile(
+        id: "demo-f-ava1", name: "standup-notes.md", size: 2048,
+        mime: "text/markdown",
+        web_url: "https://example.sharepoint.com/standup-notes.md",
+        download_url: "https://example.sharepoint.com/download/standup-notes.md",
+        drive_id: "demo-drive-2",
+        created: "2026-09-22T08:47:33Z", sender: "Ava Lindqvist")
+
     public static func name(for chatID: String) -> String? {
         if let chat = chats.first(where: { $0.id == chatID }) { return chat.name }
         for team in teams {

@@ -18,6 +18,7 @@
 // send via core — never use it on shared chats for testing.
 // --show-about / --show-settings / --show-av open those windows at launch (shot hooks).
 // --show-teams opens the sidebar on the Teams browser (shot hook).
+// --show-shared opens the conversation on the Shared files tab (shot hook).
 // --auth-state <name> opens the Auth window with a canned state, never
 // touching core/network (names: signed-out, starting, code, polling,
 // signed-in, expired, refreshing, refresh-failed, error). `--state` is
@@ -126,6 +127,7 @@ final class AppState: ObservableObject {
     let chats: ChatListViewModel
     let teams: TeamsViewModel
     let conv = ConversationStore()
+    let shared = SharedFilesStore()
     let feed = RealtimeFeed()
     let auth = AuthViewModel()
     let presence = PresenceStore()
@@ -394,8 +396,9 @@ struct RootView: View {
                     } else {
                         ConversationView(
                             store: state.conv, presence: state.presence,
-                            call: state.call,
-                            isGroup: state.chats.selectedChat?.is_group ?? true)
+                            call: state.call, shared: state.shared,
+                            isGroup: state.chats.selectedChat?.is_group ?? true,
+                            initialTab: CommandLine.arguments.contains("--show-shared") ? 1 : 0)
                     }
                 }
             } else {
