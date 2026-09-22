@@ -9,7 +9,6 @@ mod config;
 mod event_hub;
 mod models;
 mod trouter;
-mod tui;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -123,40 +122,14 @@ enum Commands {
     /// Test camera capture: record 3 seconds then play back in SDL2 window
     #[cfg(feature = "video-capture")]
     CamTest,
-
-    /// Launch the terminal user interface
-    Tui,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    // Initialize logging differently for TUI vs CLI mode.
-    // TUI mode captures logs to a buffer (displayed in debug pane).
-    // CLI mode logs to stderr as usual.
     let filter_str = if cli.verbose { "debug" } else { "info" };
 
-    if matches!(cli.command, Commands::Tui) {
-        // TUI mode: capture logs to a buffer for in-TUI display.
-        let log_buffer = tui::LogBuffer::new();
-        tracing_subscriber::registry()
-            .with(
-                tracing_subscriber::EnvFilter::try_from_default_env()
-                    .unwrap_or_else(|_| filter_str.into()),
-            )
-            .with(
-                tracing_subscriber::fmt::layer()
-                    .with_target(false)
-                    .with_ansi(false)
-                    .with_writer(log_buffer.clone()),
-            )
-            .init();
-
-        return tui::run(log_buffer).await;
-    }
-
-    // CLI mode: log to stderr.
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -228,8 +201,6 @@ async fn main() -> Result<()> {
                 api::get_presence().await?;
             }
         },
-        // TUI is handled above with early return.
-        Commands::Tui => unreachable!(),
     }
 
     Ok(())

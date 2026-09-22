@@ -31,3 +31,10 @@ vendored so the spike can build on macOS and expose a library surface.
    re-exported in `src/api/mod.rs`. `MessageInfo` gains `raw` (unstripped
    HTML for mention/code mining). `read_messages_data` keeps its signature
    (delegates, newest page). TUI untouched.
+8. `src/tui/` deleted + `Tui` subcommand + `mod tui` wiring (`main.rs`,
+   `lib.rs`) + `ratatui`/`crossterm`/`tokio-stream`/`unicode-width` deps —
+   [major][LOCAL-ONLY, do not upstream] **drop TUI from our vendored copy**.
+   Diet Teams (SwiftUI) replaces the UI; the TUI is eisbaw's product, we
+   keep our copy lean (CLI debug surface + `ostmac-core` lib only). All CLI
+   subcommands (`chats`/`read`/`send`/`call-test`/etc) unchanged. 8 TUI unit
+   tests drop with the module; zero failures expected elsewhere.
