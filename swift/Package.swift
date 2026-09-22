@@ -18,24 +18,18 @@ let rustLink: [LinkerSetting] = [
 ]
 
 let package = Package(
-    name: "OstMacSpike",
+    name: "OstMac",
     platforms: [.macOS(.v14)],
     products: [
-        .executable(name: "OstMacSpike", targets: ["OstMacSpike"]),
-        .executable(name: "OstMacConv", targets: ["OstMacConv"]),
+        .executable(name: "OstMac", targets: ["OstMac"]),
     ],
     targets: [
         .target(name: "COstMac", publicHeadersPath: "include"),
         .target(name: "OstMacCore", dependencies: ["COstMac"]),
         .target(name: "OstMacChatList", dependencies: ["OstMacCore"]),
         .executableTarget(
-            name: "OstMacSpike",
+            name: "OstMac",
             dependencies: ["OstMacCore", "OstMacChatList", "COstMac"],
-            linkerSettings: rustLink
-        ),
-        .executableTarget(
-            name: "OstMacConv",
-            dependencies: ["OstMacCore", "COstMac"],
             linkerSettings: rustLink
         ),
         .testTarget(

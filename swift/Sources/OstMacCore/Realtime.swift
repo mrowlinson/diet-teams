@@ -38,6 +38,21 @@ public struct RealtimeMessage: Decodable, Sendable, Identifiable {
         case isEdit = "is_edit"
         case editedID = "edited_id"
     }
+
+    /// True when this event belongs to the given open chat.
+    /// Nil (nothing open) never matches.
+    public func isFor(chatID id: String?) -> Bool {
+        id.map { $0 == chatID } ?? false
+    }
+
+    /// Host model: edits collapse onto the edited id so
+    /// `ConversationStore.ingest` updates the bubble in place.
+    public var asChatMessage: ChatMessage {
+        if isEdit, let edited = editedID {
+            return ChatMessage(id: edited, sender: sender, timestamp: time, content: text)
+        }
+        return ChatMessage(id: msgId, sender: sender, timestamp: time, content: text)
+    }
 }
 
 /// Typed poll envelope from ostmac_trouter_poll_typed.
@@ -80,6 +95,8 @@ public final class RealtimeFeed: @unchecked Sendable {
     private var subs: [UUID: @Sendable (RealtimeMessage) -> Void] = [:]
     private var resyncSubs: [UUID: @Sendable () -> Void] = [:]
     private var attempt = 0
+    private var pollCountValue = 0
+    private var lastErrorValue: String?
 
     private let pollFn: @Sendable () throws -> RealtimePoll
     private let startFn: @Sendable () -> Int32
@@ -101,6 +118,19 @@ public final class RealtimeFeed: @unchecked Sendable {
     public var currentState: State {
         lock.lock(); defer { lock.unlock() }
         return state
+    }
+
+    /// Completed typed polls since init (includes the start drain).
+    /// The UI reads this to prove the poll loop is alive.
+    public var pollCount: Int {
+        lock.lock(); defer { lock.unlock() }
+        return pollCountValue
+    }
+
+    /// Last poll failure, cleared on the next success. Nil when healthy.
+    public var lastError: String? {
+        lock.lock(); defer { lock.unlock() }
+        return lastErrorValue
     }
 
     /// Subscribe to typed message/edit events. Returns a token for unsubscribe.
@@ -187,11 +217,19 @@ public final class RealtimeFeed: @unchecked Sendable {
     /// Public so the UI (and tests) can drive polling manually.
     @discardableResult
     public func pollOnce() throws -> (messages: Int, resync: Bool) {
-        try pollDeduped(notify: true)
+        do {
+            let r = try pollDeduped(notify: true)
+            lock.lock(); lastErrorValue = nil; lock.unlock()
+            return r
+        } catch {
+            lock.lock(); lastErrorValue = String(describing: error); lock.unlock()
+            throw error
+        }
     }
 
     private func pollDeduped(notify: Bool) throws -> (messages: Int, resync: Bool) {
         let p = try pollFn()
+        lock.lock(); pollCountValue += 1; lock.unlock()
         var fresh: [RealtimeMessage] = []
         lock.lock()
         for m in p.messages where !seen.contains(m.msgId) {

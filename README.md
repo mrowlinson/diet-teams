@@ -11,7 +11,8 @@ from a minimal SwiftUI shell over a C ABI (JSON over the boundary).
   `swift/Sources/COstMac/include/ostmac_core.h`
 - `swift/` — SPM package: `COstMac` (headers), `OstMacCore` (Swift wrapper),
   `OstMacChatList` (chat sidebar + `ChatSelection` contract for the
-  conversation lane), `OstMacSpike` (SwiftUI shell), `OstMacCoreTests`
+  conversation lane), `OstMac` (integrated app: sidebar + conversation +
+  live feed), `OstMacCoreTests`
 - `scripts/` — `build-rust.sh`, `build-app.sh`, `test.sh`
 - `docs/shots/` — viewed screenshots (TUI + SwiftUI shell)
 
@@ -19,8 +20,9 @@ from a minimal SwiftUI shell over a C ABI (JSON over the boundary).
 
 ```sh
 ./scripts/test.sh        # rust tests + swift tests (builds rust first)
-./scripts/build-app.sh   # OstMacSpike.app
-open swift/.build/release/OstMacSpike.app
+./scripts/build-app.sh   # OstMac.app
+open swift/.build/release/OstMac.app
+open swift/.build/release/OstMac.app --args --demo  # offline canned data
 ```
 
 Prereqs: Xcode CLT (`swift`, `xcodebuild`), `cargo`. No Linux-only features
