@@ -1,0 +1,15 @@
+# Build outputs
+rust/ost/target/
+rust/ostmac-core/target/
+swift/.build/
+swift/.swiftpm/
+
+# Scratch (FLEX lane workspace)
+tmp/
+
+# macOS / editors
+.DS_Store
+*.swp
+*~
+.vscode/
+.idea/
