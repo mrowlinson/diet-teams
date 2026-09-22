@@ -64,6 +64,19 @@ char *ostmac_refresh(void);
 // {ok:true} or {ok:false}. Caller frees. No network.
 char *ostmac_sign_out(void);
 
+// Own presence JSON (Graph /me/presence): {ok,availability,activity}.
+// Requires sign-in. Caller frees. Hits network.
+char *ostmac_presence(void);
+
+// Set own preferred presence. status is one of (case-insensitive):
+// available, busy, dnd (donotdisturb), away, offline.
+// Returns the applied {ok,availability,activity}. Caller frees.
+char *ostmac_presence_set(const char *status);
+
+// One other user's presence JSON (Entra ID or UPN):
+// {ok,id,availability,activity}. Caller frees. Hits network.
+char *ostmac_presence_user(const char *user_id);
+
 // Free a string from any ostmac_* call. Null-safe.
 void ostmac_free(char *s);
 

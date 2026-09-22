@@ -6,10 +6,12 @@ import SwiftUI
 /// for the conversation lane to consume.
 public struct ChatListSidebar: View {
     @ObservedObject private var model: ChatListViewModel
+    @ObservedObject private var presence: PresenceStore
     @State private var searchText = ""
 
-    public init(model: ChatListViewModel) {
+    public init(model: ChatListViewModel, presence: PresenceStore = PresenceStore()) {
         self.model = model
+        self.presence = presence
     }
 
     public var body: some View {
@@ -58,7 +60,10 @@ public struct ChatListSidebar: View {
                 } else {
                     List(selection: $model.selectedChatID) {
                         ForEach(visible) { chat in
-                            ChatRow(chat: chat).tag(chat.id)
+                            ChatRow(
+                                chat: chat,
+                                peerAvailability: chat.is_group ? nil : .some(presence.availabilityForChat(chat.id))
+                            ).tag(chat.id)
                         }
                     }
                     .listStyle(.sidebar)
@@ -81,12 +86,20 @@ public struct ChatListSidebar: View {
 
 struct ChatRow: View {
     let chat: ChatItem
+    /// Chatmate availability for 1:1 chats. Outer nil = group (no dot);
+    /// inner nil = unknown (hollow dot).
+    var peerAvailability: String?? = nil
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
-            Image(systemName: chat.is_group ? "person.3.fill" : "person.circle.fill")
-                .foregroundStyle(.secondary)
-                .padding(.top, 2)
+            ZStack(alignment: .bottomTrailing) {
+                Image(systemName: chat.is_group ? "person.3.fill" : "person.circle.fill")
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 2)
+                if let avail = peerAvailability {
+                    PresenceDot(availability: avail)
+                }
+            }
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline) {
                     Text(chat.name).font(.headline).lineLimit(1)

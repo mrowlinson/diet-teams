@@ -6,6 +6,7 @@
 //! - chats: structured chat list (requires sign-in)
 //! - messages: full history for one chat (requires sign-in)
 //! - send: post one message to a chat (requires sign-in)
+//! - presence: own get/set + per-user get (Graph presence, requires sign-in)
 //! - trouter: background push connection with a polled event channel
 //!
 //! Dropped for now: TUI, audio/video, call media.
@@ -560,6 +561,144 @@ pub fn send_json(chat_id: &str, text: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Presence (om-presence lane: ost CLI get/set + TUI LoadPresence parity)
+// ---------------------------------------------------------------------------
+
+fn presence_envelope(availability: &str, activity: &str) -> String {
+    json!({
+        "ok": true,
+        "availability": availability,
+        "activity": activity,
+    })
+    .to_string()
+}
+
+/// ost `set_presence` status table, verbatim (lowercased input):
+/// available, busy, dnd|donotdisturb, away, offline.
+fn presence_status_pair(status: &str) -> Option<(&'static str, &'static str)> {
+    match status.to_lowercase().as_str() {
+        "available" => Some(("Available", "Available")),
+        "busy" => Some(("Busy", "InACall")),
+        "dnd" | "donotdisturb" => Some(("DoNotDisturb", "Presenting")),
+        "away" => Some(("Away", "Away")),
+        "offline" => Some(("Offline", "OffWork")),
+        _ => None,
+    }
+}
+
+/// Own presence via Graph /me/presence (ost `get_presence_data`).
+/// `{ok:true, availability, activity}` or `{ok:false}`.
+pub fn presence_json() -> String {
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let info = ost::api::get_presence_data(&client)
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            Ok(presence_envelope(&info.availability, &info.activity))
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("presence", e),
+    }
+}
+
+/// Set own preferred presence (ost `set_presence` table + body, minus the
+/// CLI print). Unknown/empty `status` is rejected before any network.
+/// Returns the applied `{ok:true, availability, activity}`.
+pub fn set_presence_json(status: &str) -> String {
+    let want = status.trim();
+    if want.is_empty() {
+        return err_json("arg", "empty status");
+    }
+    let (availability, activity) = match presence_status_pair(want) {
+        Some(p) => p,
+        None => {
+            return err_json(
+                "arg",
+                format!(
+                    "Unknown status: {}. Use: available, busy, dnd, away, offline",
+                    want
+                ),
+            )
+        }
+    };
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let body = serde_json::json!({
+                "sessionId": "teams-cli",
+                "availability": availability,
+                "activity": activity,
+                "expirationDuration": "PT1H"
+            });
+            client
+                .graph_post("/me/presence/setUserPreferredPresence", &body)
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            Ok(presence_envelope(availability, activity))
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("presence_set", e),
+    }
+}
+
+/// One other user's presence via Graph /users/{id}/presence (same wire
+/// shape as /me/presence). `user_id` is an Entra ID or UPN; empty or
+/// path-breaking ids are rejected before any network.
+/// `{ok:true, id, availability, activity}` or `{ok:false}`.
+pub fn user_presence_json(user_id: &str) -> String {
+    let id = user_id.trim();
+    if id.is_empty() {
+        return err_json("arg", "empty user_id");
+    }
+    if id.contains('/') || id.chars().any(|c| c.is_whitespace()) {
+        return err_json("arg", "user_id must not contain '/' or whitespace");
+    }
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let resp = client
+                .graph_get(&format!("/users/{}/presence", id))
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            #[derive(serde::Deserialize)]
+            struct P {
+                availability: String,
+                activity: String,
+            }
+            let p: P = resp
+                .json()
+                .await
+                .map_err(|e| format!("Failed to parse presence response: {}", e))?;
+            Ok(json!({
+                "ok": true,
+                "id": id,
+                "availability": p.availability,
+                "activity": p.activity,
+            })
+            .to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("presence_user", e),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Trouter event channel
 // ---------------------------------------------------------------------------
 
@@ -805,6 +944,34 @@ pub extern "C" fn ostmac_refresh() -> *mut c_char {
 #[no_mangle]
 pub extern "C" fn ostmac_sign_out() -> *mut c_char {
     string_to_c(sign_out_json())
+}
+
+/// Own presence JSON (Graph /me/presence). See [`presence_json`].
+/// Caller frees with [`ostmac_free`].
+#[no_mangle]
+pub extern "C" fn ostmac_presence() -> *mut c_char {
+    string_to_c(presence_json())
+}
+
+/// Set own preferred presence. `status` is one of: available, busy,
+/// dnd (donotdisturb), away, offline (case-insensitive). See
+/// [`set_presence_json`]. Caller frees with [`ostmac_free`].
+#[no_mangle]
+pub extern "C" fn ostmac_presence_set(status: *const c_char) -> *mut c_char {
+    match cstr_to_string(status) {
+        Ok(s) => string_to_c(set_presence_json(&s)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
+/// One other user's presence JSON (`user_id` = Entra ID or UPN).
+/// See [`user_presence_json`]. Caller frees with [`ostmac_free`].
+#[no_mangle]
+pub extern "C" fn ostmac_presence_user(user_id: *const c_char) -> *mut c_char {
+    match cstr_to_string(user_id) {
+        Ok(id) => string_to_c(user_presence_json(&id)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
 }
 
 /// Free a string returned by any `ostmac_*` call. Null-safe.
@@ -1134,6 +1301,105 @@ mod tests {
         assert_eq!(v["messages"][0]["edited_id"], "111");
         assert_eq!(v["messages"][1]["is_edit"], true);
         assert_eq!(v["messages"][1]["chat_id"], "19:u@thread.v2");
+    }
+
+    #[test]
+    fn presence_status_table_matches_ost() {
+        // ost api/presence.rs set_presence mapping, verbatim.
+        for (input, avail, act) in [
+            ("available", "Available", "Available"),
+            ("busy", "Busy", "InACall"),
+            ("dnd", "DoNotDisturb", "Presenting"),
+            ("donotdisturb", "DoNotDisturb", "Presenting"),
+            ("away", "Away", "Away"),
+            ("offline", "Offline", "OffWork"),
+            ("Available", "Available", "Available"),
+            ("DND", "DoNotDisturb", "Presenting"),
+            ("  busy  ", "Busy", "InACall"),
+        ] {
+            assert_eq!(
+                presence_status_pair(input.trim()),
+                Some((avail, act)),
+                "input {:?}",
+                input
+            );
+        }
+        for bad in ["", "online", "invisible", "be right back", "avail able"] {
+            assert_eq!(presence_status_pair(bad), None, "input {:?}", bad);
+        }
+    }
+
+    #[test]
+    fn presence_envelope_shape() {
+        let v: serde_json::Value =
+            serde_json::from_str(&presence_envelope("Busy", "InACall")).unwrap();
+        assert_eq!(v["ok"], true);
+        assert_eq!(v["availability"], "Busy");
+        assert_eq!(v["activity"], "InACall");
+    }
+
+    #[test]
+    fn set_presence_rejects_bad_status_without_network() {
+        for bad in ["", "   ", "online", "invisible"] {
+            let v: serde_json::Value =
+                serde_json::from_str(&set_presence_json(bad)).unwrap();
+            assert_eq!(v["ok"], false, "status {:?}", bad);
+            assert_eq!(v["error"], "arg");
+        }
+        // Unknown-status detail mirrors the ost CLI message.
+        let v: serde_json::Value =
+            serde_json::from_str(&set_presence_json("online")).unwrap();
+        assert!(v["detail"].as_str().unwrap().contains("Unknown status: online"));
+    }
+
+    #[test]
+    fn user_presence_rejects_bad_ids_without_network() {
+        for bad in ["", "   ", "a/b", "a b", "x\ty", "../me"] {
+            let v: serde_json::Value =
+                serde_json::from_str(&user_presence_json(bad)).unwrap();
+            assert_eq!(v["ok"], false, "id {:?}", bad);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
+    fn ffi_presence_set_null_is_arg_error() {
+        unsafe {
+            let p = ostmac_presence_set(std::ptr::null());
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
+    fn ffi_presence_user_null_is_arg_error() {
+        unsafe {
+            let p = ostmac_presence_user(std::ptr::null());
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
+    fn ffi_presence_set_empty_roundtrip() {
+        let st = CString::new("").unwrap();
+        unsafe {
+            let p = ostmac_presence_set(st.as_ptr());
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
     }
 
     #[test]
