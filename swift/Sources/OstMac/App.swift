@@ -1,20 +1,18 @@
-// OstMac — THE app (om-app-union): sidebar chat list + conversation
-// detail + live realtime feed in one window; real identity (About
-// window, Settings shell, app menu); full authux sign-in (device code,
-// copy/open-browser, polling, expiry/refresh, sign-out) in a sheet.
-//
-// Merges the deleted shells: OstMacApp lib (About/Settings/identity —
-// OstMacRootView was a strict subset of RootView) and OstMacAuth
-// (--auth-state canned states + live AuthView window).
+// OstMac — THE app (om-auth-gate): the main window is gated on the
+// AuthViewModel 11-state gate — unsigned shows the full sign-in UI
+// (device code, copy/open-browser, polling, expiry/refresh, sign-out)
+// where the chats would be; chats, conversation, and the live feed
+// stay parked until signedIn. Settings embeds the same shared model.
+// --demo bypasses the gate fully offline.
 //
 // Usage:
 //   OstMac [--demo] [--chat <id> [--name <n>]] [--say <text>]
-//          [--show-about] [--auth-state <name>]
+//          [--show-about] [--show-settings] [--auth-state <name>]
 // --demo runs fully offline (canned chats/messages, local send echo).
 // --chat preselects (or opens directly when absent from the list).
 // --say auto-sends once into the open chat. In live mode that is a REAL
 // send via core — never use it on shared chats for testing.
-// --show-about opens the About window at launch (shot hook).
+// --show-about / --show-settings open those windows at launch (shot hooks).
 // --auth-state <name> opens the Auth window with a canned state, never
 // touching core/network (names: signed-out, starting, code, polling,
 // signed-in, expired, refreshing, refresh-failed, error). `--state` is
@@ -92,7 +90,7 @@ struct OstMacAppMain: App {
         }
         .defaultSize(width: 440, height: 520)
         Settings {
-            SettingsView()
+            SettingsView(auth: state.auth)
         }
         .commands { OstMacCommands() }
     }
@@ -126,7 +124,6 @@ final class AppState: ObservableObject {
     @Published var feedResyncs = 0
     @Published var feedPolls = 0
     @Published var feedError: String?
-    @Published var showSignIn = false
     @AppStorage("selectedChatID") private var persistedSelection: String?
 
     private let preselectID: String?
@@ -135,6 +132,7 @@ final class AppState: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private var stateTimer: Timer?
     private var started = false
+    private var contentOpened = false
 
     init(args: [String]) {
         isDemo = args.contains("--demo")
@@ -165,6 +163,15 @@ final class AppState: ObservableObject {
                 Task { @MainActor [weak self] in self?.openSelected(id) }
             }
             .store(in: &cancellables)
+        // Single reaction point for the gate: every auth transition
+        // (gate, Settings, Auth window — same model) runs authChanged,
+        // which flips the gate via the signedIn/contentOpened flags.
+        auth.$state
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] s in
+                Task { @MainActor [weak self] in self?.authChanged(s) }
+            }
+            .store(in: &cancellables)
     }
 
     func startup() async {
@@ -172,13 +179,22 @@ final class AppState: ObservableObject {
         started = true
         coreVersion = RustCore.version()
         initCode = RustCore.initialize()
-        if !isDemo {
-            do {
-                signedIn = try RustCore.status().signed_in
-            } catch {
-                signedIn = false
-            }
+        if isDemo {
+            signedIn = true // demo bypasses the gate (offline canned data)
+        } else {
+            await auth.refreshStatus()
+            signedIn = auth.isSignedIn
         }
+        await openContentIfAllowed()
+    }
+
+    /// Post-gate: chats + restore + feed + autosay. Runs once, only when
+    /// demo or signed in. authChanged(.signedIn) retries after the gate
+    /// opens, so a gated launch defers everything (no unsigned core calls
+    /// beyond the read-only status check).
+    private func openContentIfAllowed() async {
+        guard !contentOpened, isDemo || auth.state.allowsContent else { return }
+        contentOpened = true
         await chats.load()
         if chats.state == .loaded {
             // Core's signed_in is aad-centric; a loaded list proves
@@ -272,17 +288,26 @@ final class AppState: ObservableObject {
         feedError = feed.lastError
     }
 
-    /// Sign-in sheet state changed: signed in → status flip + list
-    /// reload + dismiss; signed out → status flip (no dismiss — the
-    /// user may sign straight back in).
+    /// Gate transition (fired from the $state sink for every auth
+    /// change, whichever surface drove it): signed in → open deferred
+    /// content (or reload the list + restart the feed when already
+    /// open); signed out / expired / failed → park the feed and close
+    /// the gate (fail closed; stale rows stay until the next sign-in).
     func authChanged(_ s: AuthState) {
         switch s {
         case .signedIn:
             signedIn = true
-            chats.refresh()
-            showSignIn = false
-        case .signedOut:
+            if contentOpened {
+                chats.refresh()
+                if !isDemo { feed.start() }
+            } else {
+                Task { await openContentIfAllowed() }
+            }
+            refreshFeedStatus()
+        case .signedOut, .signingOut, .expired, .refreshFailed, .error:
             signedIn = false
+            feed.stop()
+            refreshFeedStatus()
         default:
             break
         }
@@ -292,27 +317,37 @@ final class AppState: ObservableObject {
 struct RootView: View {
     @EnvironmentObject private var state: AppState
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         VStack(spacing: 0) {
-            NavigationSplitView {
-                ChatListSidebar(model: state.chats)
-                    .navigationSplitViewColumnWidth(min: 240, ideal: 300, max: 420)
-            } detail: {
-                if state.openChatID == nil {
-                    emptyDetail
-                } else {
-                    ConversationView(store: state.conv)
+            if state.isDemo || state.auth.state.allowsContent {
+                NavigationSplitView {
+                    ChatListSidebar(model: state.chats)
+                        .navigationSplitViewColumnWidth(min: 240, ideal: 300, max: 420)
+                } detail: {
+                    if state.openChatID == nil {
+                        emptyDetail
+                    } else {
+                        ConversationView(store: state.conv)
+                    }
                 }
+            } else {
+                // Gate: the full 11-state sign-in where the chats would be.
+                AuthView(model: state.auth)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             Divider()
             StatusBar()
         }
         .frame(minWidth: 760, minHeight: 520)
         .onAppear {
-            // Shot hooks: open About/Auth windows from launch args.
+            // Shot hooks: open About/Settings/Auth windows from launch args.
             if CommandLine.arguments.contains("--show-about") {
                 openWindow(id: AppIdentity.aboutWindowID)
+            }
+            if CommandLine.arguments.contains("--show-settings") {
+                openSettings()
             }
             if OstMacAppMain.authStateName(args: CommandLine.arguments) != nil {
                 openWindow(id: AppIdentity.authWindowID)
@@ -320,12 +355,6 @@ struct RootView: View {
         }
         .task { await state.startup() }
         .onDisappear { state.shutdown() }
-        .sheet(isPresented: $state.showSignIn) {
-            AuthView(model: state.auth)
-                .task { await state.auth.refreshStatus() }
-                .onDisappear { state.auth.stopPolling() }
-                .onChange(of: state.auth.state) { _, s in state.authChanged(s) }
-        }
     }
 
     private var emptyDetail: some View {
@@ -333,11 +362,6 @@ struct RootView: View {
             Image(systemName: "bubble.left.and.bubble.right")
                 .font(.largeTitle).foregroundStyle(.secondary)
             Text("Select a chat").font(.headline)
-            if state.signedIn == false, !state.isDemo {
-                Text("Not signed in — chats need sign-in.")
-                    .font(.callout).foregroundStyle(.secondary)
-                Button("Sign in…") { state.showSignIn = true }
-            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -365,10 +389,6 @@ struct StatusBar: View {
                 }
                 if let err = state.feedError {
                     Text(err).font(.caption).foregroundStyle(.red).lineLimit(1)
-                }
-                if state.signedIn == false {
-                    Button("Sign in…") { state.showSignIn = true }
-                        .font(.caption)
                 }
             }
             Spacer()

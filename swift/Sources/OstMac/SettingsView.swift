@@ -1,23 +1,25 @@
-// SettingsView.swift — om-package lane: Settings window shell.
-// Account row is read-only for now (status line from core); sign-in
-// controls arrive in a later lane.
+// SettingsView.swift — om-auth-gate lane: Settings wired to the shared
+// AuthViewModel (was: read-only row from a direct core status read).
+// Account section shows the 11-state gate one-liner; the Sign in section
+// embeds the full AuthView (code/copy/browser, polling, refresh, sign-out).
 import OstMacCore
 import SwiftUI
 
 struct SettingsView: View {
-    @State private var account: AccountInfo
-    private let fixed: Bool
+    @ObservedObject private var auth: AuthViewModel
+    private let fixedAccount: AccountInfo?
 
-    /// Live view: loads account status from core on appear.
-    init() {
-        _account = State(initialValue: .loading)
-        fixed = false
+    /// Live view: shares the app's AuthViewModel (single source of truth).
+    init(auth: AuthViewModel) {
+        _auth = ObservedObject(wrappedValue: auth)
+        fixedAccount = nil
     }
 
     /// Fixed view (previews, shots): never touches core.
+    @MainActor
     init(account: AccountInfo) {
-        _account = State(initialValue: account)
-        fixed = true
+        _auth = ObservedObject(wrappedValue: .demo(.signedOut))
+        fixedAccount = account
     }
 
     public var body: some View {
@@ -29,25 +31,27 @@ struct SettingsView: View {
                         .textSelection(.enabled)
                 }
             }
+            if fixedAccount == nil {
+                Section("Sign in") {
+                    AuthView(model: auth)
+                }
+            }
             Section("Application") {
                 LabeledContent("Version", value: AppIdentity.version)
                 LabeledContent("Bundle ID", value: AppIdentity.bundleID)
             }
         }
         .formStyle(.grouped)
-        .frame(width: 420)
+        // Live embeds the full AuthView (min 420 tall); fixed stays compact.
+        .frame(width: 420, height: fixedAccount == nil ? CGFloat(720) : nil)
         .task {
-            guard !fixed else { return }
-            account = await Self.loadAccount()
+            guard fixedAccount == nil else { return }
+            await auth.refreshStatus()
         }
     }
 
-    static func loadAccount() async -> AccountInfo {
-        do {
-            let st = try await Task.detached { try RustCore.status() }.value
-            return AccountInfo.summarize(st)
-        } catch {
-            return .unavailable
-        }
+    private var account: AccountInfo {
+        if let fixedAccount { return fixedAccount }
+        return AccountInfo.from(authState: auth.state, status: auth.status)
     }
 }

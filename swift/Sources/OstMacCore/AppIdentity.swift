@@ -29,6 +29,42 @@ public struct AccountInfo: Equatable, Sendable {
     public static let loading = AccountInfo(signedIn: false, detail: "Loading…")
     public static let unavailable = AccountInfo(signedIn: false, detail: "Status unavailable")
 
+    /// Settings row from the 11-state gate (single source; replaces direct
+    /// status reads). signedIn is true only for .signedIn; failures show
+    /// the message verbatim so the row is always actionable.
+    public static func from(authState: AuthState, status: StatusResponse?) -> AccountInfo {
+        switch authState {
+        case .unknown:
+            return AccountInfo(signedIn: false, detail: "Checking session…")
+        case .signedOut:
+            return AccountInfo(signedIn: false, detail: "Not signed in")
+        case .starting:
+            return AccountInfo(signedIn: false, detail: "Contacting Microsoft…")
+        case .code:
+            return AccountInfo(signedIn: false, detail: "Waiting for browser sign-in…")
+        case let .polling(_, attempts):
+            if attempts > 0 {
+                return AccountInfo(
+                    signedIn: false,
+                    detail: "Waiting for browser sign-in… (check \(attempts + 1))")
+            }
+            return AccountInfo(signedIn: false, detail: "Waiting for browser sign-in…")
+        case .signedIn:
+            if let status { return summarize(status) }
+            return AccountInfo(signedIn: true, detail: "Signed in")
+        case .signingOut:
+            return AccountInfo(signedIn: false, detail: "Signing out…")
+        case .expired:
+            return AccountInfo(signedIn: false, detail: "Session expired")
+        case .refreshing:
+            return AccountInfo(signedIn: false, detail: "Refreshing session…")
+        case let .refreshFailed(message):
+            return AccountInfo(signedIn: false, detail: message)
+        case let .error(message):
+            return AccountInfo(signedIn: false, detail: message)
+        }
+    }
+
     /// Deterministic one-line summary of a core status response.
     public static func summarize(_ status: StatusResponse) -> AccountInfo {
         guard status.signed_in else {
