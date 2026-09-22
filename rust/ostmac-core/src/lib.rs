@@ -21,6 +21,7 @@ use ost::auth::{AuthConfig, TokenStore};
 use ost::config::Config;
 use serde_json::json;
 
+pub mod av;
 pub mod realtime;
 
 // ---------------------------------------------------------------------------
@@ -34,11 +35,11 @@ fn now_secs() -> u64 {
         .unwrap_or(0)
 }
 
-fn err_json(code: &str, detail: impl std::fmt::Display) -> String {
+pub(crate) fn err_json(code: &str, detail: impl std::fmt::Display) -> String {
     json!({"ok": false, "error": code, "detail": detail.to_string()}).to_string()
 }
 
-fn cstr_to_string(p: *const c_char) -> Result<String, String> {
+pub(crate) fn cstr_to_string(p: *const c_char) -> Result<String, String> {
     if p.is_null() {
         return Err("null pointer".to_string());
     }
@@ -48,7 +49,7 @@ fn cstr_to_string(p: *const c_char) -> Result<String, String> {
         .map_err(|e| format!("invalid utf-8: {}", e))
 }
 
-fn string_to_c(s: String) -> *mut c_char {
+pub(crate) fn string_to_c(s: String) -> *mut c_char {
     CString::new(s).map(|c| c.into_raw()).unwrap_or(std::ptr::null_mut())
 }
 

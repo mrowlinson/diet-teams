@@ -348,35 +348,51 @@ fn pick_config(device: &Device, input: bool) -> Option<(StreamConfig, u32)> {
 }
 
 // ---------------------------------------------------------------------------
-// mic_test — capture 3 seconds, then play back
+// mic_test — capture N seconds, then play back
 // ---------------------------------------------------------------------------
 
-/// Capture 3 seconds of microphone audio, then play it back through the speaker.
+/// Fast device availability probe (no capture). Opens + closes each device.
+pub fn audio_probe() -> (bool, bool) {
+    let input = AudioCapture::start().is_some();
+    let output = AudioPlayback::start().is_some();
+    (input, output)
+}
+
+/// Summary of a mic capture + playback run (FFI-friendly).
+#[derive(Debug)]
+pub struct MicTestReport {
+    pub frames: usize,
+    pub seconds: f64,
+    pub peak_db: f64,
+    pub played_back: bool,
+}
+
+/// Capture `seconds` of microphone audio, then play it back.
 ///
-/// Prints a VU meter bar every 100ms during capture so you can see the level.
-pub fn mic_test() -> anyhow::Result<()> {
+/// When `vu` is true, prints a VU meter bar every 100ms during capture.
+/// Returns a report (empty-input error if no mic, playback skipped if no
+/// speaker — `played_back` tells which happened).
+pub fn mic_test_report(seconds: u64, vu: bool) -> anyhow::Result<MicTestReport> {
     use anyhow::bail;
 
-    println!("=== Microphone Test ===");
-    println!("Recording for 3 seconds — speak now!\n");
-
+    let seconds = seconds.clamp(1, 10);
     let (capture, mic_rx) = match AudioCapture::start() {
         Some(c) => c,
         None => bail!("No audio input device found"),
     };
 
-    // Capture 3 seconds of 160-sample frames (50 frames/sec * 3 = 150 frames)
-    let mut frames: Vec<Vec<i16>> = Vec::with_capacity(150);
+    let mut frames: Vec<Vec<i16>> = Vec::with_capacity(seconds as usize * 50);
     let start = std::time::Instant::now();
     let mut last_vu = start;
+    let mut peak_db = -60.0f64;
 
-    while start.elapsed() < std::time::Duration::from_secs(3) {
+    while start.elapsed() < std::time::Duration::from_secs(seconds) {
         match mic_rx.recv_timeout(std::time::Duration::from_millis(25)) {
             Ok(frame) => {
-                // VU meter: compute RMS level
-                if last_vu.elapsed() >= std::time::Duration::from_millis(100) {
-                    let rms = rms_level(&frame);
-                    let db = if rms > 0.0 { 20.0 * rms.log10() } else { -60.0 };
+                let rms = rms_level(&frame);
+                let db = if rms > 0.0 { 20.0 * rms.log10() } else { -60.0 };
+                peak_db = peak_db.max(db);
+                if vu && last_vu.elapsed() >= std::time::Duration::from_millis(100) {
                     let bar_len = ((db + 60.0) / 60.0 * 30.0).clamp(0.0, 30.0) as usize;
                     let bar: String = "█".repeat(bar_len) + &"░".repeat(30 - bar_len);
                     print!("\r  [{bar}] {db:5.1} dBFS ");
@@ -390,29 +406,75 @@ pub fn mic_test() -> anyhow::Result<()> {
         }
     }
     drop(capture);
-    println!(
-        "\n\nCaptured {} frames ({:.1}s)",
-        frames.len(),
-        frames.len() as f64 * 0.02
-    );
+    let captured_secs = frames.len() as f64 * 0.02;
 
-    // Play back
-    println!("Playing back...\n");
+    let played_back = match AudioPlayback::start() {
+        Some((playback, speaker_tx)) => {
+            for frame in &frames {
+                let _ = speaker_tx.send(frame.clone());
+                thread::sleep(std::time::Duration::from_millis(20));
+            }
+            thread::sleep(std::time::Duration::from_millis(200));
+            drop(playback);
+            true
+        }
+        None => false,
+    };
+
+    Ok(MicTestReport {
+        frames: frames.len(),
+        seconds: captured_secs,
+        peak_db,
+        played_back,
+    })
+}
+
+/// Capture 3 seconds of microphone audio, then play it back through the speaker.
+///
+/// Prints a VU meter bar every 100ms during capture so you can see the level.
+pub fn mic_test() -> anyhow::Result<()> {
+    println!("=== Microphone Test ===");
+    println!("Recording for 3 seconds — speak now!\n");
+
+    let report = mic_test_report(3, true)?;
+
+    println!(
+        "\n\nCaptured {} frames ({:.1}s, peak {:.1} dBFS)",
+        report.frames, report.seconds, report.peak_db
+    );
+    if report.played_back {
+        println!("Played back.");
+    } else {
+        println!("No audio output device — playback skipped.");
+    }
+    println!("Done.");
+    Ok(())
+}
+
+/// Play a 1kHz test tone through the speaker for `msecs` milliseconds.
+///
+/// Returns the number of 20ms frames sent.
+pub fn play_tone(msecs: u64) -> anyhow::Result<u32> {
+    use anyhow::bail;
+
+    let msecs = msecs.clamp(100, 10_000);
     let (playback, speaker_tx) = match AudioPlayback::start() {
         Some(p) => p,
         None => bail!("No audio output device found"),
     };
 
-    for frame in &frames {
-        let _ = speaker_tx.send(frame.clone());
+    let mut gen = super::test_tone::ToneGenerator::new();
+    let n_frames = (msecs / 20).max(1);
+    for _ in 0..n_frames {
+        let frame = gen.next_frame();
+        if speaker_tx.send(frame).is_err() {
+            break;
+        }
         thread::sleep(std::time::Duration::from_millis(20));
     }
-    // Drain: let playback finish
     thread::sleep(std::time::Duration::from_millis(200));
     drop(playback);
-
-    println!("Done.");
-    Ok(())
+    Ok(n_frames as u32)
 }
 
 /// Compute RMS level of a frame, normalized to 0.0–1.0 range.

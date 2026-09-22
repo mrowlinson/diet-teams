@@ -64,6 +64,53 @@ char *ostmac_refresh(void);
 // {ok:true} or {ok:false}. Caller frees. No network.
 char *ostmac_sign_out(void);
 
+// A/V capability map (static, no hardware). Caller frees.
+char *ostmac_av_info(void);
+
+// Mic/speaker availability probe (cpal open+close, fast). Caller frees.
+char *ostmac_mic_probe(void);
+
+// Capture `seconds` (1-10, default 3) of mic + play back:
+// {ok, frames, seconds, peak_db, played_back} or {ok:false, error:"no_input"}.
+// Caller frees. Blocks for the capture duration.
+char *ostmac_mic_test(int seconds);
+
+// Play 1kHz tone for `msecs` (default 1000): {ok, frames} or
+// {ok:false, error:"no_output"}. Caller frees. Blocks while playing.
+char *ostmac_tone_play(int msecs);
+
+// Deterministic tone echo self-check (no hardware). Caller frees.
+char *ostmac_tone_check(void);
+
+// Begin a camera run (Swift AVCapture feeds frames). Caller frees.
+char *ostmac_camera_begin(int width, int height, int fps);
+
+// Push one camera frame: base64 pixels, fmt i420|nv12|bgra (420v|32bgra
+// aliases). Convert failures count as drops. Returns stats JSON.
+// Caller frees.
+char *ostmac_camera_push(const char *b64, int width, int height, const char *fmt);
+
+// Camera stats JSON. Caller frees.
+char *ostmac_camera_stats(void);
+
+// End the camera run. Caller frees.
+char *ostmac_camera_end(void);
+
+// Push one decoded remote I420 frame (base64) for display. Caller frees.
+char *ostmac_video_push_remote(const char *b64, int width, int height);
+
+// Drain latest remote frame: {ok, frame:{width,height,data}|null}.
+// Caller frees.
+char *ostmac_video_poll_remote(void);
+
+// Black 176x144 IDR access unit as base64 NALs (VideoToolbox target).
+// Caller frees.
+char *ostmac_av_black_iframe(void);
+
+// Offline call pipeline: SRTP loopback + H.264 packetize round-trip
+// (no network/auth/hardware). Caller frees.
+char *ostmac_call_dry_run(void);
+
 // Free a string from any ostmac_* call. Null-safe.
 void ostmac_free(char *s);
 

@@ -7,14 +7,14 @@
 //
 // Usage:
 //   OstMac [--demo | --demo-rich] [--chat <id> [--name <n>]] [--say <text>]
-//          [--show-about] [--show-settings] [--auth-state <name>]
+//          [--show-about] [--show-settings] [--show-av] [--auth-state <name>]
 // --demo runs fully offline (canned chats/messages, local send echo).
 // --demo-rich is --demo preselected on the rich thread (mentions, code,
 // edited + failed bubbles, Yesterday/Today separators).
 // --chat preselects (or opens directly when absent from the list).
 // --say auto-sends once into the open chat. In live mode that is a REAL
 // send via core — never use it on shared chats for testing.
-// --show-about / --show-settings open those windows at launch (shot hooks).
+// --show-about / --show-settings / --show-av open those windows at launch (shot hooks).
 // --auth-state <name> opens the Auth window with a canned state, never
 // touching core/network (names: signed-out, starting, code, polling,
 // signed-in, expired, refreshing, refresh-failed, error). `--state` is
@@ -91,6 +91,10 @@ struct OstMacAppMain: App {
             }
         }
         .defaultSize(width: 440, height: 520)
+        Window("Call A/V", id: AppIdentity.avWindowID) {
+            AvPanelView()
+        }
+        .defaultSize(width: 600, height: 600)
         Settings {
             SettingsView(auth: state.auth)
         }
@@ -106,6 +110,9 @@ private struct OstMacCommands: Commands {
     var body: some Commands {
         CommandGroup(replacing: .appInfo) {
             Button("About OstMac") { openWindow(id: AppIdentity.aboutWindowID) }
+        }
+        CommandMenu("Call") {
+            Button("Call A/V Test") { openWindow(id: AppIdentity.avWindowID) }
         }
     }
 }
@@ -348,9 +355,12 @@ struct RootView: View {
         }
         .frame(minWidth: 760, minHeight: 520)
         .onAppear {
-            // Shot hooks: open About/Settings/Auth windows from launch args.
+            // Shot hooks: open About/Settings/Auth/A-V windows from launch args.
             if CommandLine.arguments.contains("--show-about") {
                 openWindow(id: AppIdentity.aboutWindowID)
+            }
+            if CommandLine.arguments.contains("--show-av") {
+                openWindow(id: AppIdentity.avWindowID)
             }
             if CommandLine.arguments.contains("--show-settings") {
                 openSettings()
