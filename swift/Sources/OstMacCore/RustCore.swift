@@ -31,6 +31,10 @@ public enum RustCore {
         try call(ostmac_sign_out(), as: SignOutResponse.self)
     }
 
+    public static func whoami() throws -> WhoamiResponse {
+        try call(ostmac_whoami(), as: WhoamiResponse.self)
+    }
+
     public static func chats(limit: Int32 = 20) throws -> ChatsResponse {
         try call(ostmac_chats(limit), as: ChatsResponse.self)
     }

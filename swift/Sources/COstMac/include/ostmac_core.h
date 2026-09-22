@@ -20,6 +20,11 @@ char *ostmac_device_start(void);
 // pending | complete (+tokens saved) | {ok:false}. Caller frees.
 char *ostmac_device_poll(const char *session);
 
+// Current-user JSON (Graph /me): {ok,id,display_name,mail?}.
+// Requires sign-in. Core caches after the first call; sign-out clears.
+// Caller frees.
+char *ostmac_whoami(void);
+
 // Chat list JSON (requires sign-in). Caller frees.
 char *ostmac_chats(int limit);
 

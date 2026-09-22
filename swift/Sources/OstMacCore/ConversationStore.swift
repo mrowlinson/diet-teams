@@ -22,6 +22,9 @@ public final class ConversationStore: ObservableObject {
     public private(set) var chatID: String?
     public private(set) var chatName: String?
     public private(set) var isDemo = false
+    /// Own sender name (whoami display_name); nil until resolved or in demo.
+    /// Stamps `isOwn` on history, pages, and realtime ingests.
+    public private(set) var ownDisplayName: String?
     private var openGeneration = 0
 
     /// Opaque cursor for the next older page; nil = end of history.
@@ -41,6 +44,11 @@ public final class ConversationStore: ObservableObject {
         let gen = openGeneration
         pageToken = nil
         Task {
+            // Best-effort identity (core-cached after first call); a stale
+            // stored name still stamps when refresh fails.
+            let own: String? = try? await Task.detached {
+                try RustCore.whoami().display_name
+            }.value
             let fetched: Result<MessagesResponse, Error>
             do {
                 let resp = try await Task.detached {
@@ -55,11 +63,32 @@ public final class ConversationStore: ObservableObject {
             didLoad = true
             switch fetched {
             case let .success(resp):
-                messages = resp.messages
+                if let own { ownDisplayName = own }
+                messages = Self.stampOwnership(resp.messages, ownName: ownDisplayName)
                 pageToken = resp.page_token
             case let .failure(e): error = String(describing: e)
             }
         }
+    }
+
+    /// Adopt an identity without core (tests, sign-in completion).
+    public func adoptIdentity(displayName: String) {
+        ownDisplayName = displayName
+        messages = Self.stampOwnership(messages, ownName: ownDisplayName)
+    }
+
+    /// Drop identity after sign-out; existing bubbles keep their flags.
+    public func clearIdentity() {
+        ownDisplayName = nil
+    }
+
+    /// Pure ownership stamp: `isOwn` iff `sender` equals the own name.
+    /// Nil name leaves every flag false (matches core's unsigned state).
+    public static func stampOwnership(_ list: [ChatMessage], ownName: String?) -> [ChatMessage] {
+        guard let own = ownName else {
+            return list.map { var m = $0; m.isOwn = false; return m }
+        }
+        return list.map { var m = $0; m.isOwn = (m.sender == own); return m }
     }
 
     /// True while an older page exists and no load is in flight.
@@ -85,7 +114,8 @@ public final class ConversationStore: ObservableObject {
             loadingMore = false
             switch fetched {
             case let .success(resp):
-                messages = Self.prepend(resp.messages, to: messages)
+                messages = Self.prepend(
+                    Self.stampOwnership(resp.messages, ownName: ownDisplayName), to: messages)
                 pageToken = resp.page_token
             case let .failure(e): error = String(describing: e)
             }
@@ -105,8 +135,11 @@ public final class ConversationStore: ObservableObject {
     }
 
     /// Realtime feed: upsert by id (new appends, known edits in place).
+    /// Stamps `isOwn` against the known identity first.
     public func ingest(_ message: ChatMessage) {
-        messages = Self.upsert(message, into: messages)
+        var m = message
+        m.isOwn = ownDisplayName.map { m.sender == $0 } ?? false
+        messages = Self.upsert(m, into: messages)
     }
 
     /// Realtime edit carrying only new text; unknown id is a no-op.

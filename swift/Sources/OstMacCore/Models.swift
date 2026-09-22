@@ -64,6 +64,18 @@ public struct SignOutResponse: Decodable, Sendable {
     public let ok: Bool
 }
 
+// MARK: - Identity (om-identity-own lane)
+
+/// Current user from core `ostmac_whoami` (Graph /me, core-cached).
+/// `display_name` is the `ChatMessage.sender` match key for `isOwn`
+/// (same sender==name rule the ost TUI uses).
+public struct WhoamiResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let id: String
+    public let display_name: String
+    public let mail: String?
+}
+
 public struct ChatItem: Decodable, Sendable, Identifiable {
     public var id: String { chatId }
     public let chatId: String
