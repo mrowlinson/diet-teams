@@ -1,5 +1,6 @@
 // ChatListFormat.swift — row text formatting (pure, deterministic, tested).
 import Foundation
+import OstMacCore
 
 /// Formats core `last_message_*` strings for sidebar rows.
 public enum ChatListFormat {
@@ -25,6 +26,18 @@ public enum ChatListFormat {
             return styled(date, "EEE", calendar)
         }
         return styled(date, "M/d", calendar)
+    }
+
+    /// Case-insensitive substring filter over name/sender/preview.
+    /// Blank query → all chats, in order.
+    public static func filter(_ chats: [ChatItem], query: String) -> [ChatItem] {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty else { return chats }
+        return chats.filter { chat in
+            chat.name.lowercased().contains(q)
+                || (chat.last_message_sender?.lowercased().contains(q) ?? false)
+                || (chat.last_message_preview?.lowercased().contains(q) ?? false)
+        }
     }
 
     /// One-line `sender: preview` summary. Missing parts are dropped;
