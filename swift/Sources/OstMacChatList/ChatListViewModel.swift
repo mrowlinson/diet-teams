@@ -67,6 +67,33 @@ public final class ChatListViewModel: ObservableObject, ChatSelection {
         Task { await load(limit: limit) }
     }
 
+    /// Realtime feed: refresh one row's preview and bubble it to the top.
+    /// Unknown chat ids are a no-op (a resync refetch picks up new chats).
+    /// Edits update the preview in place without reordering.
+    public func ingest(realtime message: RealtimeMessage) {
+        chats = Self.ingested(message, into: chats)
+    }
+
+    /// Pure ingest: updated row first (edits stay in place), unknown id unchanged.
+    public nonisolated static func ingested(_ message: RealtimeMessage, into list: [ChatItem]) -> [ChatItem] {
+        guard let i = list.firstIndex(where: { $0.id == message.chatID }) else { return list }
+        let old = list[i]
+        let updated = ChatItem(
+            chatId: old.chatId, name: old.name, is_group: old.is_group,
+            last_message_time: message.time,
+            last_message_sender: message.sender,
+            last_message_preview: message.text)
+        if message.isEdit {
+            var out = list
+            out[i] = updated
+            return out
+        }
+        var out = list
+        out.remove(at: i)
+        out.insert(updated, at: 0)
+        return out
+    }
+
     static func message(for error: Error) -> String {
         if case CoreCallError.failed(let m) = error { return m }
         return String(describing: error)

@@ -11,8 +11,9 @@
 // --show-about opens the About window at launch (shot hook).
 //
 // Realtime routing: the Trouter socket is global (one feed for all
-// chats), so switching chats does NOT restart the socket — the app
-// filters events to the open chat (`isFor(chatID:)`). A resync gap
+// chats), so switching chats does NOT restart the socket — the list
+// ingests every event (preview refresh + reorder), while bubbles are
+// filtered to the open chat (`isFor(chatID:)`). A resync gap
 // re-fetches the open chat plus the list.
 //
 // Entry is OstMacAppMain (not OstMacApp): the OstMacApp module is
@@ -197,10 +198,12 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// One live event: count it, route to the open chat only.
+    /// One live event: count it, refresh the list row (all chats),
+    /// route the bubble to the open chat only.
     private func handleRealtime(_ msg: RealtimeMessage) {
         feedEvents += 1
         refreshFeedStatus()
+        chats.ingest(realtime: msg)
         guard msg.isFor(chatID: openChatID) else { return }
         conv.ingest(realtime: msg)
     }

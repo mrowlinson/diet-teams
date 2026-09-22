@@ -96,6 +96,66 @@ final class ChatListTests: XCTestCase {
         XCTAssertNil(model.selectedChat)
     }
 
+    // MARK: - Realtime ingest
+
+    nonisolated static func realtime(
+        chat: String, text: String = "live hello",
+        sender: String = "S", time: String = "2026-09-22T10:00:00Z",
+        edit: Bool = false, edited: String? = nil
+    ) -> RealtimeMessage {
+        RealtimeMessage(
+            chatID: chat, msgId: "m-live", sender: sender,
+            text: text, time: time, isEdit: edit, editedID: edited)
+    }
+
+    nonisolated static func twoChats() -> ChatsResponse {
+        chatsJSON([
+            chatJSON(
+                id: "8:a", name: "A", time: "2026-09-22T09:00:00Z",
+                sender: "Ann", preview: "old a"),
+            chatJSON(
+                id: "8:b", name: "B", time: "2026-09-22T08:00:00Z",
+                sender: "Bob", preview: "old b"),
+        ].joined(separator: ","))
+    }
+
+    func testIngestUpdatesPreviewAndMovesToTop() async {
+        let model = ChatListViewModel(fetcher: { _ in Self.twoChats() })
+        await model.load()
+        model.ingest(realtime: Self.realtime(chat: "8:b", text: "live hello"))
+        XCTAssertEqual(model.chats.map(\.id), ["8:b", "8:a"])
+        XCTAssertEqual(model.chats[0].last_message_preview, "live hello")
+        XCTAssertEqual(model.chats[0].last_message_sender, "S")
+        XCTAssertEqual(model.chats[0].last_message_time, "2026-09-22T10:00:00Z")
+        XCTAssertEqual(model.state, .loaded)
+    }
+
+    func testIngestUnknownChatIsNoop() async {
+        let model = ChatListViewModel(fetcher: { _ in Self.twoChats() })
+        await model.load()
+        model.ingest(realtime: Self.realtime(chat: "8:ghost"))
+        XCTAssertEqual(model.chats.map(\.id), ["8:a", "8:b"])
+        XCTAssertEqual(model.chats[0].last_message_preview, "old a")
+    }
+
+    func testIngestEditUpdatesInPlaceWithoutReorder() async {
+        let model = ChatListViewModel(fetcher: { _ in Self.twoChats() })
+        await model.load()
+        model.ingest(realtime: Self.realtime(
+            chat: "8:b", text: "fixed", edit: true, edited: "m1"))
+        XCTAssertEqual(model.chats.map(\.id), ["8:a", "8:b"])
+        XCTAssertEqual(model.chats[1].last_message_preview, "fixed")
+    }
+
+    func testIngestKeepsSelection() async {
+        let model = ChatListViewModel(fetcher: { _ in Self.twoChats() })
+        model.selectedChatID = "8:a"
+        await model.load()
+        model.ingest(realtime: Self.realtime(chat: "8:b"))
+        XCTAssertEqual(model.selectedChatID, "8:a")
+        XCTAssertEqual(model.selectedChat?.name, "A")
+    }
+
     // MARK: - Format: previewTime
 
     nonisolated static var utc: Calendar {
