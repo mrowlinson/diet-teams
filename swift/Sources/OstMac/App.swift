@@ -1,4 +1,4 @@
-// OstMac — THE app (om-auth-gate): the main window is gated on the
+// Diet Teams — THE app (om-auth-gate): the main window is gated on the
 // AuthViewModel 11-state gate — unsigned shows the full sign-in UI
 // (device code, copy/open-browser, polling, expiry/refresh, sign-out)
 // where the chats would be; chats, conversation, and the live feed
@@ -6,7 +6,7 @@
 // --demo bypasses the gate fully offline.
 //
 // Usage:
-//   OstMac [--demo | --demo-rich] [--chat <id> [--name <n>]] [--say <text>]
+//   Diet Teams [--demo | --demo-rich] [--chat <id> [--name <n>]] [--say <text>]
 //          [--show-about] [--show-settings] [--auth-state <name>]
 //          [--show-call incoming|active|live] [--show-av]
 // --show-call seeds the call banner offline (demo state, no core calls).
@@ -75,17 +75,17 @@ struct OstMacAppMain: App {
     }
 
     var body: some Scene {
-        WindowGroup("OstMac") {
+        WindowGroup("Diet Teams") {
             RootView()
                 .environmentObject(state)
         }
         .defaultSize(width: 1000, height: 640)
-        Window("About OstMac", id: AppIdentity.aboutWindowID) {
+        Window("About Diet Teams", id: AppIdentity.aboutWindowID) {
             AboutView()
         }
         .defaultSize(width: 360, height: 340)
         .windowResizability(.contentSize)
-        Window("OstMac Auth", id: AppIdentity.authWindowID) {
+        Window("Diet Teams Auth", id: AppIdentity.authWindowID) {
             if let cannedAuth {
                 AuthView(model: cannedAuth)
             } else {
@@ -97,7 +97,7 @@ struct OstMacAppMain: App {
         Window("Call A/V", id: AppIdentity.avWindowID) {
             AvPanelView()
         }
-        .defaultSize(width: 600, height: 600)
+        .defaultSize(width: 600, height: 740)
         Settings {
             SettingsView(auth: state.auth)
         }
@@ -112,7 +112,7 @@ private struct OstMacCommands: Commands {
 
     var body: some Commands {
         CommandGroup(replacing: .appInfo) {
-            Button("About OstMac") { openWindow(id: AppIdentity.aboutWindowID) }
+            Button("About Diet Teams") { openWindow(id: AppIdentity.aboutWindowID) }
         }
         CommandMenu("Call") {
             Button("Call A/V Test") { openWindow(id: AppIdentity.avWindowID) }

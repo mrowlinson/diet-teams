@@ -1,4 +1,4 @@
-# OstMac — ost (Teams) on macOS: spike + scaffold
+# Diet Teams — ost (Teams) on macOS: spike + scaffold
 
 Proves `ost` (Rust Teams client) builds and runs on macOS, carves a minimal
 embeddable core (auth device-code + chat list + Trouter events), and drives it
@@ -13,10 +13,12 @@ from a minimal SwiftUI shell over a C ABI (JSON over the boundary).
   auth state machine + views, conversation store, realtime feed, branding,
   demo data), `OstMacChatList` (chat sidebar + `ChatSelection` contract),
   `OstMac` (the single app: sidebar + conversation + live feed, About,
-  Settings, sign-in sheet + Auth window), `OstMacCoreTests`
+  Settings, sign-in sheet + Auth window), `OstMacMCP` (stdio MCP server
+  core) + `ostmac-mcp` executable (see `docs/mcp.md`), `OstMacCoreTests`,
+  `OstMacMCPTests`
 - `scripts/` — `build-rust.sh`, `build-app.sh`, `package.sh` (signed
-  release `OstMac.app`, `--install` to /Applications), `make-dmg.sh` (V1
-  installer `tmp/OstMac-<ver>.dmg`), `install.sh`, `make-icon.sh`
+  release `Diet Teams.app`, `--install` to /Applications), `make-dmg.sh` (V1
+  installer `tmp/Diet Teams-<ver>.dmg`), `install.sh`, `make-icon.sh`
   (renders `OstMac.icns`), `test.sh`
 - `docs/shots/` — viewed screenshots (TUI + SwiftUI shell)
 
@@ -24,11 +26,11 @@ from a minimal SwiftUI shell over a C ABI (JSON over the boundary).
 
 ```sh
 ./scripts/test.sh        # rust tests + swift tests (builds rust first)
-./scripts/build-app.sh   # OstMac.app
-open swift/.build/release/OstMac.app
-open swift/.build/release/OstMac.app --args --demo  # offline canned data
-./scripts/package.sh     # signed release tmp/OstMac.app (icon + plist)
-./scripts/make-dmg.sh    # V1 installer tmp/OstMac-1.0.0.dmg
+./scripts/build-app.sh   # Diet Teams.app
+open "swift/.build/release/Diet Teams.app"
+open "swift/.build/release/Diet Teams.app" --args --demo  # offline canned data
+./scripts/package.sh     # signed release tmp/Diet Teams.app (icon + plist)
+./scripts/make-dmg.sh    # V1 installer tmp/Diet Teams-1.0.0.dmg
 ./scripts/install.sh     # copy release app to /Applications
 ```
 
@@ -47,7 +49,7 @@ Prereqs: Xcode CLT (`swift`, `xcodebuild`), `cargo`. No Linux-only features
   driven to code prompt. `.app` 7.6M, idle RSS ~94MB (status screen + poll
   loop). Shots: `docs/shots/spike-*.png`.
 - Tests: `cargo test` ostmac-core 6/6, ost 91+91/91+91, `swift test` 6/6.
-- Packaging: real identity (`OstMac`, `dev.ostmac.OstMac`, 0.1.0, macOS
+- Packaging: real identity (`Diet Teams`, `dev.ostmac.OstMac`, 0.1.0, macOS
   14+), chat-bubble `.icns`, main menu (About window, Settings shell with
   read-only account row, Quit), `scripts/package.sh` (signed release
   `.app`, `--install`) + `scripts/install.sh`. Release `.app` 8.3M, idle

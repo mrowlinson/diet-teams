@@ -145,9 +145,11 @@ public enum MessageRender {
 
     /// Styled body: mention names bold, code blocks + `spans` monospaced,
     /// URLs linked. Base font/color come from the caller's Text environment.
+    /// Runs over `renderText` (shortcodes expanded), so spans land on what
+    /// the bubble shows.
     public static func attributedBody(for message: ChatMessage) -> AttributedString {
-        var a = AttributedString(message.content)
-        let text = message.content
+        let text = renderText(for: message)
+        var a = AttributedString(text)
         func convert(_ r: Range<String.Index>) -> Range<AttributedString.Index>? {
             Range(r, in: a)
         }
@@ -186,6 +188,192 @@ public enum MessageRender {
             }
         }
         return a
+    }
+
+    // MARK: - Rich media (om-richmedia lane)
+
+    /// One `<img>` mined from raw message HTML.
+    public struct RichImage: Sendable, Equatable, Identifiable {
+        public var id: String { url }
+        public let url: String
+        public let alt: String
+        /// Emoticon art: explicit w/h ≤ 32, an emoticon marker attr, or a
+        /// shortcode alt like `(smile)`. Renders small, not as a photo.
+        public let isEmoticon: Bool
+
+        public init(url: String, alt: String = "", isEmoticon: Bool = false) {
+            self.url = url
+            self.alt = alt
+            self.isEmoticon = isEmoticon
+        }
+    }
+
+    /// `<img …>` tags in raw HTML, in order. Tags without `src` are dropped.
+    /// Tag/attr names are case-insensitive; values may be double-quoted,
+    /// single-quoted, or bare. `alt` is entity-decoded.
+    public static func images(fromRaw raw: String?) -> [RichImage] {
+        guard let raw else { return [] }
+        return imgTags(in: raw).compactMap { tag in
+            let attrs = attributes(of: tag)
+            guard let src = attrs["src"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !src.isEmpty
+            else { return nil }
+            return RichImage(
+                url: decodeEntities(src),
+                alt: decodeEntities(attrs["alt"] ?? ""),
+                isEmoticon: isEmoticonTag(attrs))
+        }
+    }
+
+    /// Raw `<img …>` tag spans (case-insensitive open, first `>` closes).
+    static func imgTags(in html: String) -> [String] {
+        var out: [String] = []
+        var rest = html[...]
+        while let s = rest.range(of: "<img", options: .caseInsensitive),
+              let gt = rest[s.upperBound...].firstIndex(of: ">")
+        {
+            out.append(String(rest[s.lowerBound ... gt]))
+            rest = rest[rest.index(after: gt)...]
+        }
+        return out
+    }
+
+    /// Attr map of one tag (names lowercased). Tolerates missing values.
+    static func attributes(of tag: String) -> [String: String] {
+        var attrs: [String: String] = [:]
+        var i = tag.startIndex
+        // Skip "<img".
+        if tag.lowercased().hasPrefix("<img") {
+            i = tag.index(i, offsetBy: 4)
+        }
+        func skipSpace() {
+            while i < tag.endIndex, tag[i].isWhitespace || tag[i] == "/" { i = tag.index(after: i) }
+        }
+        while i < tag.endIndex {
+            skipSpace()
+            guard i < tag.endIndex, tag[i] != ">" else { break }
+            let ns = i
+            while i < tag.endIndex, tag[i].isLetter || tag[i].isNumber || tag[i] == "-" || tag[i] == "_" || tag[i] == ":" {
+                i = tag.index(after: i)
+            }
+            let name = String(tag[ns ..< i]).lowercased()
+            guard !name.isEmpty else {
+                // Junk char (e.g. `?`): skip one, keep scanning.
+                i = tag.index(after: i)
+                continue
+            }
+            skipSpace()
+            var value = ""
+            if i < tag.endIndex, tag[i] == "=" {
+                i = tag.index(after: i)
+                skipSpace()
+                if i < tag.endIndex, tag[i] == "\"" || tag[i] == "'" {
+                    let q = tag[i]
+                    i = tag.index(after: i)
+                    let vs = i
+                    while i < tag.endIndex, tag[i] != q { i = tag.index(after: i) }
+                    value = String(tag[vs ..< i])
+                    if i < tag.endIndex { i = tag.index(after: i) }
+                } else {
+                    let vs = i
+                    while i < tag.endIndex, !tag[i].isWhitespace, tag[i] != ">", tag[i] != "\"", tag[i] != "'" {
+                        i = tag.index(after: i)
+                    }
+                    value = String(tag[vs ..< i])
+                }
+            }
+            attrs[name] = value
+        }
+        return attrs
+    }
+
+    /// Emoticon iff explicit w/h both ≤ 32, an emoticon marker attr, or a
+    /// `(code)` alt. Percent/other non-integer sizes never count as small.
+    static func isEmoticonTag(_ attrs: [String: String]) -> Bool {
+        if let w = attrs["width"].flatMap({ Int($0.trimmingCharacters(in: .whitespaces)) }),
+           let h = attrs["height"].flatMap({ Int($0.trimmingCharacters(in: .whitespaces)) }),
+           w <= 32, h <= 32
+        {
+            return true
+        }
+        for k in ["class", "itemtype", "type", "emoticon"] {
+            if let v = attrs[k]?.lowercased(), v.contains("emoticon") { return true }
+        }
+        if let alt = attrs["alt"]?.trimmingCharacters(in: .whitespaces),
+           alt.count >= 3, alt.hasPrefix("("), alt.hasSuffix(")")
+        {
+            return true
+        }
+        return false
+    }
+
+    // MARK: - Emoji (unicode native + Teams/Skype `(code)` shortcodes)
+
+    /// Classic Teams/Skype picker shortcuts. Unknown codes pass through
+    /// untouched (never mangle prose like `(see note)`).
+    public static let emojiShortcodes: [String: String] = [
+        "smile": "🙂", "bigsmile": "😁", "laugh": "😄", "wink": "😉",
+        "sad": "😞", "cry": "😢", "tears": "😂", "angry": "😠",
+        "cool": "😎", "nerd": "🤓", "surprised": "😮", "shock": "😲",
+        "confused": "😕", "thinking": "🤔", "kiss": "😘", "sleepy": "😴",
+        "sleep": "😴", "sick": "🤢", "devil": "😈", "angel": "😇",
+        "ghost": "👻", "skull": "💀", "clown": "🤡",
+        "heart": "❤️", "hearts": "💕", "brokenheart": "💔", "like": "👍",
+        "thumbsup": "👍", "y": "👍", "dislike": "👎", "thumbsdown": "👎",
+        "n": "👎", "clap": "👏", "pray": "🙏", "muscle": "💪",
+        "handshake": "🤝", "wave": "👋", "eyes": "👀", "fire": "🔥",
+        "star": "⭐", "check": "✅", "party": "🥳", "tada": "🎉",
+        "gift": "🎁", "cake": "🎂", "coffee": "☕", "beer": "🍺",
+        "rocket": "🚀", "sun": "☀️", "moon": "🌙", "rainbow": "🌈",
+        "bell": "🔔", "dance": "💃", "punch": "👊", "fistbump": "🤜",
+    ]
+
+    /// What the bubble shows: `content` with `(code)` shortcodes expanded to
+    /// unicode. Native unicode passes through. Backtick spans are left
+    /// alone, so `` `(smile)` `` stays literal.
+    public static func renderText(for message: ChatMessage) -> String {
+        expandShortcodes(message.content)
+    }
+
+    public static func expandShortcodes(_ text: String) -> String {
+        // Exclusion ranges: backtick spans widened to swallow the ticks.
+        let excl: [Range<String.Index>] = backtickSpans(in: text).map { r in
+            text.index(before: r.lowerBound) ..< text.index(after: r.upperBound)
+        }
+        var out = ""
+        out.reserveCapacity(text.count)
+        var cursor = text.startIndex
+        for r in excl {
+            out += expandSegment(String(text[cursor ..< r.lowerBound]))
+            out += text[r]
+            cursor = r.upperBound
+        }
+        out += expandSegment(String(text[cursor...]))
+        return out
+    }
+
+    /// One `(code)` pass over code-free text. Case-insensitive lookup.
+    static func expandSegment(_ s: String) -> String {
+        var out = ""
+        out.reserveCapacity(s.count)
+        var i = s.startIndex
+        while i < s.endIndex {
+            guard s[i] == "(" else { out.append(s[i]); i = s.index(after: i); continue }
+            var j = s.index(after: i)
+            var count = 0
+            while j < s.endIndex, count < 20, s[j].isLetter || s[j].isNumber || s[j] == "_" || s[j] == "+" || s[j] == "-" {
+                j = s.index(after: j); count += 1
+            }
+            if j < s.endIndex, s[j] == ")", count > 0,
+               let emoji = emojiShortcodes[String(s[s.index(after: i) ..< j]).lowercased()]
+            {
+                out += emoji
+                i = s.index(after: j)
+            } else {
+                out.append(s[i]); i = s.index(after: i)
+            }
+        }
+        return out
     }
 
     /// `@Name` tokens when no `<at>` tags exist (plain-text path).

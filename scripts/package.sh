@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build release + wrap in OstMac.app (real identity, icon, signed).
+# Build release + wrap in Diet Teams.app (real identity, icon, signed).
 # Usage: scripts/package.sh [--install]   (--install copies to /Applications)
 #
 # Signing: CODESIGN_IDENTITY env wins; else the first "Apple Development"
@@ -11,7 +11,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT/swift"
 swift build -c release --product OstMac 2>&1 | tail -2
 
-APP="$ROOT/tmp/OstMac.app"
+APP="$ROOT/tmp/Diet Teams.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp .build/release/OstMac "$APP/Contents/MacOS/OstMac"
@@ -36,7 +36,7 @@ echo "built: $APP"
 du -sh "$APP"
 
 if [[ "${1:-}" == "--install" ]]; then
-    rm -rf /Applications/OstMac.app
-    cp -R "$APP" /Applications/OstMac.app
-    echo "installed: /Applications/OstMac.app"
+    rm -rf "/Applications/Diet Teams.app"
+    cp -R "$APP" "/Applications/Diet Teams.app"
+    echo "installed: /Applications/Diet Teams.app"
 fi

@@ -1,4 +1,4 @@
-// DemoData.swift — om-app-union: ONE canned dataset for `OstMac --demo`.
+// DemoData.swift — om-app-union: ONE canned dataset for `Diet Teams --demo`.
 // Merges the om-package sidebar rows (stable ids demo/demo-2/demo-3) with
 // the om-integrate threads. Single source: chatsResponse()/messages()/name()
 // all derive from `chats`; every row's preview/sender/time matches the
@@ -10,6 +10,7 @@ public enum DemoData {
     public static let avaID = "demo-2"
     public static let standupID = "demo-3"
     public static let richID = "demo-rich"
+    public static let mediaID = "demo-media"
 
     /// Sidebar rows. [0] is "demo" (matches ConversationStore.demo()).
     /// The rich row derives from the rich thread's last message, so its
@@ -31,6 +32,7 @@ public enum DemoData {
             last_message_sender: "Tom Becker",
             last_message_preview: "Build is green, packaging lane is next."),
         richChat(),
+        mediaChat(),
     ]
 
     /// Rich sidebar row: preview/sender/time from the rich thread's tail.
@@ -39,6 +41,17 @@ public enum DemoData {
         let last = msgs.last
         return ChatItem(
             chatId: richID, name: "Demo — Rich Conversation", is_group: true,
+            last_message_time: last?.timestamp,
+            last_message_sender: last?.sender,
+            last_message_preview: last?.content)
+    }
+
+    /// Media sidebar row: preview/sender/time from the media thread's tail.
+    public static func mediaChat(now: Date = Date()) -> ChatItem {
+        let msgs = mediaMessages(now: now)
+        let last = msgs.last
+        return ChatItem(
+            chatId: mediaID, name: "Demo — Photos & Emoji", is_group: true,
             last_message_time: last?.timestamp,
             last_message_sender: last?.sender,
             last_message_preview: last?.content)
@@ -83,6 +96,7 @@ public enum DemoData {
         case avaID: return avaMessages
         case standupID: return standupMessages
         case richID: return ConversationStore.richDemoMessages()
+        case mediaID: return mediaMessages()
         default: break
         }
         if chatID.hasPrefix("demo-chan-") { return channelMessages }
@@ -102,6 +116,56 @@ public enum DemoData {
             }
         }
         return nil
+    }
+
+    /// Rich-media thread (om-richmedia): unicode emoji, `(code)`
+    /// shortcodes, a captioned photo, an image-only bubble, a broken-image
+    /// failure, and an emoticon-sized reply. Fully offline (`demo://`
+    /// fixtures). Timestamps float off now (Today).
+    public static func mediaMessages(now: Date = Date()) -> [ChatMessage] {
+        func iso(_ d: Date) -> String {
+            let f = ISO8601DateFormatter()
+            f.formatOptions = [.withInternetDateTime]
+            return f.string(from: d)
+        }
+        func at(h: Int, m: Int) -> Date {
+            var cal = Calendar.current
+            cal.timeZone = TimeZone.current
+            return cal.date(bySettingHour: h, minute: m, second: 0, of: now) ?? now
+        }
+        return [
+            ChatMessage(
+                id: "media-1", sender: "Priya Nair",
+                timestamp: iso(at(h: 9, m: 2)),
+                content: "Ship day! 🚀 (party) the build is green",
+                raw: "<p>Ship day! 🚀 (party) the build is green</p>"),
+            ChatMessage(
+                id: "media-2", sender: "Tom Becker",
+                timestamp: iso(at(h: 9, m: 5)),
+                content: "Sunset from the offsite 🌅",
+                raw: #"<p>Sunset from the offsite 🌅</p><p><img src="demo://photo-1" alt="offsite sunset"></p>"#),
+            ChatMessage(
+                id: "media-3", sender: "Priya Nair",
+                timestamp: iso(at(h: 9, m: 7)),
+                content: "",
+                raw: #"<p><img src="demo://photo-2" alt="lake dawn"></p>"#),
+            ChatMessage(
+                id: "media-4", sender: "Me",
+                timestamp: iso(at(h: 9, m: 9)),
+                content: "(thumbsup) Gorgeous (clap)",
+                isOwn: true),
+            ChatMessage(
+                id: "media-5", sender: "Tom Becker",
+                timestamp: iso(at(h: 9, m: 11)),
+                content: "This upload never landed",
+                raw: #"<p>This upload never landed</p><p><img src="demo://missing" alt="broken upload"></p>"#),
+            ChatMessage(
+                id: "media-6", sender: "Me",
+                timestamp: iso(at(h: 9, m: 12)),
+                content: "Resending the vibe instead",
+                isOwn: true,
+                raw: #"<p>Resending the vibe instead <img src="demo://photo-1" width="20" height="20" alt="(smile)"></p>"#),
+        ]
     }
 
     /// Shared offline thread shown when a demo channel opens.

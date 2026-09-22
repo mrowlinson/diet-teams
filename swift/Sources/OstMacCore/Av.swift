@@ -139,7 +139,27 @@ public struct LoopbackResult: Decodable, Sendable {
     public let nals: Int
 }
 
+public struct AudioDevices: Decodable, Sendable {
+    public let ok: Bool
+    public let inputs: [String]
+    public let outputs: [String]
+    public let default_input: String?
+    public let default_output: String?
+}
+
+public struct MicLevel: Decodable, Sendable {
+    public let ok: Bool
+    public let peak_db: Double
+    public let has_input: Bool
+}
+
 // MARK: - RustCore wrappers
+
+/// Optional C string arg: nil/empty Swift string passes NULL (= default device).
+func withOptCString<T>(_ s: String?, _ body: (UnsafePointer<CChar>?) throws -> T) rethrows -> T {
+    guard let s, !s.isEmpty else { return try body(nil) }
+    return try s.withCString { try body($0) }
+}
 
 public extension RustCore {
     static func avInfo() throws -> AvInfo {
@@ -162,6 +182,34 @@ public extension RustCore {
 
     static func toneCheck() throws -> ToneCheckResult {
         try call(ostmac_tone_check(), as: ToneCheckResult.self)
+    }
+
+    static func audioDevices() throws -> AudioDevices {
+        try call(ostmac_audio_devices(), as: AudioDevices.self)
+    }
+
+    /// Named-device mic test (nil/"" = default). Blocks ~`seconds` + playback. Call off-main.
+    static func micTestOn(seconds: Int32 = 3, input: String?, output: String?) throws -> MicTestResult {
+        try withOptCString(input) { inPtr in
+            try withOptCString(output) { outPtr in
+                try call(ostmac_mic_test_on(seconds, inPtr, outPtr), as: MicTestResult.self)
+            }
+        }
+    }
+
+    /// Named-device tone play (nil/"" = default). Blocks ~`msecs`. Call off-main.
+    static func tonePlayOn(msecs: Int32 = 1000, output: String?) throws -> TonePlayResult {
+        try withOptCString(output) { outPtr in
+            try call(ostmac_tone_play_on(msecs, outPtr), as: TonePlayResult.self)
+        }
+    }
+
+    /// Short mic level sample for a live meter (nil/"" = default).
+    /// Never throws for missing hardware (`has_input` tells). Call off-main.
+    static func micLevel(msecs: Int32 = 150, input: String?) throws -> MicLevel {
+        try withOptCString(input) { inPtr in
+            try call(ostmac_mic_level(msecs, inPtr), as: MicLevel.self)
+        }
     }
 
     static func cameraBegin(width: Int32, height: Int32, fps: Int32) throws -> CameraBegin {

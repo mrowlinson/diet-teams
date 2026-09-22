@@ -5,7 +5,7 @@ import OstMacCore
 
 final class AppIdentityTests: XCTestCase {
     func testIdentityValues() {
-        XCTAssertEqual(AppIdentity.name, "OstMac")
+        XCTAssertEqual(AppIdentity.name, "Diet Teams")
         XCTAssertEqual(AppIdentity.bundleID, "dev.ostmac.OstMac")
         XCTAssertEqual(AppIdentity.version, "1.0.0")
         XCTAssertEqual(AppIdentity.minimumOS, "14.0")
@@ -50,12 +50,14 @@ final class AppIdentityTests: XCTestCase {
     }
 
     func testDemoChats() {
-        XCTAssertEqual(DemoData.chats.count, 4)
+        XCTAssertEqual(DemoData.chats.count, 5)
         XCTAssertEqual(DemoData.chats[0].id, "demo")
         XCTAssertTrue(DemoData.chats.allSatisfy { !$0.name.isEmpty })
         XCTAssertTrue(DemoData.chats.contains { $0.is_group })
         XCTAssertTrue(DemoData.chats.contains { !$0.is_group })
         // om-convrich-ui: rich thread merged into the demo dataset.
-        XCTAssertEqual(DemoData.chats.last?.id, DemoData.richID)
+        XCTAssertTrue(DemoData.chats.contains { $0.id == DemoData.richID })
+        // om-richmedia: photos+emoji thread merged into the demo dataset.
+        XCTAssertEqual(DemoData.chats.last?.id, DemoData.mediaID)
     }
 }

@@ -5,6 +5,13 @@ import AVFoundation
 import AppKit
 import SwiftUI
 
+/// One built-in/external/Continuity camera, listed for the picker.
+public struct CameraDevice: Identifiable, Hashable, Sendable {
+    public let id: String // AVCaptureDevice.uniqueID (stable across launches)
+    public let name: String // localizedName ("FaceTime HD Camera")
+    public init(id: String, name: String) { self.id = id; self.name = name }
+}
+
 /// AVCapture owner: BGRA frame output -> RustCore.cameraPush. Main-actor
 /// published state; delegate callbacks arrive on a private queue.
 @MainActor
@@ -12,6 +19,15 @@ public final class CameraCapture: NSObject, ObservableObject {
     @Published public private(set) var running = false
     @Published public private(set) var status = "idle"
     @Published public private(set) var lastStats: CameraStats?
+    /// Selected camera uniqueID (nil = system default). Persisted.
+    @Published public var selectedDeviceID: String? {
+        didSet {
+            UserDefaults.standard.set(selectedDeviceID, forKey: Self.deviceKey)
+            if running, oldValue != selectedDeviceID { restart() }
+        }
+    }
+
+    public static let deviceKey = "om.av.cameraDeviceID"
 
     public let session = AVCaptureSession()
     private var output: AVCaptureVideoDataOutput?
@@ -30,6 +46,20 @@ public final class CameraCapture: NSObject, ObservableObject {
     }
 
     public var liveSend: Bool { liveFlag.get() }
+
+    override public init() {
+        selectedDeviceID = UserDefaults.standard.string(forKey: Self.deviceKey)
+        super.init()
+    }
+
+    /// Cameras available right now (no permission needed to list).
+    public static func videoDevices() -> [CameraDevice] {
+        let found = AVCaptureDevice.DiscoverySession(
+            deviceTypes: [.builtInWideAngleCamera, .external, .continuityCamera],
+            mediaType: .video, position: .unspecified
+        ).devices
+        return found.map { CameraDevice(id: $0.uniqueID, name: $0.localizedName) }
+    }
 
     /// Request camera access. True = granted.
     public static func requestAccess() async -> Bool {
@@ -93,12 +123,32 @@ public final class CameraCapture: NSObject, ObservableObject {
         }
     }
 
+    /// Switch cameras live: stop, then start on the new pick.
+    private func restart() {
+        let wasRunning = running
+        stop()
+        guard wasRunning else { return }
+        // stop() tears down async on the queue; re-start after it drains.
+        queue.async { [weak self] in
+            Task { @MainActor [weak self] in self?.start() }
+        }
+    }
+
     private func configure(fps: Int) throws {
         session.beginConfiguration()
         defer { session.commitConfiguration() }
         session.sessionPreset = .vga640x480
 
-        guard let device = AVCaptureDevice.default(for: .video) else {
+        let device: AVCaptureDevice? = if let want = selectedDeviceID {
+            AVCaptureDevice.DiscoverySession(
+                deviceTypes: [.builtInWideAngleCamera, .external, .continuityCamera],
+                mediaType: .video, position: .unspecified
+            ).devices.first(where: { $0.uniqueID == want })
+                ?? AVCaptureDevice.default(for: .video)
+        } else {
+            AVCaptureDevice.default(for: .video)
+        }
+        guard let device else {
             throw CameraError.noDevice
         }
         let input = try AVCaptureDeviceInput(device: device)

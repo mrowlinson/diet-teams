@@ -271,11 +271,41 @@ public struct MessagesResponse: Decodable, Sendable {
     /// Opaque cursor for the next older page; nil when history is exhausted.
     /// Absent (nil) on old core builds — treat as end of history.
     public let page_token: String?
+
+    /// Host-side construction (demo data, MCP mocks). Wire decoding is untouched.
+    public init(ok: Bool, chat_id: String?, messages: [ChatMessage], page_token: String? = nil) {
+        self.ok = ok
+        self.chat_id = chat_id
+        self.messages = messages
+        self.page_token = page_token
+    }
 }
 
 public struct SendResponse: Decodable, Sendable {
     public let ok: Bool
     public let chat_id: String?
+
+    /// Host-side construction (MCP mocks). Wire decoding is untouched.
+    public init(ok: Bool, chat_id: String?) {
+        self.ok = ok
+        self.chat_id = chat_id
+    }
+}
+
+// MARK: - Rich media (om-richmedia lane)
+
+/// One fetched inline image: base64 bytes + the server's content type.
+public struct MediaResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let data_base64: String
+    public let content_type: String?
+
+    /// Host-side construction (tests, mock fetchers). Wire decoding untouched.
+    public init(ok: Bool, data_base64: String, content_type: String? = nil) {
+        self.ok = ok
+        self.data_base64 = data_base64
+        self.content_type = content_type
+    }
 }
 
 // MARK: - Presence (om-presence lane)

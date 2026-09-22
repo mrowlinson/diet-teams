@@ -41,6 +41,12 @@ char *ostmac_messages_page(const char *chat_id, const char *page_token, int limi
 // Post one message to a chat. Caller frees.
 char *ostmac_send(const char *chat_id, const char *text);
 
+// Fetch one inline-image URL: {ok, data_base64, content_type?}.
+// Microsoft media hosts attach the Skype token; public hosts fetch
+// without auth. https only. Requires sign-in for auth'd hosts.
+// Caller frees.
+char *ostmac_media_fetch(const char *url);
+
 // Start background Trouter push: 0 ok, -1 running, -2 no auth, -3 rt fail.
 int ostmac_trouter_start(void);
 
@@ -156,6 +162,24 @@ char *ostmac_tone_play(int msecs);
 
 // Deterministic tone echo self-check (no hardware). Caller frees.
 char *ostmac_tone_check(void);
+
+// Audio device display names + system defaults:
+// {ok, inputs[], outputs[], default_input, default_output}. Caller frees.
+char *ostmac_audio_devices(void);
+
+// Named-device mic test (NULL/"" = default):
+// {ok, frames, seconds, peak_db, played_back} or
+// {ok:false, error:"no_input"|"unknown_device"}. Caller frees. Blocks.
+char *ostmac_mic_test_on(int seconds, const char *input, const char *output);
+
+// Named-device tone play (NULL/"" = default output).
+// Caller frees. Blocks while playing.
+char *ostmac_tone_play_on(int msecs, const char *output);
+
+// Short mic level sample for a live meter:
+// {ok, peak_db, has_input} (never errors; no device -> has_input=false).
+// Caller frees. Blocks ~msecs + 100ms setup.
+char *ostmac_mic_level(int msecs, const char *input);
 
 // Begin a camera run (Swift AVCapture feeds frames). Caller frees.
 char *ostmac_camera_begin(int width, int height, int fps);

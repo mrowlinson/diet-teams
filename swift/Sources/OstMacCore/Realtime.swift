@@ -30,6 +30,9 @@ public struct RealtimeMessage: Decodable, Sendable, Identifiable {
     public let time: String
     public let isEdit: Bool
     public let editedID: String?
+    /// Unstripped server HTML (om-richmedia: streaming `<img>` mining).
+    /// Nil on old core builds — treat as text-only.
+    public let raw: String?
 
     enum CodingKeys: String, CodingKey {
         case chatID = "chat_id"
@@ -37,6 +40,34 @@ public struct RealtimeMessage: Decodable, Sendable, Identifiable {
         case sender, text, time
         case isEdit = "is_edit"
         case editedID = "edited_id"
+        case raw
+    }
+
+    /// Host-side construction (tests, mock feeds). Wire decoding untouched.
+    public init(
+        chatID: String, msgId: String, sender: String, text: String,
+        time: String, isEdit: Bool, editedID: String? = nil, raw: String? = nil
+    ) {
+        self.chatID = chatID
+        self.msgId = msgId
+        self.sender = sender
+        self.text = text
+        self.time = time
+        self.isEdit = isEdit
+        self.editedID = editedID
+        self.raw = raw
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        chatID = try c.decode(String.self, forKey: .chatID)
+        msgId = try c.decode(String.self, forKey: .msgId)
+        sender = try c.decode(String.self, forKey: .sender)
+        text = try c.decode(String.self, forKey: .text)
+        time = try c.decode(String.self, forKey: .time)
+        isEdit = try c.decode(Bool.self, forKey: .isEdit)
+        editedID = try c.decodeIfPresent(String.self, forKey: .editedID)
+        raw = try c.decodeIfPresent(String.self, forKey: .raw)
     }
 
     /// True when this event belongs to the given open chat.
@@ -47,11 +78,13 @@ public struct RealtimeMessage: Decodable, Sendable, Identifiable {
 
     /// Host model: edits collapse onto the edited id so
     /// `ConversationStore.ingest` updates the bubble in place.
+    /// `raw` rides along so streaming image bubbles render (same key as
+    /// history, so the cache never refetches on resync).
     public var asChatMessage: ChatMessage {
         if isEdit, let edited = editedID {
-            return ChatMessage(id: edited, sender: sender, timestamp: time, content: text)
+            return ChatMessage(id: edited, sender: sender, timestamp: time, content: text, raw: raw)
         }
-        return ChatMessage(id: msgId, sender: sender, timestamp: time, content: text)
+        return ChatMessage(id: msgId, sender: sender, timestamp: time, content: text, raw: raw)
     }
 }
 

@@ -4,6 +4,7 @@ mod chat;
 pub mod client;
 mod graph;
 mod me;
+pub mod media;
 mod presence;
 mod teams;
 
@@ -24,6 +25,7 @@ pub use teams::ChannelInfo;
 pub use chat::{
     list_chats_data, read_messages_data, read_messages_page, send_message_with_client,
 };
+pub use media::{fetch_media_data, MediaBytes, MAX_BYTES};
 pub use me::whoami_data;
 pub use presence::get_presence_data;
 pub use teams::list_teams_data;
