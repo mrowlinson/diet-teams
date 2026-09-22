@@ -45,11 +45,6 @@ hmac = "0.12"
 # CLI
 clap = { version = "4", features = ["derive"] }
 
-# TUI (Ratatui)
-ratatui = "0.29"
-crossterm = { version = "0.28", features = ["event-stream"] }
-tokio-stream = "0.1"
-
 # Error handling
 anyhow = "1"
 thiserror = "1"
@@ -69,7 +64,6 @@ futures = "0.3"
 tokio-tungstenite = { version = "0.20", features = ["native-tls"] }
 uuid = { version = "1", features = ["v4"] }
 chrono = "0.4"
-unicode-width = "0.2"
 
 # Audio I/O (optional — requires ALSA headers on Linux)
 cpal = { version = "0.15", optional = true }

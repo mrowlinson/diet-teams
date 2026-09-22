@@ -59,6 +59,13 @@ needing maintainer buy-in. Minor PRs stand alone; majors are separate PRs.
     cap, https-only); `needs_auth` keeps the Skype token on Microsoft
     hosts, public URLs fetch bare. Image-only bubbles (empty stripped
     text) survive the filter. Re-exported in `src/api/mod.rs`.
+13. `src/tui/` deleted + `Tui` subcommand + `mod tui` wiring (`main.rs`,
+    `lib.rs`) + `ratatui`/`crossterm`/`tokio-stream`/`unicode-width` deps —
+    [major][LOCAL-ONLY, do not upstream] **drop TUI from our vendored copy**.
+    Diet Teams (SwiftUI) replaces the UI; the TUI is eisbaw's product, we
+    keep our copy lean (CLI debug surface + `ostmac-core` lib only). All CLI
+    subcommands (`chats`/`read`/`send`/`call-test`/etc) unchanged. 8 TUI unit
+    tests drop with the module; zero failures expected elsewhere.
 
 ## Upstream PRs (2026-09-22, base 0892144; main red on sdp E0308 until #5)
 
