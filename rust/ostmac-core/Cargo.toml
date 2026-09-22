@@ -2,7 +2,7 @@
 name = "ostmac-core"
 version = "0.1.0"
 edition = "2021"
-description = "Minimal embeddable surface over vendored ost: auth device-code, chat list, trouter events"
+description = "Minimal embeddable surface over vendored ost: auth device-code, chat list, messages, send, trouter events"
 license = "MIT"
 
 [lib]

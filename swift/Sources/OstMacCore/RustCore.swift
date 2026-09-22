@@ -27,6 +27,20 @@ public enum RustCore {
         try call(ostmac_chats(limit), as: ChatsResponse.self)
     }
 
+    public static func messages(chatID: String, limit: Int32 = 50) throws -> MessagesResponse {
+        try chatID.withCString { ptr in
+            try call(ostmac_messages(ptr, limit), as: MessagesResponse.self)
+        }
+    }
+
+    public static func send(chatID: String, text: String) throws -> SendResponse {
+        try chatID.withCString { idPtr in
+            try text.withCString { textPtr in
+                try call(ostmac_send(idPtr, textPtr), as: SendResponse.self)
+            }
+        }
+    }
+
     public static func trouterStart() -> Int32 { ostmac_trouter_start() }
     public static func trouterStop() -> Int32 { ostmac_trouter_stop() }
 

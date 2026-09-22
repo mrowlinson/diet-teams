@@ -23,6 +23,12 @@ char *ostmac_device_poll(const char *session);
 // Chat list JSON (requires sign-in). Caller frees.
 char *ostmac_chats(int limit);
 
+// Message history JSON for one chat (requires sign-in). Caller frees.
+char *ostmac_messages(const char *chat_id, int limit);
+
+// Post one message to a chat. Caller frees.
+char *ostmac_send(const char *chat_id, const char *text);
+
 // Start background Trouter push: 0 ok, -1 running, -2 no auth, -3 rt fail.
 int ostmac_trouter_start(void);
 
