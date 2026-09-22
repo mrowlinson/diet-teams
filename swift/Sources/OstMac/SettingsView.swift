@@ -7,11 +7,13 @@ import SwiftUI
 
 struct SettingsView: View {
     @ObservedObject private var auth: AuthViewModel
+    @ObservedObject private var catchUp: CatchUpStore
     private let fixedAccount: AccountInfo?
 
     /// Live view: shares the app's AuthViewModel (single source of truth).
-    init(auth: AuthViewModel) {
+    init(auth: AuthViewModel, catchUp: CatchUpStore = CatchUpStore()) {
         _auth = ObservedObject(wrappedValue: auth)
+        _catchUp = ObservedObject(wrappedValue: catchUp)
         fixedAccount = nil
     }
 
@@ -19,6 +21,7 @@ struct SettingsView: View {
     @MainActor
     init(account: AccountInfo) {
         _auth = ObservedObject(wrappedValue: .demo(.signedOut))
+        _catchUp = ObservedObject(wrappedValue: CatchUpStore())
         fixedAccount = account
     }
 
@@ -36,6 +39,7 @@ struct SettingsView: View {
                     AuthView(model: auth)
                 }
             }
+            CatchUpSettingsSection(catchUp: catchUp)
             Section("Application") {
                 LabeledContent("Version", value: AppIdentity.version)
                 LabeledContent("Bundle ID", value: AppIdentity.bundleID)
@@ -43,7 +47,7 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         // Live embeds the full AuthView (min 420 tall); fixed stays compact.
-        .frame(width: 420, height: fixedAccount == nil ? CGFloat(720) : nil)
+        .frame(width: 420, height: fixedAccount == nil ? CGFloat(880) : nil)
         .task {
             guard fixedAccount == nil else { return }
             await auth.refreshStatus()

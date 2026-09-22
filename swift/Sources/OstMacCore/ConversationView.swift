@@ -7,20 +7,27 @@ public struct ConversationView: View {
     @ObservedObject public var store: ConversationStore
     @ObservedObject private var presence: PresenceStore
     @ObservedObject public var call: CallStore
+    @ObservedObject public var catchUp: CatchUpStore
     /// False for 1:1 chats (header shows the chatmate dot).
     private let isGroup: Bool
     @State private var draft = ""
     @State private var lastSeenID: String?
+    @State private var showCatchUp: Bool
     @FocusState private var boxFocused: Bool
 
+    /// - catchUpOpen: open the catch-up sheet at launch (the
+    ///   --show-catchup shot hook only).
     public init(
         store: ConversationStore, presence: PresenceStore = PresenceStore(),
-        call: CallStore = CallStore(), isGroup: Bool = true
+        call: CallStore = CallStore(), catchUp: CatchUpStore = CatchUpStore(),
+        isGroup: Bool = true, catchUpOpen: Bool = false
     ) {
         self.store = store
         self.presence = presence
         self.call = call
+        self.catchUp = catchUp
         self.isGroup = isGroup
+        _showCatchUp = State(initialValue: catchUpOpen)
     }
 
     public var body: some View {
@@ -64,6 +71,11 @@ public struct ConversationView: View {
             sendBox
         }
         .frame(minWidth: 380, minHeight: 480)
+        .sheet(isPresented: $showCatchUp) {
+            CatchUpView(
+                catchUp: catchUp, messages: store.messages,
+                autoRun: CommandLine.arguments.contains("--show-catchup"))
+        }
     }
 
     private var sections: [MessageRender.DaySection] {
@@ -109,6 +121,14 @@ public struct ConversationView: View {
                     .buttonStyle(.borderless)
                     .disabled(call.busy || (call.call?.isActive ?? false))
                     .help("Call this chat (signaling only — no audio yet)")
+                }
+                if CatchUp.shouldOffer(messageCount: store.messages.count) {
+                    Button("Catch up", systemImage: "sparkles") {
+                        catchUp.reset()
+                        showCatchUp = true
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Summarize this thread: TL;DR, key points, action items")
                 }
                 if store.loading { ProgressView().controlSize(.small) }
                 Text("\(store.messages.count)")

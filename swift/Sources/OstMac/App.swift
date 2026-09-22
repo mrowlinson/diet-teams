@@ -18,6 +18,9 @@
 // send via core — never use it on shared chats for testing.
 // --show-about / --show-settings / --show-av open those windows at launch (shot hooks).
 // --show-teams opens the sidebar on the Teams browser (shot hook).
+// --show-catchup stretches the demo thread past 20 messages and
+// auto-opens the catch-up sheet with a canned summary (shot hook,
+// offline, throwaway defaults — never the real ones).
 // --auth-state <name> opens the Auth window with a canned state, never
 // touching core/network (names: signed-out, starting, code, polling,
 // signed-in, expired, refreshing, refresh-failed, error). `--state` is
@@ -99,7 +102,7 @@ struct OstMacAppMain: App {
         }
         .defaultSize(width: 600, height: 740)
         Settings {
-            SettingsView(auth: state.auth)
+            SettingsView(auth: state.auth, catchUp: state.catchUp)
         }
         .commands { OstMacCommands() }
     }
@@ -130,6 +133,9 @@ final class AppState: ObservableObject {
     let auth = AuthViewModel()
     let presence = PresenceStore()
     let call: CallStore
+    let catchUp: CatchUpStore
+    /// --show-catchup: long demo thread + canned summary, sheet auto-opens.
+    let showCatchUp: Bool
     @Published var openChatID: String?
     @Published var signedIn: Bool?
     @Published var coreVersion = "?"
@@ -152,6 +158,19 @@ final class AppState: ObservableObject {
     init(args: [String]) {
         isDemo = args.contains("--demo") || args.contains("--demo-rich")
         call = CallStore(demo: isDemo)
+        showCatchUp = args.contains("--show-catchup")
+        if showCatchUp {
+            // Shot hook only: throwaway defaults (never the real ones),
+            // canned summary, no network.
+            let canned = CatchUpCannedTransport(stub: Self.catchUpDemoSummary)
+            let store = CatchUpStore(
+                transport: canned,
+                defaults: UserDefaults(suiteName: "shot-catchup") ?? .standard)
+            store.adopt(CatchUpConfig(enabled: true, apiKey: "demo"))
+            catchUp = store
+        } else {
+            catchUp = CatchUpStore()
+        }
         // Shot hook: --show-call incoming|active seeds the banner offline.
         if let i = args.firstIndex(of: "--show-call"), i + 1 < args.count {
             call.seedDemo(state: args[i + 1])
@@ -295,13 +314,47 @@ final class AppState: ObservableObject {
         persistedSelection = id
         if isDemo {
             let name = chatName ?? DemoData.name(for: id) ?? id
+            var msgs = DemoData.messages(for: id)
+            if showCatchUp { msgs = Self.longThread(from: msgs) }
             conv.showDemo(
-                chatID: id, chatName: name, messages: DemoData.messages(for: id),
+                chatID: id, chatName: name, messages: msgs,
                 failed: DemoData.failedIDs(for: id))
         } else {
             conv.open(chatID: id, chatName: chatName)
         }
     }
+
+    /// Shot hook: stretch a demo thread past the catch-up threshold by
+    /// cycling its own messages (ids stay unique).
+    private static func longThread(from base: [ChatMessage]) -> [ChatMessage] {
+        guard !base.isEmpty else { return base }
+        var out = base
+        var n = 0
+        while out.count < CatchUp.threshold + 4 {
+            let m = base[n % base.count]
+            out.append(ChatMessage(
+                id: "catchup-fill-\(n)", sender: m.sender,
+                timestamp: m.timestamp, content: m.content, isOwn: m.isOwn))
+            n += 1
+        }
+        return out
+    }
+
+    /// Canned summary for the --show-catchup shot (offline, no model).
+    static let catchUpDemoSummary = """
+    TL;DR
+    Design sync covered the chat window mocks and the send flow; edits stay in place.
+
+    Key points
+    - Tom shipped new chat window mocks with bubbles and timestamps.
+    - Priya asked that edited messages update in place, not re-sort.
+    - Send flow is an optimistic bubble first, then core confirms.
+
+    Action items
+    - Tom: own code blocks for the richness pass.
+    - Me: double-check the edited marker on the demo bubble.
+    - Unassigned: take screenshots for the review deck.
+    """
 
     /// One live event: count it, refresh the list row (all chats),
     /// route the bubble to the open chat only.
@@ -385,8 +438,9 @@ struct RootView: View {
                     } else {
                         ConversationView(
                             store: state.conv, presence: state.presence,
-                            call: state.call,
-                            isGroup: state.chats.selectedChat?.is_group ?? true)
+                            call: state.call, catchUp: state.catchUp,
+                            isGroup: state.chats.selectedChat?.is_group ?? true,
+                            catchUpOpen: state.showCatchUp)
                     }
                 }
             } else {
