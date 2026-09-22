@@ -7,7 +7,7 @@ final class AppIdentityTests: XCTestCase {
     func testIdentityValues() {
         XCTAssertEqual(AppIdentity.name, "OstMac")
         XCTAssertEqual(AppIdentity.bundleID, "dev.ostmac.OstMac")
-        XCTAssertEqual(AppIdentity.version, "0.1.0")
+        XCTAssertEqual(AppIdentity.version, "1.0.0")
         XCTAssertEqual(AppIdentity.minimumOS, "14.0")
     }
 

@@ -7,7 +7,7 @@ import Foundation
 public enum AppIdentity {
     public static let name = "OstMac"
     public static let bundleID = "dev.ostmac.OstMac"
-    public static let version = "0.1.0"
+    public static let version = "1.0.0"
     public static let minimumOS = "14.0"
     public static let aboutWindowID = "about"
     public static let authWindowID = "auth"

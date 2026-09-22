@@ -677,7 +677,7 @@ pub fn trouter_stop() -> c_int {
 // C ABI (Swift calls these; JSON over the boundary)
 // ---------------------------------------------------------------------------
 
-static VERSION_C: &[u8] = b"0.1.0\0";
+static VERSION_C: &[u8] = b"1.0.0\0";
 
 /// Static version string. Never freed.
 #[no_mangle]

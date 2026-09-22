@@ -15,8 +15,9 @@ from a minimal SwiftUI shell over a C ABI (JSON over the boundary).
   `OstMac` (the single app: sidebar + conversation + live feed, About,
   Settings, sign-in sheet + Auth window), `OstMacCoreTests`
 - `scripts/` — `build-rust.sh`, `build-app.sh`, `package.sh` (signed
-  release `OstMac.app`, `--install` to /Applications), `install.sh`,
-  `make-icon.sh` (renders `OstMac.icns`), `test.sh`
+  release `OstMac.app`, `--install` to /Applications), `make-dmg.sh` (V1
+  installer `tmp/OstMac-<ver>.dmg`), `install.sh`, `make-icon.sh`
+  (renders `OstMac.icns`), `test.sh`
 - `docs/shots/` — viewed screenshots (TUI + SwiftUI shell)
 
 ## Build / run
@@ -27,6 +28,7 @@ from a minimal SwiftUI shell over a C ABI (JSON over the boundary).
 open swift/.build/release/OstMac.app
 open swift/.build/release/OstMac.app --args --demo  # offline canned data
 ./scripts/package.sh     # signed release tmp/OstMac.app (icon + plist)
+./scripts/make-dmg.sh    # V1 installer tmp/OstMac-1.0.0.dmg
 ./scripts/install.sh     # copy release app to /Applications
 ```
 
@@ -51,6 +53,14 @@ Prereqs: Xcode CLT (`swift`, `xcodebuild`), `cargo`. No Linux-only features
   `.app`, `--install`) + `scripts/install.sh`. Release `.app` 8.3M, idle
   RSS ~137MB (demo, 3 windows open). Signed `Apple Development:
   Michael Rowlinson (FS59877444)`. Shots: `docs/shots/ostmac-*.png`.
+
+## V1 (1.0.0)
+
+Ships: installable (signed `.app` + DMG) + device-code sign-in + chat
+list + paging + conversation + send + live feed. Version is stamped in
+one place each: `OstMac-Info.plist`, `AppIdentity.version`,
+`ostmac-core` Cargo.toml + `ostmac_version()`. Out of scope:
+notifications, presence, teams, badges, attachments, reply/react/edit.
 
 ## Sign-in boundary
 

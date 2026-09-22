@@ -3,7 +3,7 @@
 #ifndef OSTMAC_CORE_H
 #define OSTMAC_CORE_H
 
-// Static version string ("0.1.0"). Never freed.
+// Static version string ("1.0.0"). Never freed.
 const char *ostmac_version(void);
 
 // 0 = core usable (tokio runtime builds). No network.
