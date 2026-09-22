@@ -13,7 +13,9 @@ from a minimal SwiftUI shell over a C ABI (JSON over the boundary).
   auth state machine + views, conversation store, realtime feed, branding,
   demo data), `OstMacChatList` (chat sidebar + `ChatSelection` contract),
   `OstMac` (the single app: sidebar + conversation + live feed, About,
-  Settings, sign-in sheet + Auth window), `OstMacCoreTests`
+  Settings, sign-in sheet + Auth window), `OstMacMCP` (stdio MCP server
+  core) + `ostmac-mcp` executable (see `docs/mcp.md`), `OstMacCoreTests`,
+  `OstMacMCPTests`
 - `scripts/` — `build-rust.sh`, `build-app.sh`, `package.sh` (signed
   release `Diet Teams.app`, `--install` to /Applications), `make-dmg.sh` (V1
   installer `tmp/Diet Teams-<ver>.dmg`), `install.sh`, `make-icon.sh`
