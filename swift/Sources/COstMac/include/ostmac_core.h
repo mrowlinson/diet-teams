@@ -104,6 +104,41 @@ char *ostmac_call_place(const char *thread_id, int timeout_secs);
 // ostmac_call_place. Caller frees.
 char *ostmac_call_echo(int timeout_secs);
 
+// Place an outgoing call with live media attached on acceptance:
+// {ok,placed,accepted,live_media,call}. Caller frees.
+char *ostmac_call_place_live(const char *thread_id, int timeout_secs);
+
+// Place the echo-bot test call with live media. Same envelope as
+// ostmac_call_place_live. Caller frees.
+char *ostmac_call_echo_live(int timeout_secs);
+
+// Accept the ringing incoming call with live media:
+// {ok,accepted,media_answered,live_media,call}. Caller frees.
+char *ostmac_call_accept_live(void);
+
+// Live media engine stats:
+// {ok, media:{running,audio_sent,audio_recv,video_sent,video_recv,
+// send_queued,send_dropped,recv_pending,recv_dropped,
+// ice_audio,ice_video,error?,started_at}}. Caller frees. No network.
+char *ostmac_call_media(void);
+
+// Stop the live media engine: {ok, media}. Caller frees.
+char *ostmac_call_media_stop(void);
+
+// Push one send-side access unit: JSON array of base64 NALs (no start
+// codes). Over-cap pushes drop the oldest unit. Returns {ok, queued}.
+// Caller frees.
+char *ostmac_video_send_push(const char *nals_json);
+
+// Drain the newest incoming access unit:
+// {ok, au:{nals:[b64..]}|null, dropped}. Caller frees.
+char *ostmac_video_poll_incoming(void);
+
+// Offline loopback: run queued send units through packetize -> SRTP ->
+// depacketize -> incoming queue (no network/auth/hardware).
+// {ok, units, packets, aus, nals}. Caller frees.
+char *ostmac_live_loopback(void);
+
 // Accept the ringing incoming call:
 // {ok,accepted,media_answered,call}. Caller frees.
 char *ostmac_call_accept(void);

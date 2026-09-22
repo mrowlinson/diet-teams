@@ -101,14 +101,15 @@ public struct ConversationView: View {
                 }
                 Spacer()
                 if let id = store.chatID {
-                    Button {
-                        call.place(threadID: id)
+                    Menu {
+                        Button("Call (signaling only)") { call.place(threadID: id) }
+                        Button("Call live (audio/video)") { call.placeLive(threadID: id) }
                     } label: {
                         Image(systemName: "phone")
                     }
                     .buttonStyle(.borderless)
                     .disabled(call.busy || (call.call?.isActive ?? false))
-                    .help("Call this chat (signaling only — no audio yet)")
+                    .help("Call this chat")
                 }
                 if store.loading { ProgressView().controlSize(.small) }
                 Text("\(store.messages.count)")

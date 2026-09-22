@@ -434,11 +434,14 @@ public struct CallInfo: Decodable, Sendable, Equatable {
     public let controller: String?
     public let startedAt: UInt64
     public let detail: String?
+    /// True once the live media engine (ICE/SRTP/RTP) is attached.
+    public let liveMedia: Bool?
 
     enum CodingKeys: String, CodingKey {
         case id, dir, peer, thread, state, controller, detail
         case peerName = "peer_name"
         case startedAt = "started_at"
+        case liveMedia = "live_media"
     }
 
     public var isActive: Bool {
@@ -452,7 +455,7 @@ public struct CallInfo: Decodable, Sendable, Equatable {
     public init(
         id: String, dir: String, peer: String, peerName: String = "",
         thread: String = "", state: String, controller: String? = nil,
-        startedAt: UInt64 = 0, detail: String? = nil
+        startedAt: UInt64 = 0, detail: String? = nil, liveMedia: Bool? = nil
     ) {
         self.id = id
         self.dir = dir
@@ -463,6 +466,7 @@ public struct CallInfo: Decodable, Sendable, Equatable {
         self.controller = controller
         self.startedAt = startedAt
         self.detail = detail
+        self.liveMedia = liveMedia
     }
 }
 
@@ -481,6 +485,7 @@ public struct CallResult: Decodable, Sendable {
     public let ended: Bool?
     public let injected: Bool?
     public let mediaAnswered: Bool?
+    public let liveMedia: Bool?
     public let rejection: String?
     public let responseBytes: Int?
     public let call: CallInfo?
@@ -488,6 +493,7 @@ public struct CallResult: Decodable, Sendable {
     enum CodingKeys: String, CodingKey {
         case ok, placed, accepted, ended, injected, rejection, call
         case mediaAnswered = "media_answered"
+        case liveMedia = "live_media"
         case responseBytes = "response_bytes"
     }
 }

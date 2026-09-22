@@ -27,6 +27,7 @@ use serde_json::json;
 
 pub mod av;
 pub mod calls;
+pub mod live;
 pub mod realtime;
 
 // ---------------------------------------------------------------------------
@@ -1211,10 +1212,36 @@ pub extern "C" fn ostmac_call_echo(timeout_secs: c_int) -> *mut c_char {
     string_to_c(calls::call_echo_json(timeout_secs as i32))
 }
 
+/// Place an outgoing call with live media attached on acceptance.
+/// See [`calls::call_place_live_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_call_place_live(
+    thread_id: *const c_char,
+    timeout_secs: c_int,
+) -> *mut c_char {
+    match cstr_to_string(thread_id) {
+        Ok(t) => string_to_c(calls::call_place_live_json(&t, timeout_secs as i32)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
+/// Place the echo-bot test call with live media. See [`calls::call_echo_live_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_call_echo_live(timeout_secs: c_int) -> *mut c_char {
+    string_to_c(calls::call_echo_live_json(timeout_secs as i32))
+}
+
 /// Accept the ringing incoming call. See [`calls::call_accept_json`].
 #[no_mangle]
 pub extern "C" fn ostmac_call_accept() -> *mut c_char {
     string_to_c(calls::call_accept_json())
+}
+
+/// Accept the ringing incoming call with live media.
+/// See [`calls::call_accept_live_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_call_accept_live() -> *mut c_char {
+    string_to_c(calls::call_accept_live_json())
 }
 
 /// End/decline the active call. See [`calls::call_end_json`].

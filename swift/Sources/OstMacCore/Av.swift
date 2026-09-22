@@ -94,6 +94,51 @@ public struct DryRunResult: Decodable, Sendable {
     public let video_nals: Int
 }
 
+public struct LiveMediaStats: Decodable, Sendable {
+    public let running: Bool
+    public let audio_sent: Int
+    public let audio_recv: Int
+    public let video_sent: Int
+    public let video_recv: Int
+    public let send_queued: Int
+    public let send_dropped: Int
+    public let recv_pending: Int
+    public let recv_dropped: Int
+    public let ice_audio: String
+    public let ice_video: String
+    public let error: String?
+    public let started_at: UInt64
+}
+
+public struct LiveMediaPoll: Decodable, Sendable {
+    public let ok: Bool
+    public let media: LiveMediaStats
+}
+
+public struct IncomingAu: Decodable, Sendable {
+    /// Raw H.264 NALs (no start codes), base64. First AU carries SPS+PPS.
+    public let nals: [String]
+}
+
+public struct IncomingPoll: Decodable, Sendable {
+    public let ok: Bool
+    public let au: IncomingAu?
+    public let dropped: Int
+}
+
+public struct SendPushResult: Decodable, Sendable {
+    public let ok: Bool
+    public let queued: Int
+}
+
+public struct LoopbackResult: Decodable, Sendable {
+    public let ok: Bool
+    public let units: Int
+    public let packets: Int
+    public let aus: Int
+    public let nals: Int
+}
+
 public struct AudioDevices: Decodable, Sendable {
     public let ok: Bool
     public let inputs: [String]
@@ -215,5 +260,32 @@ public extension RustCore {
 
     static func callDryRun() throws -> DryRunResult {
         try call(ostmac_call_dry_run(), as: DryRunResult.self)
+    }
+
+    static func callMedia() throws -> LiveMediaPoll {
+        try call(ostmac_call_media(), as: LiveMediaPoll.self)
+    }
+
+    static func callMediaStop() throws -> LiveMediaPoll {
+        try call(ostmac_call_media_stop(), as: LiveMediaPoll.self)
+    }
+
+    /// Push one send-side access unit (raw NALs, no start codes).
+    static func videoSendPush(nals: [Data]) throws -> SendPushResult {
+        let arr = nals.map { $0.base64EncodedString() }
+        let json = String(data: try JSONEncoder().encode(arr), encoding: .utf8) ?? "[]"
+        return try json.withCString { ptr in
+            try call(ostmac_video_send_push(ptr), as: SendPushResult.self)
+        }
+    }
+
+    static func videoPollIncoming() throws -> IncomingPoll {
+        try call(ostmac_video_poll_incoming(), as: IncomingPoll.self)
+    }
+
+    /// Offline join check: queued send units through packetize -> SRTP ->
+    /// depacketize -> incoming queue. No network/auth/hardware.
+    static func liveLoopback() throws -> LoopbackResult {
+        try call(ostmac_live_loopback(), as: LoopbackResult.self)
     }
 }

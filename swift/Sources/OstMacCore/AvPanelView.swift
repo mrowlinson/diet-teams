@@ -106,6 +106,7 @@ public final class AvPanelModel: ObservableObject {
     @Published public var decode = "idle"
     @Published public var remoteImage: CGImage?
     @Published public var decodedImage: CGImage?
+    @Published public var loop = "idle"
 
     private var levelTimer: Timer?
     private var levelSampling = false
@@ -320,6 +321,57 @@ public final class AvPanelModel: ObservableObject {
         })
     }
 
+    /// Full join check (offline): VT-encode a marker frame, push the NALs,
+    /// run the engine packetize/SRTP/depacketize path, decode the AU back.
+    public func runLiveLoopback() {
+        loop = "encoding…"
+        run({ [weak self] (r: Result<CGImage, Error>) in
+            guard let self else { return }
+            switch r {
+            case let .success(img):
+                self.remoteImage = img
+                self.loop = "\(img.width)x\(img.height) live loopback"
+            case let .failure(e):
+                self.loop = "failed: \(e.localizedDescription)"
+            }
+        }, work: {
+            let w = 320, h = 240
+            var bgra = Data(repeating: 64, count: w * h * 4)
+            bgra.withUnsafeMutableBytes { (dst: UnsafeMutableRawBufferPointer) in
+                let p = dst.baseAddress!
+                for row in 0 ..< h / 2 {
+                    for col in 0 ..< w / 2 {
+                        let o = (row * w + col) * 4
+                        p.storeBytes(of: UInt8(40), toByteOffset: o, as: UInt8.self)
+                        p.storeBytes(of: UInt8(120), toByteOffset: o + 1, as: UInt8.self)
+                        p.storeBytes(of: UInt8(220), toByteOffset: o + 2, as: UInt8.self)
+                    }
+                }
+            }
+            guard let enc = H264StreamEncoder(width: w, height: h) else {
+                throw CoreCallError.failed("no VT encoder")
+            }
+            let nals = try enc.encode(bgra: bgra)
+            _ = try RustCore.videoSendPush(nals: nals)
+            let lb = try RustCore.liveLoopback()
+            guard lb.aus >= 1 else {
+                throw CoreCallError.failed("loopback produced no AU")
+            }
+            let poll = try RustCore.videoPollIncoming()
+            guard let au = poll.au else {
+                throw CoreCallError.failed("incoming queue empty")
+            }
+            let raw = au.nals.compactMap { Data(base64Encoded: $0) }
+            guard raw.count == au.nals.count else {
+                throw CoreCallError.failed("incoming NAL base64")
+            }
+            guard let img = try H264StreamDecoder().decode(nals: raw) else {
+                throw CoreCallError.failed("no slice NALs in AU")
+            }
+            return img
+        })
+    }
+
     /// Round-trip a synthetic I420 frame through the remote slot and show it.
     public func runRemoteLoopback() {
         run({ [weak self] (r: Result<CGImage, Error>) in
@@ -388,6 +440,7 @@ public struct LevelBar: View {
 public struct AvPanelView: View {
     @StateObject private var model = AvPanelModel()
     @StateObject private var camera = CameraCapture()
+    @StateObject private var call = CallStore()
     @State private var cameras = CameraCapture.videoDevices()
 
     public init() {}
@@ -502,6 +555,10 @@ public struct AvPanelView: View {
                         Button("Remote loopback") { model.runRemoteLoopback() }
                         Text(model.decode).font(.caption).foregroundStyle(.secondary)
                     }
+                    HStack {
+                        Button("Live loopback") { model.runLiveLoopback() }
+                        Text(model.loop).font(.caption).foregroundStyle(.secondary)
+                    }
                     HStack(alignment: .top, spacing: 16) {
                         if let img = model.decodedImage {
                             Image(img, scale: 1, label: Text("decoded"))
@@ -519,6 +576,39 @@ public struct AvPanelView: View {
             } label: {
                 Label("Diagnostics", systemImage: "stethoscope")
             }
+
+            Section {
+                CallBanner(store: call)
+                HStack {
+                    Button("Echo live") { call.echoLive() }
+                        .disabled(call.busy || (call.call?.isActive ?? false))
+                    Button("End") { call.end() }
+                        .disabled(call.busy || !(call.call?.isActive ?? false))
+                    if let m = call.media {
+                        Text("a \(m.audio_recv)/\(m.audio_sent)" +
+                            " v \(m.video_recv)/\(m.video_sent)")
+                            .font(.caption).monospaced().foregroundStyle(.secondary)
+                    }
+                }
+                HStack(alignment: .top, spacing: 16) {
+                    LiveVideoView()
+                    VStack(alignment: .leading) {
+                        Text("local send: \(camera.liveSend ? "on" : "off")")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Button(camera.liveSend ? "Stop send" : "Send camera") {
+                            if camera.liveSend {
+                                camera.setLiveSend(false)
+                            } else if camera.running {
+                                camera.setLiveSend(true)
+                            } else {
+                                startCamera(live: true)
+                            }
+                        }
+                    }
+                }
+            } header: {
+                Label("Live call (echo bot + media)", systemImage: "phone.fill")
+            }
         }
         .formStyle(.grouped)
         .frame(minWidth: 560, minHeight: 700)
@@ -526,6 +616,11 @@ public struct AvPanelView: View {
             // Devices first; probe + level meter chain after the scan.
             model.refreshDevices()
             model.refreshCaps()
+            call.refresh()
+            // Shot hook: --auto-loop runs the live loopback at launch.
+            if CommandLine.arguments.contains("--auto-loop") {
+                model.runLiveLoopback()
+            }
         }
         .onDisappear {
             model.stopLevelPolling()
@@ -584,10 +679,11 @@ public struct AvPanelView: View {
         }
     }
 
-    private func startCamera() {
+    private func startCamera(live: Bool = false) {
         Task {
             guard await CameraCapture.requestAccess() else { return }
             camera.start()
+            if live { camera.setLiveSend(true) }
         }
     }
 }

@@ -8,7 +8,7 @@
 // Usage:
 //   Diet Teams [--demo | --demo-rich] [--chat <id> [--name <n>]] [--say <text>]
 //          [--show-about] [--show-settings] [--auth-state <name>]
-//          [--show-call incoming|active] [--show-av]
+//          [--show-call incoming|active|live] [--show-av]
 // --show-call seeds the call banner offline (demo state, no core calls).
 // --demo runs fully offline (canned chats/messages, local send echo).
 // --demo-rich is --demo preselected on the rich thread (mentions, code,
@@ -453,6 +453,10 @@ struct StatusBar: View {
                     .font(.caption)
                     .disabled(call.busy)
                     .help("Place the echo-bot test call (signaling only)")
+                Button("Echo live") { call.echoLive() }
+                    .font(.caption)
+                    .disabled(call.busy)
+                    .help("Place the echo-bot test call with live audio/video")
             }
             if state.isDemo {
                 Text("DEMO · offline")

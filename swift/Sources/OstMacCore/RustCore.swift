@@ -124,8 +124,23 @@ public enum RustCore {
         try call(ostmac_call_echo(timeoutSecs), as: CallResult.self)
     }
 
+    /// Blocks up to `timeoutSecs` like callPlace; live media attaches on accept.
+    public static func callPlaceLive(threadID: String, timeoutSecs: Int32 = 30) throws -> CallResult {
+        try threadID.withCString { ptr in
+            try call(ostmac_call_place_live(ptr, timeoutSecs), as: CallResult.self)
+        }
+    }
+
+    public static func callEchoLive(timeoutSecs: Int32 = 30) throws -> CallResult {
+        try call(ostmac_call_echo_live(timeoutSecs), as: CallResult.self)
+    }
+
     public static func callAccept() throws -> CallResult {
         try call(ostmac_call_accept(), as: CallResult.self)
+    }
+
+    public static func callAcceptLive() throws -> CallResult {
+        try call(ostmac_call_accept_live(), as: CallResult.self)
     }
 
     public static func callEnd() throws -> CallResult {
