@@ -1,26 +1,32 @@
-// OstMac — integrated app: sidebar chat list + conversation detail +
-// live realtime feed in one window; real identity (About window,
-// Settings shell, app menu) from the package lane.
+// OstMac — THE app (om-app-union): sidebar chat list + conversation
+// detail + live realtime feed in one window; real identity (About
+// window, Settings shell, app menu); full authux sign-in (device code,
+// copy/open-browser, polling, expiry/refresh, sign-out) in a sheet.
+//
+// Merges the deleted shells: OstMacApp lib (About/Settings/identity —
+// OstMacRootView was a strict subset of RootView) and OstMacAuth
+// (--auth-state canned states + live AuthView window).
 //
 // Usage:
-//   OstMac [--demo] [--chat <id> [--name <n>]] [--say <text>] [--show-about]
+//   OstMac [--demo] [--chat <id> [--name <n>]] [--say <text>]
+//          [--show-about] [--auth-state <name>]
 // --demo runs fully offline (canned chats/messages, local send echo).
 // --chat preselects (or opens directly when absent from the list).
 // --say auto-sends once into the open chat. In live mode that is a REAL
 // send via core — never use it on shared chats for testing.
 // --show-about opens the About window at launch (shot hook).
+// --auth-state <name> opens the Auth window with a canned state, never
+// touching core/network (names: signed-out, starting, code, polling,
+// signed-in, expired, refreshing, refresh-failed, error). `--state` is
+// an alias. Without it the Auth window shows the live session.
 //
 // Realtime routing: the Trouter socket is global (one feed for all
 // chats), so switching chats does NOT restart the socket — the list
 // ingests every event (preview refresh + reorder), while bubbles are
 // filtered to the open chat (`isFor(chatID:)`). A resync gap
 // re-fetches the open chat plus the list.
-//
-// Entry is OstMacAppMain (not OstMacApp): the OstMacApp module is
-// imported, and a type sharing its module's name breaks qualified refs.
 import Combine
 import Foundation
-import OstMacApp
 import OstMacChatList
 import OstMacCore
 import SwiftUI
@@ -28,9 +34,41 @@ import SwiftUI
 @main
 struct OstMacAppMain: App {
     @StateObject private var state: AppState
+    private let cannedAuth: AuthViewModel?
 
     init() {
-        _state = StateObject(wrappedValue: AppState(args: CommandLine.arguments))
+        let args = CommandLine.arguments
+        _state = StateObject(wrappedValue: AppState(args: args))
+        if let name = Self.authStateName(args: args) {
+            cannedAuth = .demo(Self.authState(named: name))
+        } else {
+            cannedAuth = nil
+        }
+    }
+
+    /// --auth-state value (--state alias); nil = live auth.
+    static func authStateName(args: [String]) -> String? {
+        for flag in ["--auth-state", "--state"] {
+            if let i = args.firstIndex(of: flag), i + 1 < args.count {
+                return args[i + 1]
+            }
+        }
+        return nil
+    }
+
+    static func authState(named: String) -> AuthState {
+        switch named {
+        case "signed-out": .signedOut
+        case "starting": .starting
+        case "code": .code(.demo)
+        case "polling": .polling(.demo, attempts: 2)
+        case "signed-in": .signedIn
+        case "expired": .expired
+        case "refreshing": .refreshing
+        case "refresh-failed": .refreshFailed("refresh: token request failed (demo)")
+        case "error": .error("device_start: network unreachable (demo)")
+        default: .signedOut
+        }
     }
 
     var body: some Scene {
@@ -44,6 +82,15 @@ struct OstMacAppMain: App {
         }
         .defaultSize(width: 360, height: 340)
         .windowResizability(.contentSize)
+        Window("OstMac Auth", id: AppIdentity.authWindowID) {
+            if let cannedAuth {
+                AuthView(model: cannedAuth)
+            } else {
+                AuthView(model: state.auth)
+                    .task { await state.auth.refreshStatus() }
+            }
+        }
+        .defaultSize(width: 440, height: 520)
         Settings {
             SettingsView()
         }
@@ -69,6 +116,7 @@ final class AppState: ObservableObject {
     let chats: ChatListViewModel
     let conv = ConversationStore()
     let feed = RealtimeFeed()
+    let auth = AuthViewModel()
     @Published var openChatID: String?
     @Published var signedIn: Bool?
     @Published var coreVersion = "?"
@@ -106,7 +154,7 @@ final class AppState: ObservableObject {
             autoSay = nil
         }
         if isDemo {
-            chats = ChatListViewModel(fetcher: { _ in try DemoData.chatsResponse() })
+            chats = ChatListViewModel(fetcher: { _ in DemoData.chatsResponse() })
         } else {
             chats = ChatListViewModel()
         }
@@ -223,6 +271,22 @@ final class AppState: ObservableObject {
         feedPolls = feed.pollCount
         feedError = feed.lastError
     }
+
+    /// Sign-in sheet state changed: signed in → status flip + list
+    /// reload + dismiss; signed out → status flip (no dismiss — the
+    /// user may sign straight back in).
+    func authChanged(_ s: AuthState) {
+        switch s {
+        case .signedIn:
+            signedIn = true
+            chats.refresh()
+            showSignIn = false
+        case .signedOut:
+            signedIn = false
+        default:
+            break
+        }
+    }
 }
 
 struct RootView: View {
@@ -246,16 +310,21 @@ struct RootView: View {
         }
         .frame(minWidth: 760, minHeight: 520)
         .onAppear {
-            // Shot hook: open the About window from launch args.
+            // Shot hooks: open About/Auth windows from launch args.
             if CommandLine.arguments.contains("--show-about") {
                 openWindow(id: AppIdentity.aboutWindowID)
+            }
+            if OstMacAppMain.authStateName(args: CommandLine.arguments) != nil {
+                openWindow(id: AppIdentity.authWindowID)
             }
         }
         .task { await state.startup() }
         .onDisappear { state.shutdown() }
         .sheet(isPresented: $state.showSignIn) {
-            SignInView()
-                .environmentObject(state)
+            AuthView(model: state.auth)
+                .task { await state.auth.refreshStatus() }
+                .onDisappear { state.auth.stopPolling() }
+                .onChange(of: state.auth.state) { _, s in state.authChanged(s) }
         }
     }
 
@@ -325,95 +394,5 @@ struct StatusBar: View {
         case .stopped:
             "Realtime off"
         }
-    }
-}
-
-struct SignInView: View {
-    @EnvironmentObject private var state: AppState
-    @Environment(\.dismiss) private var dismiss
-    @State private var uri = ""
-    @State private var code = ""
-    @State private var message = ""
-    @State private var error: String?
-    @State private var polling = false
-    @State private var pollTask: Task<Void, Never>?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Sign in").font(.headline)
-            if uri.isEmpty {
-                Text("Start a device-code flow, then approve in your browser.")
-                    .font(.callout).foregroundStyle(.secondary)
-                if let e = error {
-                    Text(e).foregroundStyle(.red).font(.callout).textSelection(.enabled)
-                }
-                Button("Start sign-in") { start() }
-            } else {
-                Text("Visit:").font(.caption).foregroundStyle(.secondary)
-                Text(uri).font(.body).monospaced().textSelection(.enabled)
-                Text("Code: \(code)").font(.title2).monospaced().textSelection(.enabled)
-                if !message.isEmpty {
-                    Text(message).font(.callout).foregroundStyle(.secondary)
-                }
-                if polling {
-                    ProgressView("Waiting for approval…").controlSize(.small)
-                }
-                if let e = error {
-                    Text(e).foregroundStyle(.red).font(.callout).textSelection(.enabled)
-                }
-                Button("Cancel") { cancel() }
-            }
-        }
-        .padding(24)
-        .frame(minWidth: 420)
-        .onDisappear { pollTask?.cancel() }
-    }
-
-    private func start() {
-        error = nil
-        do {
-            let d = try RustCore.deviceStart()
-            uri = d.verification_uri
-            code = d.user_code
-            message = d.message
-            polling = true
-            pollTask = Task {
-                while !Task.isCancelled {
-                    try? await Task.sleep(for: .seconds(max(d.interval, 5)))
-                    if Task.isCancelled { break }
-                    let done = await MainActor.run { pollOnce(session: d.session) }
-                    if done { break }
-                }
-            }
-        } catch {
-            self.error = String(describing: error)
-        }
-    }
-
-    /// One poll; true = stop polling.
-    private func pollOnce(session: String) -> Bool {
-        do {
-            let p = try RustCore.devicePoll(session: session)
-            if p.status == "complete" {
-                polling = false
-                MainActor.assumeIsolated {
-                    state.signedIn = true
-                    state.chats.refresh()
-                }
-                dismiss()
-                return true
-            }
-            return false
-        } catch {
-            self.error = String(describing: error)
-            return false
-        }
-    }
-
-    private func cancel() {
-        pollTask?.cancel()
-        pollTask = nil
-        polling = false
-        dismiss()
     }
 }

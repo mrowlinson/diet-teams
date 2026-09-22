@@ -1,7 +1,8 @@
-// AppIdentity.swift — om-package lane: single source for app branding.
-// About window, Settings, and tests all read these; Info.plist mirrors them.
+// AppIdentity.swift — om-app-union: single source for app branding.
+// Moved from the om-package OstMacApp module (deleted in the union);
+// About window, Settings, entry, and tests all read these.
+// Info.plist (OstMac-Info.plist) mirrors them.
 import Foundation
-import OstMacCore
 
 public enum AppIdentity {
     public static let name = "OstMac"
@@ -9,6 +10,7 @@ public enum AppIdentity {
     public static let version = "0.1.0"
     public static let minimumOS = "14.0"
     public static let aboutWindowID = "about"
+    public static let authWindowID = "auth"
     public static let tagline = "Teams client for macOS"
 }
 

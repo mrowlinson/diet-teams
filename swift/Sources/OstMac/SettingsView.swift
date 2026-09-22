@@ -4,18 +4,18 @@
 import OstMacCore
 import SwiftUI
 
-public struct SettingsView: View {
+struct SettingsView: View {
     @State private var account: AccountInfo
     private let fixed: Bool
 
     /// Live view: loads account status from core on appear.
-    public init() {
+    init() {
         _account = State(initialValue: .loading)
         fixed = false
     }
 
     /// Fixed view (previews, shots): never touches core.
-    public init(account: AccountInfo) {
+    init(account: AccountInfo) {
         _account = State(initialValue: account)
         fixed = true
     }

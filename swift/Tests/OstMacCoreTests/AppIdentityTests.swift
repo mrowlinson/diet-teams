@@ -1,7 +1,6 @@
 // AppIdentityTests.swift — om-package lane: branding, account summary, demo rows.
 import XCTest
 
-import OstMacApp
 import OstMacCore
 
 final class AppIdentityTests: XCTestCase {

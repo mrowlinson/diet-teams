@@ -9,11 +9,11 @@ from a minimal SwiftUI shell over a C ABI (JSON over the boundary).
 - `rust/ost/` — vendored ost sources (+ `OSTMAC-PATCHES.md`: what changed, why)
 - `rust/ostmac-core/` — FFI crate (`staticlib` + `rlib`), C ABI in
   `swift/Sources/COstMac/include/ostmac_core.h`
-- `swift/` — SPM package: `COstMac` (headers), `OstMacCore` (Swift wrapper),
-  `OstMacChatList` (chat sidebar + `ChatSelection` contract for the
-  conversation lane), `OstMacApp` (branding, About, Settings shell) +
-  `OstMac` (integrated app: sidebar + conversation + live feed),
-  `OstMacCoreTests`
+- `swift/` — SPM package: `COstMac` (headers), `OstMacCore` (Swift wrapper:
+  auth state machine + views, conversation store, realtime feed, branding,
+  demo data), `OstMacChatList` (chat sidebar + `ChatSelection` contract),
+  `OstMac` (the single app: sidebar + conversation + live feed, About,
+  Settings, sign-in sheet + Auth window), `OstMacCoreTests`
 - `scripts/` — `build-rust.sh`, `build-app.sh`, `package.sh` (signed
   release `OstMac.app`, `--install` to /Applications), `install.sh`,
   `make-icon.sh` (renders `OstMac.icns`), `test.sh`
