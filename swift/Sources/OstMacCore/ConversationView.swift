@@ -5,12 +5,17 @@ import SwiftUI
 
 public struct ConversationView: View {
     @ObservedObject public var store: ConversationStore
+    @ObservedObject private var presence: PresenceStore
+    /// False for 1:1 chats (header shows the chatmate dot).
+    private let isGroup: Bool
     @State private var draft = ""
     @State private var lastSeenID: String?
     @FocusState private var boxFocused: Bool
 
-    public init(store: ConversationStore) {
+    public init(store: ConversationStore, presence: PresenceStore = PresenceStore(), isGroup: Bool = true) {
         self.store = store
+        self.presence = presence
+        self.isGroup = isGroup
     }
 
     public var body: some View {
@@ -76,6 +81,9 @@ public struct ConversationView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack {
+                if !isGroup, let id = store.chatID {
+                    PresenceDot(availability: presence.availabilityForChat(id))
+                }
                 Text(store.chatName ?? store.chatID ?? "Conversation")
                     .font(.headline)
                     .lineLimit(1)

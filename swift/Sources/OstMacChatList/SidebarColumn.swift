@@ -8,18 +8,21 @@ import SwiftUI
 public struct SidebarColumn: View {
     @ObservedObject private var chats: ChatListViewModel
     @ObservedObject private var teams: TeamsViewModel
+    @ObservedObject private var presence: PresenceStore
     private let openChatID: String?
     private let onOpenChannel: (String, String) -> Void
     @State private var section: SidebarSection
 
     public init(
         chats: ChatListViewModel, teams: TeamsViewModel,
+        presence: PresenceStore = PresenceStore(),
         openChatID: String? = nil,
         initialSection: SidebarSection = .chats,
         onOpenChannel: @escaping (String, String) -> Void
     ) {
         self.chats = chats
         self.teams = teams
+        self.presence = presence
         self.openChatID = openChatID
         _section = State(initialValue: initialSection)
         self.onOpenChannel = onOpenChannel
@@ -37,7 +40,7 @@ public struct SidebarColumn: View {
             .padding(.vertical, 8)
             switch section {
             case .chats:
-                ChatListSidebar(model: chats)
+                ChatListSidebar(model: chats, presence: presence)
             case .teams:
                 TeamsBrowser(model: teams, openChatID: openChatID, onOpen: onOpenChannel)
             }

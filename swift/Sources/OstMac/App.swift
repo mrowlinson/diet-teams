@@ -119,6 +119,7 @@ final class AppState: ObservableObject {
     let conv = ConversationStore()
     let feed = RealtimeFeed()
     let auth = AuthViewModel()
+    let presence = PresenceStore()
     @Published var openChatID: String?
     @Published var signedIn: Bool?
     @Published var coreVersion = "?"
@@ -160,6 +161,10 @@ final class AppState: ObservableObject {
         if isDemo {
             chats = ChatListViewModel(fetcher: { _ in DemoData.chatsResponse() })
             teams = TeamsViewModel(fetcher: { DemoData.teamsResponse() })
+            presence.adoptOwn(DemoData.ownPresence())
+            for (chatID, peer) in DemoData.peerPresence() {
+                presence.adoptChatPeer(chatID: chatID, response: peer)
+            }
         } else {
             chats = ChatListViewModel()
             teams = TeamsViewModel()
@@ -220,6 +225,7 @@ final class AppState: ObservableObject {
             }
         }
         if !isDemo {
+            presence.refreshOwnSoon() // own dot; non-critical on failure
             feed.subscribe { [weak self] msg in
                 Task { @MainActor [weak self] in self?.handleRealtime(msg) }
             }
@@ -317,7 +323,10 @@ final class AppState: ObservableObject {
             if contentOpened {
                 chats.refresh()
                 teams.refresh()
-                if !isDemo { feed.start() }
+                if !isDemo {
+                    feed.start()
+                    presence.refreshOwnSoon()
+                }
             } else {
                 Task { await openContentIfAllowed() }
             }
@@ -325,6 +334,7 @@ final class AppState: ObservableObject {
         case .signedOut, .signingOut, .expired, .refreshFailed, .error:
             signedIn = false
             feed.stop()
+            presence.clear()
             refreshFeedStatus()
         default:
             break
@@ -343,6 +353,7 @@ struct RootView: View {
                 NavigationSplitView {
                     SidebarColumn(
                         chats: state.chats, teams: state.teams,
+                        presence: state.presence,
                         openChatID: state.openChatID,
                         initialSection: CommandLine.arguments.contains("--show-teams") ? .teams : .chats,
                         onOpenChannel: { id, name in state.openChannel(channelID: id, channelName: name) }
@@ -352,7 +363,9 @@ struct RootView: View {
                     if state.openChatID == nil {
                         emptyDetail
                     } else {
-                        ConversationView(store: state.conv)
+                        ConversationView(
+                            store: state.conv, presence: state.presence,
+                            isGroup: state.chats.selectedChat?.is_group ?? true)
                     }
                 }
             } else {
@@ -403,9 +416,11 @@ struct StatusBar: View {
                     .padding(.horizontal, 6).padding(.vertical, 2)
                     .background(.orange.opacity(0.2))
                     .clipShape(Capsule())
+                PresencePicker(store: state.presence)
             } else {
                 Text(state.signedIn.map { $0 ? "signed in" : "signed out" } ?? "auth ?")
                     .font(.caption).foregroundStyle(.secondary)
+                PresencePicker(store: state.presence)
                 HStack(spacing: 4) {
                     Circle().fill(feedColor).frame(width: 8, height: 8)
                     Text(feedText).font(.caption).monospaced()

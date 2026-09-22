@@ -65,6 +65,22 @@ public enum RustCore {
         }
     }
 
+    public static func presence() throws -> PresenceResponse {
+        try call(ostmac_presence(), as: PresenceResponse.self)
+    }
+
+    public static func setPresence(status: String) throws -> PresenceResponse {
+        try status.withCString { ptr in
+            try call(ostmac_presence_set(ptr), as: PresenceResponse.self)
+        }
+    }
+
+    public static func userPresence(id: String) throws -> UserPresenceResponse {
+        try id.withCString { ptr in
+            try call(ostmac_presence_user(ptr), as: UserPresenceResponse.self)
+        }
+    }
+
     public static func trouterStart() -> Int32 { ostmac_trouter_start() }
     public static func trouterStop() -> Int32 { ostmac_trouter_stop() }
 

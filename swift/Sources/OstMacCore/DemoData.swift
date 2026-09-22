@@ -65,6 +65,18 @@ public enum DemoData {
         TeamsResponse(ok: true, teams: teams)
     }
 
+    /// Canned own presence for --demo (Available, offline adopted).
+    public static func ownPresence() -> PresenceResponse {
+        PresenceResponse(ok: true, availability: "Available", activity: "Available")
+    }
+
+    /// Canned chatmate pins for --demo: chatID → presence.
+    /// Ava (the only 1:1 row) is Busy; groups carry no dots.
+    public static func peerPresence() -> [String: UserPresenceResponse] {
+        [avaID: UserPresenceResponse(
+            ok: true, id: "ava-demo", availability: "Busy", activity: "InACall")]
+    }
+
     public static func messages(for chatID: String) -> [ChatMessage] {
         switch chatID {
         case demoID: return ConversationStore.demoMessages

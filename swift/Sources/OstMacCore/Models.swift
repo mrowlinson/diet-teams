@@ -278,6 +278,41 @@ public struct SendResponse: Decodable, Sendable {
     public let chat_id: String?
 }
 
+// MARK: - Presence (om-presence lane)
+
+/// Own presence from core `ostmac_presence` / `ostmac_presence_set`
+/// (Graph /me/presence): availability ∈ Available, Busy, DoNotDisturb,
+/// Away, Offline, PresenceUnknown (+ future server values, passed through).
+public struct PresenceResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let availability: String
+    public let activity: String
+
+    /// Host-side construction (demo data, previews, mock fetchers).
+    public init(ok: Bool, availability: String, activity: String) {
+        self.ok = ok
+        self.availability = availability
+        self.activity = activity
+    }
+}
+
+/// One other user's presence from core `ostmac_presence_user`
+/// (Graph /users/{id}/presence). Same shape as own, plus the echoed id.
+public struct UserPresenceResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let id: String
+    public let availability: String
+    public let activity: String
+
+    /// Host-side construction (demo data, previews, mock fetchers).
+    public init(ok: Bool, id: String, availability: String, activity: String) {
+        self.ok = ok
+        self.id = id
+        self.availability = availability
+        self.activity = activity
+    }
+}
+
 /// Minimal Any-Decodable for opaque Trouter event payloads.
 public struct AnyJSON: Decodable, Sendable {
     public let value: String
