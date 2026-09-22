@@ -1,5 +1,7 @@
 // CatchUpTests.swift — om-catchup lane: OFF default, mock transport,
 // prompt shape, threshold gate, endpoint join, transcript cap.
+// om-catchup-oc: provider picker preload, keychain key store (injected
+// memory store — never the real keychain), legacy-key migration.
 import XCTest
 
 @testable import OstMacCore
@@ -30,16 +32,25 @@ final class CatchUpTests: XCTestCase {
         }
     }
 
+    private func store(
+        transport: (any CatchUpTransport)? = nil,
+        keys: CatchUpMemoryKeyStore? = nil
+    ) -> (CatchUpStore, CatchUpMemoryKeyStore) {
+        let k = keys ?? CatchUpMemoryKeyStore()
+        return (CatchUpStore(transport: transport, defaults: defaults, keyStore: k), k)
+    }
+
     func testDefaultsOff() {
-        let store = CatchUpStore(defaults: defaults)
+        let (store, _) = store()
         XCTAssertFalse(store.config.enabled)
+        XCTAssertEqual(store.config.provider, .openAICompatible)
         XCTAssertEqual(store.config.apiKey, "")
         XCTAssertEqual(store.state, .idle)
     }
 
     func testDisabledNeverCallsTransport() async {
         let mock = CatchUpCannedTransport(stub: "SHOULD NOT APPEAR")
-        let store = CatchUpStore(transport: mock, defaults: defaults)
+        let (store, _) = store(transport: mock)
         store.adopt(CatchUpConfig(enabled: false, apiKey: "k"))
         await store.summarize(messages: thread(25))
         XCTAssertTrue(mock.prompts.isEmpty)
@@ -48,7 +59,7 @@ final class CatchUpTests: XCTestCase {
 
     func testMissingKeyFailsWithoutCalling() async {
         let mock = CatchUpCannedTransport(stub: "SHOULD NOT APPEAR")
-        let store = CatchUpStore(transport: mock, defaults: defaults)
+        let (store, _) = store(transport: mock)
         store.adopt(CatchUpConfig(enabled: true, apiKey: "  "))
         await store.summarize(messages: thread(25))
         XCTAssertTrue(mock.prompts.isEmpty)
@@ -57,7 +68,7 @@ final class CatchUpTests: XCTestCase {
 
     func testEmptyThreadFailsWithoutCalling() async {
         let mock = CatchUpCannedTransport(stub: "SHOULD NOT APPEAR")
-        let store = CatchUpStore(transport: mock, defaults: defaults)
+        let (store, _) = store(transport: mock)
         store.adopt(CatchUpConfig(enabled: true, apiKey: "k"))
         await store.summarize(messages: [])
         XCTAssertTrue(mock.prompts.isEmpty)
@@ -68,7 +79,7 @@ final class CatchUpTests: XCTestCase {
 
     func testMockSuccessLoadsText() async {
         let mock = CatchUpCannedTransport(stub: "TL;DR: standup happened.")
-        let store = CatchUpStore(transport: mock, defaults: defaults)
+        let (store, _) = store(transport: mock)
         store.adopt(CatchUpConfig(enabled: true, apiKey: "k"))
         await store.summarize(messages: thread(25))
         XCTAssertEqual(mock.prompts.count, 1)
@@ -77,7 +88,7 @@ final class CatchUpTests: XCTestCase {
 
     func testPromptCarriesTranscriptAndSections() async {
         let mock = CatchUpCannedTransport(stub: "ok")
-        let store = CatchUpStore(transport: mock, defaults: defaults)
+        let (store, _) = store(transport: mock)
         store.adopt(CatchUpConfig(enabled: true, apiKey: "k"))
         let msgs = [
             ChatMessage(id: "m1", sender: "Priya", timestamp: "t", content: "ship the picker"),
@@ -97,7 +108,7 @@ final class CatchUpTests: XCTestCase {
     func testTransportErrorSurfacesFailed() async {
         struct Boom: Error {}
         let mock = CatchUpCannedTransport(stub: "", failure: Boom())
-        let store = CatchUpStore(transport: mock, defaults: defaults)
+        let (store, _) = store(transport: mock)
         store.adopt(CatchUpConfig(enabled: true, apiKey: "k"))
         await store.summarize(messages: thread(25))
         if case .failed = store.state {} else {
@@ -152,10 +163,87 @@ final class CatchUpTests: XCTestCase {
     }
 
     func testConfigPersistsAcrossStores() {
-        let a = CatchUpStore(defaults: defaults)
-        a.adopt(CatchUpConfig(enabled: true, baseURL: "http://x/v1", model: "mm", apiKey: "kk"))
-        let b = CatchUpStore(defaults: defaults)
+        let keys = CatchUpMemoryKeyStore()
+        let a = CatchUpStore(defaults: defaults, keyStore: keys)
+        a.adopt(CatchUpConfig(
+            provider: .openCode, enabled: true,
+            baseURL: "http://x/v1", model: "mm", apiKey: "kk"))
+        let b = CatchUpStore(defaults: defaults, keyStore: keys)
         XCTAssertEqual(b.config, CatchUpConfig(
-            enabled: true, baseURL: "http://x/v1", model: "mm", apiKey: "kk"))
+            provider: .openCode, enabled: true,
+            baseURL: "http://x/v1", model: "mm", apiKey: "kk"))
+    }
+
+    // MARK: - om-catchup-oc: provider picker
+
+    func testOpenCodePreloadsZenBaseAndSparkModel() {
+        let (store, _) = store()
+        store.adopt(CatchUpConfig(
+            enabled: true, baseURL: "http://custom/v1", model: "custom",
+            apiKey: "test-key-DO-NOT-USE"))
+        store.selectProvider(.openCode)
+        XCTAssertEqual(store.config.provider, .openCode)
+        XCTAssertEqual(store.config.baseURL, "https://opencode.ai/zen/v1")
+        XCTAssertEqual(store.config.model, "muse-spark-1.3-contributor-free")
+        // Switch preloads endpoint fields only — key + enabled survive.
+        XCTAssertEqual(store.config.apiKey, "test-key-DO-NOT-USE")
+        XCTAssertTrue(store.config.enabled)
+    }
+
+    func testProviderSwitchBackPreloadsOpenAI() {
+        let (store, _) = store()
+        store.selectProvider(.openCode)
+        store.selectProvider(.openAICompatible)
+        XCTAssertEqual(store.config.provider, .openAICompatible)
+        XCTAssertEqual(store.config.baseURL, "https://api.openai.com/v1")
+        XCTAssertEqual(store.config.model, "gpt-4o-mini")
+    }
+
+    func testProviderPersistsAcrossStores() {
+        let keys = CatchUpMemoryKeyStore()
+        let a = CatchUpStore(defaults: defaults, keyStore: keys)
+        a.selectProvider(.openCode)
+        let b = CatchUpStore(defaults: defaults, keyStore: keys)
+        XCTAssertEqual(b.config.provider, .openCode)
+        XCTAssertEqual(b.config.baseURL, "https://opencode.ai/zen/v1")
+        XCTAssertEqual(b.config.model, "muse-spark-1.3-contributor-free")
+    }
+
+    // MARK: - om-catchup-oc: keychain key store
+
+    func testKeyLoadsFromKeyStore() {
+        let keys = CatchUpMemoryKeyStore(key: "zk")
+        let store = CatchUpStore(defaults: defaults, keyStore: keys)
+        XCTAssertEqual(store.config.apiKey, "zk")
+    }
+
+    func testKeyWritesToKeyStoreNeverDefaults() {
+        let (store, keys) = store()
+        store.adopt(CatchUpConfig(enabled: true, apiKey: "test-key-DO-NOT-USE"))
+        XCTAssertEqual(keys.load(), "test-key-DO-NOT-USE")
+        XCTAssertNil(defaults.string(forKey: "catchup.apiKey"))
+    }
+
+    func testNoKeyInStoreMeansMissingKey() async {
+        let mock = CatchUpCannedTransport(stub: "SHOULD NOT APPEAR")
+        let (store, _) = store(transport: mock)
+        store.adopt(CatchUpConfig(enabled: true, apiKey: ""))
+        await store.summarize(messages: thread(25))
+        XCTAssertTrue(mock.prompts.isEmpty)
+        XCTAssertEqual(store.state, .failed(CatchUpError.missingKey.message))
+    }
+
+    func testLegacyDefaultsKeyMigratesToKeyStore() {
+        defaults.set("legacy-k", forKey: "catchup.apiKey")
+        let keys = CatchUpMemoryKeyStore()
+        let store = CatchUpStore(defaults: defaults, keyStore: keys)
+        XCTAssertEqual(store.config.apiKey, "legacy-k")
+        XCTAssertEqual(keys.load(), "legacy-k")
+        XCTAssertNil(defaults.string(forKey: "catchup.apiKey"))
+    }
+
+    func testKeychainServiceAndAccount() {
+        XCTAssertEqual(CatchUpSystemKeychain.service, "dev.ostmac.OstMac.catchup")
+        XCTAssertEqual(CatchUpSystemKeychain.account, "catchup-api-key")
     }
 }

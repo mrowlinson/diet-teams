@@ -1,8 +1,9 @@
 // CatchUpView.swift — om-catchup lane: sheet + Settings section.
 //
 // The sheet is the summarize/TL;DR/action-items entry point for long
-// threads; the Settings section holds the BYO key + base URL + model.
-// Both show the privacy note (thread text leaves the machine).
+// threads; the Settings section holds the provider picker + BYO key +
+// base URL + model. Both show the privacy note (thread text leaves
+// the machine).
 import AppKit
 import SwiftUI
 
@@ -100,10 +101,22 @@ public struct CatchUpSettingsSection: View {
     public var body: some View {
         Section("Thread catch-up") {
             Toggle("Enable AI catch-up", isOn: $catchUp.config.enabled)
+            Picker("Provider", selection: $catchUp.config.provider) {
+                ForEach(CatchUpProvider.allCases) { provider in
+                    Text(provider.title).tag(provider)
+                }
+            }
+            .pickerStyle(.segmented)
+            .onChange(of: catchUp.config.provider) { _, provider in
+                catchUp.selectProvider(provider)
+            }
             TextField("Base URL", text: $catchUp.config.baseURL)
                 .textSelection(.enabled)
             TextField("Model", text: $catchUp.config.model)
             SecureField("API key", text: $catchUp.config.apiKey)
+            Text("The key is kept in your Mac keychain, never on disk.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
             Text(CatchUp.privacyNote)
                 .font(.caption)
                 .foregroundStyle(.secondary)
