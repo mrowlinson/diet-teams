@@ -6,6 +6,7 @@ mod graph;
 mod me;
 mod presence;
 mod teams;
+mod todo;
 
 use anyhow::Result;
 
@@ -14,6 +15,7 @@ pub use chat::{ChatInfo, MessageInfo, MessagesPage};
 pub use me::UserInfo;
 pub use presence::PresenceInfo;
 pub use teams::TeamInfo;
+pub use todo::{TodoListInfo, TodoTaskInfo};
 
 // Re-export ChannelInfo for use in TUI sidebar (currently consumed
 // only through TeamInfo.channels, but kept public for future callers).
@@ -27,6 +29,10 @@ pub use chat::{
 pub use me::whoami_data;
 pub use presence::get_presence_data;
 pub use teams::list_teams_data;
+pub use todo::{
+    complete_todo_task_data, create_todo_task_data, list_todo_lists_data,
+    list_todo_tasks_data,
+};
 
 /// List recent chats (native Teams API)
 pub async fn list_chats(limit: usize) -> Result<()> {
@@ -61,4 +67,24 @@ pub async fn whoami() -> Result<()> {
 /// List joined teams and their channels
 pub async fn list_teams() -> Result<()> {
     teams::list_teams().await
+}
+
+/// List Microsoft To Do lists
+pub async fn list_todo_lists() -> Result<()> {
+    todo::list_todo_lists().await
+}
+
+/// List tasks in one To Do list
+pub async fn list_todo_tasks(list_id: &str, limit: usize) -> Result<()> {
+    todo::list_todo_tasks(list_id, limit).await
+}
+
+/// Create one task in a To Do list
+pub async fn create_todo_task(list_id: &str, title: &str) -> Result<()> {
+    todo::create_todo_task(list_id, title).await
+}
+
+/// Mark one To Do task completed
+pub async fn complete_todo_task(list_id: &str, task_id: &str) -> Result<()> {
+    todo::complete_todo_task(list_id, task_id).await
 }

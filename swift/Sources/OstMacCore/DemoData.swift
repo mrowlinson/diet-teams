@@ -65,6 +65,42 @@ public enum DemoData {
         TeamsResponse(ok: true, teams: teams)
     }
 
+    /// Canned To Do lists for `--demo` (om-remind lane).
+    public static let reminderLists: [ReminderList] = [
+        ReminderList(listId: "demo-list-tasks", name: "Tasks", wellknown: "defaultList"),
+        ReminderList(listId: "demo-list-groceries", name: "Groceries"),
+    ]
+
+    public static func remindersResponse() -> RemindersResponse {
+        RemindersResponse(ok: true, lists: reminderLists)
+    }
+
+    /// Canned tasks per demo list. Unknown ids stay empty.
+    public static func reminderTasks(for listID: String) -> [ReminderTask] {
+        switch listID {
+        case "demo-list-tasks": return [
+            ReminderTask(
+                taskId: "demo-task-1", title: "Review empty-states mock",
+                importance: "high", due: "2026-09-23T10:00:00.0000000"),
+            ReminderTask(
+                taskId: "demo-task-2", title: "Book dentist",
+                reminder: "2026-09-24T08:00:00.0000000"),
+            ReminderTask(
+                taskId: "demo-task-3", title: "Ship review deck",
+                status: "completed", completed: true),
+        ]
+        case "demo-list-groceries": return [
+            ReminderTask(taskId: "demo-task-4", title: "Oat milk"),
+            ReminderTask(taskId: "demo-task-5", title: "Coffee beans", importance: "high"),
+        ]
+        default: return []
+        }
+    }
+
+    public static func reminderTasksResponse(for listID: String) -> ReminderTasksResponse {
+        ReminderTasksResponse(ok: true, list_id: listID, tasks: reminderTasks(for: listID))
+    }
+
     /// Canned own presence for --demo (Available, offline adopted).
     public static func ownPresence() -> PresenceResponse {
         PresenceResponse(ok: true, availability: "Available", activity: "Available")

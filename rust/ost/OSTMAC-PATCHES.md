@@ -31,3 +31,12 @@ vendored so the spike can build on macOS and expose a library surface.
    re-exported in `src/api/mod.rs`. `MessageInfo` gains `raw` (unstripped
    HTML for mention/code mining). `read_messages_data` keeps its signature
    (delegates, newest page). TUI untouched.
+8. `src/api/todo.rs` (new) + `src/api/mod.rs` + `src/api/client.rs` +
+   `src/main.rs` — **Microsoft To Do lists/tasks (om-remind lane)**.
+   Graph `/me/todo/lists`, `/lists/{id}/tasks` (GET), create (POST),
+   complete (PATCH `status: completed`). `TodoListInfo`/`TodoTaskInfo`
+   + `*_data` fns re-exported; CLI `todo` (bare lists, `--list`,
+   `--add/--to`, `--done/--to`). `client.rs` gains generic `graph_patch`.
+   Auth: existing Graph token, NO scope widening (Teams client id already
+   consents Tasks.ReadWrite; 403 surfaces as the call detail). Ids breaking
+   the path (`/`, `?`, `#`, whitespace) rejected pre-network. TUI untouched.

@@ -8,6 +8,7 @@
 //! - messages: full history for one chat (requires sign-in)
 //! - send: post one message to a chat (requires sign-in)
 //! - presence: own get/set + per-user get (Graph presence, requires sign-in)
+//! - reminders: Microsoft To Do lists/tasks/add/complete (Graph, sign-in)
 //! - trouter: background push connection with a polled event channel
 //! - calls: signaling-only place/accept/end + echo-bot + recorder inject
 //!
@@ -746,6 +747,149 @@ pub fn user_presence_json(user_id: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Reminders (om-remind lane: Microsoft To Do via Graph /me/todo)
+// ---------------------------------------------------------------------------
+
+fn todo_list_to_json(l: &ost::api::TodoListInfo) -> serde_json::Value {
+    json!({
+        "id": l.id,
+        "name": l.name,
+        "wellknown": l.wellknown,
+    })
+}
+
+fn todo_task_to_json(t: &ost::api::TodoTaskInfo) -> serde_json::Value {
+    json!({
+        "id": t.id,
+        "title": t.title,
+        "status": t.status,
+        "importance": t.importance,
+        "due": t.due,
+        "reminder": t.reminder,
+        "completed": t.completed,
+    })
+}
+
+/// To Do lists as JSON. Requires sign-in; unsigned yields `{ok:false}`.
+pub fn reminders_json() -> String {
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let lists = ost::api::list_todo_lists_data(&client)
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let items: Vec<_> = lists.iter().map(todo_list_to_json).collect();
+            Ok(json!({"ok": true, "lists": items}).to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("reminders", e),
+    }
+}
+
+/// Reject a Graph path-segment id before any network. Mirrors the ost
+/// guard so Swift gets `arg` errors without a client build.
+fn todo_id_ok(what: &str, id: &str) -> Result<(), String> {
+    if id.trim().is_empty() {
+        return Err(err_json("arg", format!("empty {}", what)));
+    }
+    if id.contains('/')
+        || id.contains('?')
+        || id.contains('#')
+        || id.chars().any(|c| c.is_whitespace())
+    {
+        return Err(err_json(
+            "arg",
+            format!("{} must not contain '/', '?', '#' or whitespace", what),
+        ));
+    }
+    Ok(())
+}
+
+/// Tasks for one To Do list as JSON. Requires sign-in; unsigned yields
+/// `{ok:false}`. Bad `list_id` is rejected before any network.
+pub fn reminder_tasks_json(list_id: &str, limit: usize) -> String {
+    if let Err(e) = todo_id_ok("list_id", list_id) {
+        return e;
+    }
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let tasks = ost::api::list_todo_tasks_data(&client, list_id, limit)
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let items: Vec<_> = tasks.iter().map(todo_task_to_json).collect();
+            Ok(json!({"ok": true, "list_id": list_id, "tasks": items}).to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("reminder_tasks", e),
+    }
+}
+
+/// Create one task in a list. Returns `{ok:true, task}` or `{ok:false}`.
+/// Empty `list_id`/`title` are rejected before any network.
+pub fn reminder_add_json(list_id: &str, title: &str) -> String {
+    if let Err(e) = todo_id_ok("list_id", list_id) {
+        return e;
+    }
+    if title.trim().is_empty() {
+        return err_json("arg", "empty title");
+    }
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let task = ost::api::create_todo_task_data(&client, list_id, title)
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            Ok(json!({"ok": true, "task": todo_task_to_json(&task)}).to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("reminder_add", e),
+    }
+}
+
+/// Mark one task completed. Returns `{ok:true, task}` or `{ok:false}`.
+/// Bad ids are rejected before any network.
+pub fn reminder_done_json(list_id: &str, task_id: &str) -> String {
+    if let Err(e) = todo_id_ok("list_id", list_id) {
+        return e;
+    }
+    if let Err(e) = todo_id_ok("task_id", task_id) {
+        return e;
+    }
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let task = ost::api::complete_todo_task_data(&client, list_id, task_id)
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            Ok(json!({"ok": true, "task": todo_task_to_json(&task)}).to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("reminder_done", e),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Trouter event channel
 // ---------------------------------------------------------------------------
 
@@ -965,6 +1109,58 @@ pub extern "C" fn ostmac_send(chat_id: *const c_char, text: *const c_char) -> *m
     };
     match cstr_to_string(text) {
         Ok(t) => string_to_c(send_json(&id, &t)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
+/// To Do lists JSON (requires sign-in). See [`reminders_json`].
+/// Caller frees with [`ostmac_free`].
+#[no_mangle]
+pub extern "C" fn ostmac_reminders() -> *mut c_char {
+    string_to_c(reminders_json())
+}
+
+/// Tasks for one To Do list. See [`reminder_tasks_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_reminder_tasks(
+    list_id: *const c_char,
+    limit: c_int,
+) -> *mut c_char {
+    let lim = if limit <= 0 { 50 } else { limit as usize };
+    match cstr_to_string(list_id) {
+        Ok(id) => string_to_c(reminder_tasks_json(&id, lim)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
+/// Create one task in a list. See [`reminder_add_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_reminder_add(
+    list_id: *const c_char,
+    title: *const c_char,
+) -> *mut c_char {
+    let id = match cstr_to_string(list_id) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    match cstr_to_string(title) {
+        Ok(t) => string_to_c(reminder_add_json(&id, &t)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
+/// Mark one task completed. See [`reminder_done_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_reminder_done(
+    list_id: *const c_char,
+    task_id: *const c_char,
+) -> *mut c_char {
+    let id = match cstr_to_string(list_id) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    match cstr_to_string(task_id) {
+        Ok(t) => string_to_c(reminder_done_json(&id, &t)),
         Err(e) => string_to_c(err_json("arg", e)),
     }
 }
@@ -1597,6 +1793,102 @@ mod tests {
         let _ = calls::scan_events(&[
             r#"{"callEnd":{"code":200,"subCode":0,"phrase":"OK"}}"#.to_string()
         ]);
+    }
+
+    #[test]
+    fn todo_json_shapes() {
+        let l = ost::api::TodoListInfo {
+            id: "L1".to_string(),
+            name: "Tasks".to_string(),
+            wellknown: Some("defaultList".to_string()),
+        };
+        let v = todo_list_to_json(&l);
+        assert_eq!(v["id"], "L1");
+        assert_eq!(v["name"], "Tasks");
+        assert_eq!(v["wellknown"], "defaultList");
+        let l2 = ost::api::TodoListInfo {
+            id: "L2".to_string(),
+            name: "Groceries".to_string(),
+            wellknown: None,
+        };
+        assert!(todo_list_to_json(&l2)["wellknown"].is_null());
+
+        let t = ost::api::TodoTaskInfo {
+            id: "T1".to_string(),
+            title: "Buy milk".to_string(),
+            status: "notStarted".to_string(),
+            importance: "high".to_string(),
+            due: Some("2026-09-23T12:00:00.0000000".to_string()),
+            reminder: None,
+            completed: false,
+        };
+        let v = todo_task_to_json(&t);
+        assert_eq!(v["title"], "Buy milk");
+        assert_eq!(v["status"], "notStarted");
+        assert_eq!(v["importance"], "high");
+        assert_eq!(v["due"], "2026-09-23T12:00:00.0000000");
+        assert!(v["reminder"].is_null());
+        assert_eq!(v["completed"], false);
+    }
+
+    #[test]
+    fn reminder_tasks_rejects_bad_list_id_without_network() {
+        for bad in ["", "   ", "a/b", "a?b", "a#b", "a b"] {
+            let v: serde_json::Value =
+                serde_json::from_str(&reminder_tasks_json(bad, 10)).unwrap();
+            assert_eq!(v["ok"], false, "id {:?}", bad);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
+    fn reminder_add_rejects_bad_args_without_network() {
+        for (id, title) in [
+            ("", "hi"),
+            ("L1", ""),
+            ("L1", "   "),
+            ("a/b", "hi"),
+            ("L1?x", "hi"),
+        ] {
+            let v: serde_json::Value =
+                serde_json::from_str(&reminder_add_json(id, title)).unwrap();
+            assert_eq!(v["ok"], false, "id={:?} title={:?}", id, title);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
+    fn reminder_done_rejects_bad_ids_without_network() {
+        for (list, task) in [("", "T1"), ("L1", ""), ("L1", "a/b"), ("a b", "T1")] {
+            let v: serde_json::Value =
+                serde_json::from_str(&reminder_done_json(list, task)).unwrap();
+            assert_eq!(v["ok"], false, "list={:?} task={:?}", list, task);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
+    fn ffi_reminder_nulls_are_arg_errors() {
+        let id = CString::new("L1").unwrap();
+        unsafe {
+            let p = ostmac_reminder_tasks(std::ptr::null(), 10);
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["error"], "arg");
+
+            let p = ostmac_reminder_add(id.as_ptr(), std::ptr::null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["error"], "arg");
+
+            let p = ostmac_reminder_done(std::ptr::null(), id.as_ptr());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["error"], "arg");
+        }
     }
 
     #[test]

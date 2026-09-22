@@ -81,6 +81,32 @@ public enum RustCore {
         }
     }
 
+    public static func reminders() throws -> RemindersResponse {
+        try call(ostmac_reminders(), as: RemindersResponse.self)
+    }
+
+    public static func reminderTasks(listID: String, limit: Int32 = 50) throws -> ReminderTasksResponse {
+        try listID.withCString { ptr in
+            try call(ostmac_reminder_tasks(ptr, limit), as: ReminderTasksResponse.self)
+        }
+    }
+
+    public static func reminderAdd(listID: String, title: String) throws -> ReminderTaskResult {
+        try listID.withCString { idPtr in
+            try title.withCString { titlePtr in
+                try call(ostmac_reminder_add(idPtr, titlePtr), as: ReminderTaskResult.self)
+            }
+        }
+    }
+
+    public static func reminderDone(listID: String, taskID: String) throws -> ReminderTaskResult {
+        try listID.withCString { idPtr in
+            try taskID.withCString { taskPtr in
+                try call(ostmac_reminder_done(idPtr, taskPtr), as: ReminderTaskResult.self)
+            }
+        }
+    }
+
     public static func trouterStart() -> Int32 { ostmac_trouter_start() }
     public static func trouterStop() -> Int32 { ostmac_trouter_stop() }
 

@@ -18,6 +18,7 @@
 // send via core — never use it on shared chats for testing.
 // --show-about / --show-settings / --show-av open those windows at launch (shot hooks).
 // --show-teams opens the sidebar on the Teams browser (shot hook).
+// --show-reminders opens the sidebar on the Reminders browser (shot hook).
 // --auth-state <name> opens the Auth window with a canned state, never
 // touching core/network (names: signed-out, starting, code, polling,
 // signed-in, expired, refreshing, refresh-failed, error). `--state` is
@@ -125,6 +126,7 @@ final class AppState: ObservableObject {
     let isDemo: Bool
     let chats: ChatListViewModel
     let teams: TeamsViewModel
+    let reminders: RemindersViewModel
     let conv = ConversationStore()
     let feed = RealtimeFeed()
     let auth = AuthViewModel()
@@ -176,6 +178,10 @@ final class AppState: ObservableObject {
         if isDemo {
             chats = ChatListViewModel(fetcher: { _ in DemoData.chatsResponse() })
             teams = TeamsViewModel(fetcher: { DemoData.teamsResponse() })
+            reminders = RemindersViewModel(
+                listsFetcher: { DemoData.remindersResponse() },
+                tasksFetcher: { DemoData.reminderTasksResponse(for: $0) },
+                localEdits: true)
             presence.adoptOwn(DemoData.ownPresence())
             for (chatID, peer) in DemoData.peerPresence() {
                 presence.adoptChatPeer(chatID: chatID, response: peer)
@@ -183,6 +189,7 @@ final class AppState: ObservableObject {
         } else {
             chats = ChatListViewModel()
             teams = TeamsViewModel()
+            reminders = RemindersViewModel()
         }
         chats.$selectedChatID
             .dropFirst()
@@ -225,6 +232,7 @@ final class AppState: ObservableObject {
         contentOpened = true
         await chats.load()
         await teams.load()
+        await reminders.load()
         if chats.state == .loaded {
             // Core's signed_in is aad-centric; a loaded list proves
             // working auth regardless.
@@ -342,6 +350,7 @@ final class AppState: ObservableObject {
             if contentOpened {
                 chats.refresh()
                 teams.refresh()
+                reminders.refresh()
                 if !isDemo {
                     feed.start()
                     presence.refreshOwnSoon()
@@ -366,6 +375,14 @@ struct RootView: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(\.openSettings) private var openSettings
 
+    /// Shot-hook section: --show-reminders wins over --show-teams.
+    static var initialSection: SidebarSection {
+        let args = CommandLine.arguments
+        if args.contains("--show-reminders") { return .reminders }
+        if args.contains("--show-teams") { return .teams }
+        return .chats
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             CallBanner(store: state.call)
@@ -373,9 +390,10 @@ struct RootView: View {
                 NavigationSplitView {
                     SidebarColumn(
                         chats: state.chats, teams: state.teams,
+                        reminders: state.reminders,
                         presence: state.presence,
                         openChatID: state.openChatID,
-                        initialSection: CommandLine.arguments.contains("--show-teams") ? .teams : .chats,
+                        initialSection: RootView.initialSection,
                         onOpenChannel: { id, name in state.openChannel(channelID: id, channelName: name) }
                     )
                     .navigationSplitViewColumnWidth(min: 240, ideal: 300, max: 420)

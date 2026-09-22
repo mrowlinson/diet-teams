@@ -176,6 +176,89 @@ public struct TrouterPoll: Decodable, Sendable {
     public let events: [AnyJSON]
 }
 
+// MARK: - Reminders (om-remind lane: Microsoft To Do via Graph /me/todo)
+
+/// One To Do list from core `ostmac_reminders`: `{"id","name","wellknown?"}`.
+public struct ReminderList: Decodable, Sendable, Identifiable, Equatable {
+    public var id: String { listId }
+    public let listId: String
+    public let name: String
+    public let wellknown: String?
+
+    enum CodingKeys: String, CodingKey {
+        case listId = "id"
+        case name, wellknown
+    }
+
+    /// Host-side construction (demo data, previews). Wire decoding is untouched.
+    public init(listId: String, name: String, wellknown: String? = nil) {
+        self.listId = listId
+        self.name = name
+        self.wellknown = wellknown
+    }
+}
+
+public struct RemindersResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let lists: [ReminderList]
+
+    /// Host-side construction (demo data, previews). Wire decoding is untouched.
+    public init(ok: Bool, lists: [ReminderList]) {
+        self.ok = ok
+        self.lists = lists
+    }
+}
+
+/// One To Do task from core `ostmac_reminder_tasks`: `{"id","title",
+/// "status","importance","due?","reminder?","completed"}`.
+public struct ReminderTask: Decodable, Sendable, Identifiable, Equatable {
+    public var id: String { taskId }
+    public let taskId: String
+    public let title: String
+    public let status: String
+    public let importance: String
+    public let due: String?
+    public let reminder: String?
+    public let completed: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case taskId = "id"
+        case title, status, importance, due, reminder, completed
+    }
+
+    /// Host-side construction (demo data, previews). Wire decoding is untouched.
+    public init(
+        taskId: String, title: String, status: String = "notStarted",
+        importance: String = "normal", due: String? = nil,
+        reminder: String? = nil, completed: Bool = false
+    ) {
+        self.taskId = taskId
+        self.title = title
+        self.status = status
+        self.importance = importance
+        self.due = due
+        self.reminder = reminder
+        self.completed = completed
+    }
+
+    /// "2026-09-23T12:00:00.0000000" -> "12:00 23 Sep" (ChatMessage rules).
+    public var displayDue: String? {
+        due.map { ChatMessage.shortTime($0) }
+    }
+}
+
+public struct ReminderTasksResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let list_id: String?
+    public let tasks: [ReminderTask]
+}
+
+/// `{ok,task}` from `ostmac_reminder_add` / `ostmac_reminder_done`.
+public struct ReminderTaskResult: Decodable, Sendable {
+    public let ok: Bool
+    public let task: ReminderTask
+}
+
 // MARK: - Conversation (om-conv lane)
 
 /// One chat message. Wire format from core `ostmac_messages`:
