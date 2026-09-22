@@ -1,9 +1,10 @@
 //! ostmac-core: minimal embeddable surface over vendored `ost`.
 //!
-//! Exposes six capabilities to Swift (via C ABI, JSON over the FFI):
+//! Exposes seven capabilities to Swift (via C ABI, JSON over the FFI):
 //! - auth: RFC 8628 device-code `start` (get URL+code) and single-shot `poll`
 //! - whoami: current user (Graph /me), process-cached until sign-out
 //! - chats: structured chat list (requires sign-in)
+//! - teams: joined teams with channels (requires sign-in)
 //! - messages: full history for one chat (requires sign-in)
 //! - send: post one message to a chat (requires sign-in)
 //! - trouter: background push connection with a polled event channel
@@ -451,6 +452,49 @@ pub fn chats_json(limit: usize) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Teams (joined teams + channels; channel ids open via messages/send)
+// ---------------------------------------------------------------------------
+
+fn channel_to_json(c: &ost::api::ChannelInfo) -> serde_json::Value {
+    json!({
+        "id": c.id,
+        "name": c.name,
+    })
+}
+
+fn team_to_json(t: &ost::api::TeamInfo) -> serde_json::Value {
+    let channels: Vec<_> = t.channels.iter().map(channel_to_json).collect();
+    json!({
+        "id": t.id,
+        "name": t.name,
+        "channels": channels,
+    })
+}
+
+/// Joined teams with their channels as JSON. Requires sign-in; unsigned
+/// yields `{ok:false}`. Channel ids open as conversations through the
+/// same `messages`/`send` path as chat ids (ost TUI parity).
+pub fn teams_json() -> String {
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let teams = ost::api::list_teams_data(&client)
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let items: Vec<_> = teams.iter().map(team_to_json).collect();
+            Ok(json!({"ok": true, "teams": items}).to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("teams", e),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Messages (one chat: history + send)
 // ---------------------------------------------------------------------------
 
@@ -729,6 +773,12 @@ pub extern "C" fn ostmac_chats(limit: c_int) -> *mut c_char {
     string_to_c(chats_json(lim))
 }
 
+/// Joined-teams JSON (requires sign-in). See [`teams_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_teams() -> *mut c_char {
+    string_to_c(teams_json())
+}
+
 /// Message history JSON for one chat. See [`messages_json`].
 #[no_mangle]
 pub extern "C" fn ostmac_messages(chat_id: *const c_char, limit: c_int) -> *mut c_char {
@@ -851,6 +901,43 @@ mod tests {
         assert_eq!(v["id"], "19:abc@thread");
         assert_eq!(v["is_group"], true);
         assert_eq!(v["last_message_preview"], "p");
+    }
+
+    #[test]
+    fn team_json_shape() {
+        let t = ost::api::TeamInfo {
+            id: "team-1".to_string(),
+            name: "Engineering".to_string(),
+            channels: vec![
+                ost::api::ChannelInfo {
+                    id: "19:general@thread.tacv2".to_string(),
+                    name: "General".to_string(),
+                },
+                ost::api::ChannelInfo {
+                    id: "19:random@thread.tacv2".to_string(),
+                    name: "Random".to_string(),
+                },
+            ],
+        };
+        let v = team_to_json(&t);
+        assert_eq!(v["id"], "team-1");
+        assert_eq!(v["name"], "Engineering");
+        assert_eq!(v["channels"].as_array().unwrap().len(), 2);
+        assert_eq!(v["channels"][0]["id"], "19:general@thread.tacv2");
+        assert_eq!(v["channels"][0]["name"], "General");
+        assert_eq!(v["channels"][1]["name"], "Random");
+    }
+
+    #[test]
+    fn team_json_empty_channels() {
+        let t = ost::api::TeamInfo {
+            id: "team-2".to_string(),
+            name: "Lonely".to_string(),
+            channels: vec![],
+        };
+        let v = team_to_json(&t);
+        assert_eq!(v["name"], "Lonely");
+        assert_eq!(v["channels"].as_array().unwrap().len(), 0);
     }
 
     #[test]
