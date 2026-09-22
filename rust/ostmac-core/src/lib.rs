@@ -20,6 +20,8 @@ use ost::auth::{AuthConfig, TokenStore};
 use ost::config::Config;
 use serde_json::json;
 
+pub mod realtime;
+
 // ---------------------------------------------------------------------------
 // Small helpers
 // ---------------------------------------------------------------------------
@@ -472,6 +474,34 @@ pub fn trouter_poll_json() -> String {
     json!({"ok": true, "events": parsed}).to_string()
 }
 
+/// Drain queued Trouter events as typed realtime messages.
+///
+/// `{ok:true, messages:[{chat_id,id,sender,text,time,is_edit,edited_id?}],
+/// resync:bool, skipped:n}`. `resync` is true when a `trouter.message_loss`
+/// frame was seen: the UI must re-fetch visible conversations (push had a
+/// gap). `skipped` counts non-message frames (handshake, presence, calls…).
+/// NOTE: drains the same queue as [`trouter_poll_json`] — use one consumer.
+pub fn trouter_poll_typed_json() -> String {
+    let events = ost::event_hub::drain(64);
+    let mut values = Vec::with_capacity(events.len());
+    let mut unparseable = 0usize;
+    for e in &events {
+        match serde_json::from_str(e) {
+            Ok(v) => values.push(v),
+            Err(_) => unparseable += 1,
+        }
+    }
+    let mut batch = realtime::parse_batch(&values);
+    batch.skipped += unparseable;
+    json!({
+        "ok": true,
+        "messages": batch.messages,
+        "resync": batch.resync,
+        "skipped": batch.skipped,
+    })
+    .to_string()
+}
+
 /// 0 stopped, -1 was not running.
 pub fn trouter_stop() -> c_int {
     let mut guard = trouter_state().lock().unwrap_or_else(|e| e.into_inner());
@@ -572,6 +602,13 @@ pub extern "C" fn ostmac_trouter_start() -> c_int {
 #[no_mangle]
 pub extern "C" fn ostmac_trouter_poll() -> *mut c_char {
     string_to_c(trouter_poll_json())
+}
+
+/// Drain queued Trouter events as typed realtime messages.
+/// See [`trouter_poll_typed_json`]. Caller frees with [`ostmac_free`].
+#[no_mangle]
+pub extern "C" fn ostmac_trouter_poll_typed() -> *mut c_char {
+    string_to_c(trouter_poll_typed_json())
 }
 
 /// Stop background Trouter. See [`trouter_stop`].
@@ -719,5 +756,87 @@ mod tests {
     #[test]
     fn trouter_stop_when_idle() {
         assert_eq!(trouter_stop(), -1);
+    }
+
+    #[test]
+    fn typed_poll_message_and_loss_and_skip() {
+        let _ = ost::event_hub::drain(1024);
+        // Captured wire shape: socket.io v1 envelope, name + args.
+        ost::event_hub::publish(
+            r#"{"name":"trouter.connected","args":[{"ttl":81833,"dur":"1"}]}"#.to_string(),
+        );
+        ost::event_hub::publish(
+            r#"{"name":"trouter.message_loss","args":[{"droppedIndicators":[{"tag":"messaging","etag":"2026-09-22T14:23:45Z"}]}]}"#
+                .to_string(),
+        );
+        // Message resource in native chat-service field style.
+        ost::event_hub::publish(
+            r#"{"name":"notify","args":[{
+                "id":"1758552345000",
+                "conversationLink":"https://amer.ng.msg.teams.microsoft.com/v1/users/ME/conversations/19:abc@thread.v2/messages/1758552345000",
+                "from":"8:orgid:aaa",
+                "imdisplayname":"Doe, Jane",
+                "content":"<p>hi <b>there</b> &amp; you</p>",
+                "messagetype":"RichText/Html",
+                "originalarrivaltime":"2026-09-22T14:25:45.000Z"}]}"#
+                .to_string(),
+        );
+        ost::event_hub::publish(r#"{"kind":"presence","n":1}"#.to_string());
+        let v: serde_json::Value =
+            serde_json::from_str(&trouter_poll_typed_json()).unwrap();
+        assert_eq!(v["ok"], true);
+        assert_eq!(v["resync"], true);
+        assert_eq!(v["messages"].as_array().unwrap().len(), 1);
+        let m = &v["messages"][0];
+        assert_eq!(m["chat_id"], "19:abc@thread.v2");
+        assert_eq!(m["id"], "1758552345000");
+        assert_eq!(m["sender"], "Doe, Jane");
+        assert_eq!(m["text"], "hi there & you");
+        assert_eq!(m["time"], "2026-09-22T14:25:45.000Z");
+        assert_eq!(m["is_edit"], false);
+        assert_eq!(v["skipped"], 3); // connected + loss + presence
+        // Drained: second poll empty, no resync.
+        let v2: serde_json::Value =
+            serde_json::from_str(&trouter_poll_typed_json()).unwrap();
+        assert_eq!(v2["messages"].as_array().unwrap().len(), 0);
+        assert_eq!(v2["resync"], false);
+    }
+
+    #[test]
+    fn typed_poll_edit_detection() {
+        let _ = ost::event_hub::drain(1024);
+        ost::event_hub::publish(
+            r#"{"content":"fixed","messagetype":"RichText/Edit",
+                "from":"8:x","threadId":"19:t@thread.v2",
+                "skypeeditedid":"111","id":"222"}"#
+                .to_string(),
+        );
+        ost::event_hub::publish(
+            r#"{"resource":{"content":"v2","messagetype":"Text",
+                "imdisplayname":"A","conversationLink":"https://h/v1/users/ME/conversations/19:u@thread.v2/messages/1",
+                "skypeeditedid":"0"}}"#
+                .to_string(),
+        );
+        let v: serde_json::Value =
+            serde_json::from_str(&trouter_poll_typed_json()).unwrap();
+        assert_eq!(v["messages"].as_array().unwrap().len(), 2);
+        assert_eq!(v["messages"][0]["is_edit"], true);
+        assert_eq!(v["messages"][0]["edited_id"], "111");
+        assert_eq!(v["messages"][1]["is_edit"], true);
+        assert_eq!(v["messages"][1]["chat_id"], "19:u@thread.v2");
+    }
+
+    #[test]
+    fn typed_poll_id_fallback_is_stable() {
+        let _ = ost::event_hub::drain(1024);
+        let raw = r#"{"content":"x","messagetype":"Text","from":"8:x","threadId":"19:t@thread.v2"}"#;
+        ost::event_hub::publish(raw.to_string());
+        ost::event_hub::publish(raw.to_string()); // redelivery
+        let v: serde_json::Value =
+            serde_json::from_str(&trouter_poll_typed_json()).unwrap();
+        let a = v["messages"][0]["id"].as_str().unwrap().to_string();
+        let b = v["messages"][1]["id"].as_str().unwrap().to_string();
+        assert!(a.starts_with("h:"));
+        assert_eq!(a, b); // same content => same id => Swift dedupe drops it
     }
 }
