@@ -10,7 +10,8 @@ name = "ostmac_core"
 crate-type = ["staticlib", "rlib"]
 
 [dependencies]
-ost = { package = "teams-cli", path = "../ost" }
+ost = { package = "teams-cli", path = "../ost", features = ["audio"] }
+base64 = "0.22"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync", "time", "net"] }
 reqwest = { version = "0.11", features = ["json", "native-tls"], default-features = false }
 serde = { version = "1", features = ["derive"] }
