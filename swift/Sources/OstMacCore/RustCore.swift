@@ -34,6 +34,10 @@ public enum RustCore {
         try call(ostmac_trouter_poll(), as: TrouterPoll.self)
     }
 
+    public static func trouterPollTyped() throws -> RealtimePoll {
+        try call(ostmac_trouter_poll_typed(), as: RealtimePoll.self)
+    }
+
     // Take ownership of a Rust-allocated C string, decode, free.
     static func call<T: Decodable>(
         _ raw: UnsafeMutablePointer<CChar>?, as type: T.Type

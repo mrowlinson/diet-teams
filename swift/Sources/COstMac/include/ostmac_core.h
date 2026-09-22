@@ -29,6 +29,14 @@ int ostmac_trouter_start(void);
 // Drain queued Trouter events as JSON. Caller frees.
 char *ostmac_trouter_poll(void);
 
+// Drain queued Trouter events as typed realtime messages:
+// {ok, messages:[{chat_id,id,sender,text,time,is_edit,edited_id?}],
+// resync, skipped}. resync=true means a trouter.message_loss frame arrived:
+// the UI must re-fetch visible conversations (push had a gap; the socket is
+// fine, no reconnect needed). Drains the same queue as ostmac_trouter_poll —
+// use one consumer. Caller frees.
+char *ostmac_trouter_poll_typed(void);
+
 // Stop background Trouter: 0 stopped, -1 idle.
 int ostmac_trouter_stop(void);
 
