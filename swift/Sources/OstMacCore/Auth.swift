@@ -64,6 +64,18 @@ public enum AuthState: Equatable, Sendable {
     case error(String)
 }
 
+extension AuthState {
+    /// True only for signedIn. The main-window gate, the feed/chats
+    /// sequencing, and Settings all key off this (single source).
+    public var isSignedIn: Bool {
+        if case .signedIn = self { return true }
+        return false
+    }
+
+    /// Main-window content gate. Demo mode bypasses (caller-side).
+    public var allowsContent: Bool { isSignedIn }
+}
+
 /// Where error(_)'s "Try again" re-enters. (Refresh failures surface as
 /// refreshFailed with their own retry button, never as error.)
 public enum AuthRetry: Equatable, Sendable {
@@ -88,6 +100,8 @@ public final class AuthViewModel: ObservableObject {
     public private(set) var isDemo = false
     /// Where error(_)'s retry goes. Updated on every failure.
     public private(set) var errorRetry: AuthRetry = .signIn
+    /// Gate mirror of state (single source; AppState subscribes to $state).
+    public var isSignedIn: Bool { state.isSignedIn }
     /// Overrides the core's poll interval (tests set 3600 + drive pollOnce).
     public var pollIntervalOverride: TimeInterval?
 

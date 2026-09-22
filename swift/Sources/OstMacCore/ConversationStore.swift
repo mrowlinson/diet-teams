@@ -160,10 +160,15 @@ public final class ConversationStore: ObservableObject {
     }
 
     /// Demo mode: show canned messages for a chat (offline, no core).
-    public func showDemo(chatID: String, chatName: String, messages: [ChatMessage]) {
+    /// `failed` pre-marks bubbles failed (rich demo's failed own send).
+    public func showDemo(
+        chatID: String, chatName: String, messages: [ChatMessage],
+        failed: Set<String> = []
+    ) {
         self.chatID = chatID
         self.chatName = chatName
         self.messages = messages
+        failedIDs = failed
         isDemo = true
         loading = false
         error = nil
@@ -298,7 +303,7 @@ public final class ConversationStore: ObservableObject {
         return s
     }
 
-    public static func richDemoMessages(now: Date = Date()) -> [ChatMessage] {
+    public nonisolated static func richDemoMessages(now: Date = Date()) -> [ChatMessage] {
         func iso(_ d: Date) -> String {
             let f = ISO8601DateFormatter()
             f.formatOptions = [.withInternetDateTime]

@@ -1,9 +1,9 @@
 // AboutView.swift — om-package lane: About OstMac window content.
 import AppKit
+import OstMacCore
 import SwiftUI
 
-public struct AboutView: View {
-    public init() {}
+struct AboutView: View {
 
     public var body: some View {
         VStack(spacing: 10) {

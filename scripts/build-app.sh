@@ -7,9 +7,10 @@ cd "$ROOT/swift"
 swift build -c release --product OstMac
 APP="$ROOT/swift/.build/release/OstMac.app"
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp .build/release/OstMac "$APP/Contents/MacOS/OstMac"
-cp AppInfo-OstMac.plist "$APP/Contents/Info.plist"
+cp OstMac-Info.plist "$APP/Contents/Info.plist"
+cp Resources/OstMac.icns "$APP/Contents/Resources/OstMac.icns"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 if [ -n "${CODESIGN_IDENTITY:-}" ]; then
     codesign --force --deep --sign "$CODESIGN_IDENTITY" "$APP"
