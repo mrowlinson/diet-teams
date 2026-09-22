@@ -24,5 +24,9 @@
     <string>14.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSCameraUsageDescription</key>
+    <string>OstMac uses the camera for call video and the Call A/V test panel.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>OstMac uses the microphone for call audio and the Call A/V test panel.</string>
 </dict>
 </plist>

@@ -67,6 +67,90 @@ char *ostmac_refresh(void);
 // {ok:true} or {ok:false}. Caller frees. No network.
 char *ostmac_sign_out(void);
 
+// Own presence JSON (Graph /me/presence): {ok,availability,activity}.
+// Requires sign-in. Caller frees. Hits network.
+char *ostmac_presence(void);
+
+// Set own preferred presence. status is one of (case-insensitive):
+// available, busy, dnd (donotdisturb), away, offline.
+// Returns the applied {ok,availability,activity}. Caller frees.
+char *ostmac_presence_set(const char *status);
+
+// One other user's presence JSON (Entra ID or UPN):
+// {ok,id,availability,activity}. Caller frees. Hits network.
+char *ostmac_presence_user(const char *user_id);
+
+// Current call slot JSON: {ok, call:{id,dir,peer,peer_name,thread,
+// state,controller?,started_at,detail?}|null}. Caller frees. No network.
+char *ostmac_call_status(void);
+
+// Place an outgoing call to a thread id (1:1 or channel), signaling
+// only. Blocks up to timeout_secs (clamped 5..120) waiting for the
+// answer: {ok,placed,accepted,rejection?,call}. Caller frees.
+char *ostmac_call_place(const char *thread_id, int timeout_secs);
+
+// Place the echo-bot test call, signaling only. Same envelope as
+// ostmac_call_place. Caller frees.
+char *ostmac_call_echo(int timeout_secs);
+
+// Accept the ringing incoming call:
+// {ok,accepted,media_answered,call}. Caller frees.
+char *ostmac_call_accept(void);
+
+// End/decline the active call: {ok,ended,call}. Caller frees.
+char *ostmac_call_end(void);
+
+// Inject the recorder bot into the connected outgoing call:
+// {ok,injected,response_bytes}. Caller frees.
+char *ostmac_call_record_inject(void);
+
+// A/V capability map (static, no hardware). Caller frees.
+char *ostmac_av_info(void);
+
+// Mic/speaker availability probe (cpal open+close, fast). Caller frees.
+char *ostmac_mic_probe(void);
+
+// Capture `seconds` (1-10, default 3) of mic + play back:
+// {ok, frames, seconds, peak_db, played_back} or {ok:false, error:"no_input"}.
+// Caller frees. Blocks for the capture duration.
+char *ostmac_mic_test(int seconds);
+
+// Play 1kHz tone for `msecs` (default 1000): {ok, frames} or
+// {ok:false, error:"no_output"}. Caller frees. Blocks while playing.
+char *ostmac_tone_play(int msecs);
+
+// Deterministic tone echo self-check (no hardware). Caller frees.
+char *ostmac_tone_check(void);
+
+// Begin a camera run (Swift AVCapture feeds frames). Caller frees.
+char *ostmac_camera_begin(int width, int height, int fps);
+
+// Push one camera frame: base64 pixels, fmt i420|nv12|bgra (420v|32bgra
+// aliases). Convert failures count as drops. Returns stats JSON.
+// Caller frees.
+char *ostmac_camera_push(const char *b64, int width, int height, const char *fmt);
+
+// Camera stats JSON. Caller frees.
+char *ostmac_camera_stats(void);
+
+// End the camera run. Caller frees.
+char *ostmac_camera_end(void);
+
+// Push one decoded remote I420 frame (base64) for display. Caller frees.
+char *ostmac_video_push_remote(const char *b64, int width, int height);
+
+// Drain latest remote frame: {ok, frame:{width,height,data}|null}.
+// Caller frees.
+char *ostmac_video_poll_remote(void);
+
+// Black 176x144 IDR access unit as base64 NALs (VideoToolbox target).
+// Caller frees.
+char *ostmac_av_black_iframe(void);
+
+// Offline call pipeline: SRTP loopback + H.264 packetize round-trip
+// (no network/auth/hardware). Caller frees.
+char *ostmac_call_dry_run(void);
+
 // Free a string from any ostmac_* call. Null-safe.
 void ostmac_free(char *s);
 

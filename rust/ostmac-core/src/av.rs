@@ -1,0 +1,468 @@
+//! A/V FFI: mic/tone/camera/display/call-dry-run over JSON.
+//!
+//! Native capture/display live in Swift (AVFoundation/VideoToolbox/SwiftUI).
+//! This module exposes the `ost::calling` pieces Swift needs:
+//! - caps: static capability map
+//! - mic: cpal device probe + capture/playback test (CoreAudio on macOS)
+//! - tone: audible 1kHz tone + deterministic echo self-check
+//! - camera: I420 pump fed by Swift AVCapture frames (base64 over FFI)
+//! - video: remote-frame slot SwiftUI polls for display
+//! - dry-run: offline media pipeline (SRTP loopback + H.264 packetize)
+
+use std::ffi::CStr;
+use std::os::raw::{c_char, c_int};
+use std::sync::{Mutex, OnceLock};
+
+use base64::Engine;
+use serde_json::json;
+
+use ost::calling::macav;
+
+use crate::{cstr_to_string, err_json, string_to_c};
+
+/// Max decoded frame bytes accepted over FFI (16 MiB).
+const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
+
+fn camera_pump() -> &'static Mutex<macav::CameraPump> {
+    static S: OnceLock<Mutex<macav::CameraPump>> = OnceLock::new();
+    S.get_or_init(|| Mutex::new(macav::CameraPump::new()))
+}
+
+fn remote_slot() -> &'static Mutex<macav::RemoteSlot> {
+    static S: OnceLock<Mutex<macav::RemoteSlot>> = OnceLock::new();
+    S.get_or_init(|| Mutex::new(macav::RemoteSlot::new()))
+}
+
+fn lock<T>(m: &'static Mutex<T>) -> std::sync::MutexGuard<'static, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+fn b64_decode(s: &str) -> Result<Vec<u8>, String> {
+    base64::engine::general_purpose::STANDARD
+        .decode(s)
+        .map_err(|e| format!("base64: {}", e))
+        .and_then(|v| {
+            if v.len() > MAX_FRAME_BYTES {
+                Err(format!("frame too large: {} bytes", v.len()))
+            } else {
+                Ok(v)
+            }
+        })
+}
+
+fn b64_encode(v: &[u8]) -> String {
+    base64::engine::general_purpose::STANDARD.encode(v)
+}
+
+// ---------------------------------------------------------------------------
+// JSON bodies
+// ---------------------------------------------------------------------------
+
+/// Static capability map. No hardware touched.
+pub fn av_info_json() -> String {
+    json!({
+        "ok": true,
+        "mic": "cpal",
+        "speaker": "cpal",
+        "camera": "avfoundation",
+        "display": "swiftui",
+        "tone": true,
+        "packetizer": "rust-h264",
+        "srtp": "rust-aes-128-cm",
+        "dry_run": true,
+    })
+    .to_string()
+}
+
+/// Fast mic/speaker availability probe.
+pub fn mic_probe_json() -> String {
+    let (input, output) = ost::calling::audio::audio_probe();
+    json!({"ok": true, "input": input, "output": output}).to_string()
+}
+
+/// Capture `seconds` of mic + play back. Errors `no_input` without a mic.
+pub fn mic_test_json(seconds: u64) -> String {
+    match ost::calling::audio::mic_test_report(seconds, false) {
+        Ok(r) => json!({
+            "ok": true,
+            "frames": r.frames,
+            "seconds": r.seconds,
+            "peak_db": r.peak_db,
+            "played_back": r.played_back,
+        })
+        .to_string(),
+        Err(e) => err_json("no_input", e),
+    }
+}
+
+/// Play a 1kHz tone for `msecs`. Errors `no_output` without a speaker.
+pub fn tone_play_json(msecs: u64) -> String {
+    match ost::calling::audio::play_tone(msecs) {
+        Ok(frames) => json!({"ok": true, "frames": frames}).to_string(),
+        Err(e) => err_json("no_output", e),
+    }
+}
+
+/// Deterministic tone echo self-check (no hardware).
+pub fn tone_check_json() -> String {
+    let r = macav::tone_check();
+    json!({
+        "ok": true,
+        "detected": r.detected,
+        "delay_ms": r.delay_ms,
+        "correlation_peak": r.correlation_peak,
+    })
+    .to_string()
+}
+
+pub fn camera_begin_json(width: u32, height: u32, fps: u32) -> String {
+    if width == 0 || height == 0 || fps == 0 {
+        return err_json("arg", "width/height/fps must be nonzero");
+    }
+    lock(camera_pump()).begin(width, height, fps);
+    json!({"ok": true, "width": width, "height": height, "fps": fps}).to_string()
+}
+
+/// Push one camera frame (base64 pixels, `fmt`: i420|nv12|bgra|420v|32bgra).
+/// Convert failures count as drops (still `{ok:true}` + stats).
+pub fn camera_push_json(b64: &str, width: u32, height: u32, fmt: &str) -> String {
+    let data = match b64_decode(b64) {
+        Ok(d) => d,
+        Err(e) => return err_json("arg", e),
+    };
+    let pix = match macav::PixFmt::parse(fmt) {
+        Ok(p) => p,
+        Err(e) => return err_json("arg", e),
+    };
+    lock(camera_pump()).push(&data, width, height, pix);
+    camera_stats_json()
+}
+
+pub fn camera_stats_json() -> String {
+    let s = lock(camera_pump()).stats();
+    json!({
+        "ok": true,
+        "running": s.running,
+        "width": s.width,
+        "height": s.height,
+        "fps_want": s.fps_want,
+        "frames": s.frames,
+        "dropped": s.dropped,
+        "fps_actual": s.fps_actual,
+        "last_bytes": s.last_bytes,
+    })
+    .to_string()
+}
+
+pub fn camera_end_json() -> String {
+    lock(camera_pump()).end();
+    json!({"ok": true}).to_string()
+}
+
+/// Push one decoded remote I420 frame (base64) for the SwiftUI view.
+pub fn video_push_remote_json(b64: &str, width: u32, height: u32) -> String {
+    let data = match b64_decode(b64) {
+        Ok(d) => d,
+        Err(e) => return err_json("arg", e),
+    };
+    let need = macav::I420Frame::expected_len(width, height);
+    if width == 0 || height == 0 || data.len() < need {
+        return err_json(
+            "arg",
+            format!("i420 too small: {} bytes, need {}", data.len(), need),
+        );
+    }
+    lock(remote_slot()).push(macav::I420Frame {
+        width,
+        height,
+        data: data[..need].to_vec(),
+    });
+    json!({"ok": true, "bytes": need}).to_string()
+}
+
+/// Drain the latest remote frame (or `{ok:true, frame:null}`).
+pub fn video_poll_remote_json() -> String {
+    match lock(remote_slot()).take() {
+        Some(f) => json!({
+            "ok": true,
+            "frame": {"width": f.width, "height": f.height, "data": b64_encode(&f.data)},
+        })
+        .to_string(),
+        None => json!({"ok": true, "frame": null}).to_string(),
+    }
+}
+
+/// Black 176x144 IDR access unit as base64 NALs (VideoToolbox target).
+pub fn black_iframe_json() -> String {
+    json!({
+        "ok": true,
+        "width": 176,
+        "height": 144,
+        "nals": macav::black_iframe_b64(),
+    })
+    .to_string()
+}
+
+/// Offline call pipeline (SRTP loopback + H.264 packetize round-trip).
+pub fn call_dry_run_json() -> String {
+    match macav::call_dry_run() {
+        Ok(r) => json!({
+            "ok": true,
+            "audio_sent": r.audio_sent,
+            "audio_received": r.audio_received,
+            "echo_detected": r.echo_detected,
+            "echo_delay_ms": r.echo_delay_ms,
+            "echo_correlation": r.echo_correlation,
+            "video_packets": r.video_packets,
+            "video_nals": r.video_nals,
+        })
+        .to_string(),
+        Err(e) => err_json("dry_run", e),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// C ABI (caller frees every return with `ostmac_free`)
+// ---------------------------------------------------------------------------
+
+#[no_mangle]
+pub extern "C" fn ostmac_av_info() -> *mut c_char {
+    string_to_c(av_info_json())
+}
+
+#[no_mangle]
+pub extern "C" fn ostmac_mic_probe() -> *mut c_char {
+    string_to_c(mic_probe_json())
+}
+
+#[no_mangle]
+pub extern "C" fn ostmac_mic_test(seconds: c_int) -> *mut c_char {
+    let s = if seconds <= 0 { 3 } else { seconds as u64 };
+    string_to_c(mic_test_json(s))
+}
+
+#[no_mangle]
+pub extern "C" fn ostmac_tone_play(msecs: c_int) -> *mut c_char {
+    let ms = if msecs <= 0 { 1000 } else { msecs as u64 };
+    string_to_c(tone_play_json(ms))
+}
+
+#[no_mangle]
+pub extern "C" fn ostmac_tone_check() -> *mut c_char {
+    string_to_c(tone_check_json())
+}
+
+#[no_mangle]
+pub extern "C" fn ostmac_camera_begin(width: c_int, height: c_int, fps: c_int) -> *mut c_char {
+    string_to_c(camera_begin_json(
+        width.max(0) as u32,
+        height.max(0) as u32,
+        fps.max(0) as u32,
+    ))
+}
+
+#[no_mangle]
+pub extern "C" fn ostmac_camera_push(
+    b64: *const c_char,
+    width: c_int,
+    height: c_int,
+    fmt: *const c_char,
+) -> *mut c_char {
+    let data = match cstr_to_string(b64) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    let format = match cstr_to_string(fmt) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    string_to_c(camera_push_json(
+        &data,
+        width.max(0) as u32,
+        height.max(0) as u32,
+        &format,
+    ))
+}
+
+#[no_mangle]
+pub extern "C" fn ostmac_camera_stats() -> *mut c_char {
+    string_to_c(camera_stats_json())
+}
+
+#[no_mangle]
+pub extern "C" fn ostmac_camera_end() -> *mut c_char {
+    string_to_c(camera_end_json())
+}
+
+#[no_mangle]
+pub extern "C" fn ostmac_video_push_remote(
+    b64: *const c_char,
+    width: c_int,
+    height: c_int,
+) -> *mut c_char {
+    match cstr_to_string(b64) {
+        Ok(s) => string_to_c(video_push_remote_json(
+            &s,
+            width.max(0) as u32,
+            height.max(0) as u32,
+        )),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn ostmac_video_poll_remote() -> *mut c_char {
+    string_to_c(video_poll_remote_json())
+}
+
+#[no_mangle]
+pub extern "C" fn ostmac_av_black_iframe() -> *mut c_char {
+    string_to_c(black_iframe_json())
+}
+
+#[no_mangle]
+pub extern "C" fn ostmac_call_dry_run() -> *mut c_char {
+    string_to_c(call_dry_run_json())
+}
+
+// ---------------------------------------------------------------------------
+// Tests (deterministic: no hardware; camera/remote globals used by one test each)
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::CString;
+
+    #[test]
+    fn av_info_shape() {
+        let v: serde_json::Value = serde_json::from_str(&av_info_json()).unwrap();
+        assert_eq!(v["ok"], true);
+        assert_eq!(v["mic"], "cpal");
+        assert_eq!(v["camera"], "avfoundation");
+        assert_eq!(v["display"], "swiftui");
+        assert_eq!(v["tone"], true);
+        assert_eq!(v["dry_run"], true);
+    }
+
+    #[test]
+    fn av_tone_check_detects() {
+        let v: serde_json::Value = serde_json::from_str(&tone_check_json()).unwrap();
+        assert_eq!(v["ok"], true);
+        assert_eq!(v["detected"], true);
+        assert!(v["correlation_peak"].as_f64().unwrap().abs() > 0.3);
+    }
+
+    #[test]
+    fn av_camera_push_stats_roundtrip() {
+        // begin rejects zero dims without touching state
+        let v: serde_json::Value = serde_json::from_str(&camera_begin_json(0, 240, 15)).unwrap();
+        assert_eq!(v["ok"], false);
+
+        let v: serde_json::Value =
+            serde_json::from_str(&camera_begin_json(320, 240, 15)).unwrap();
+        assert_eq!(v["ok"], true);
+
+        // bad base64 / bad fmt are arg errors
+        let v: serde_json::Value =
+            serde_json::from_str(&camera_push_json("!!!", 320, 240, "bgra")).unwrap();
+        assert_eq!(v["ok"], false);
+        let v: serde_json::Value =
+            serde_json::from_str(&camera_push_json("AAAA", 320, 240, "mjpeg")).unwrap();
+        assert_eq!(v["ok"], false);
+
+        // one good BGRA frame (320x240x4)
+        let bgra = b64_encode(&vec![0x80u8; 320 * 240 * 4]);
+        let v: serde_json::Value =
+            serde_json::from_str(&camera_push_json(&bgra, 320, 240, "bgra")).unwrap();
+        assert_eq!(v["ok"], true);
+        assert_eq!(v["frames"], 1);
+        assert_eq!(v["last_bytes"], 320 * 240 * 3 / 2);
+
+        // short buffer counts as drop, still ok
+        let v: serde_json::Value =
+            serde_json::from_str(&camera_push_json("AAAA", 320, 240, "bgra")).unwrap();
+        assert_eq!(v["ok"], true);
+        assert_eq!(v["frames"], 1);
+        assert_eq!(v["dropped"], 1);
+
+        let v: serde_json::Value = serde_json::from_str(&camera_end_json()).unwrap();
+        assert_eq!(v["ok"], true);
+        let v: serde_json::Value = serde_json::from_str(&camera_stats_json()).unwrap();
+        assert_eq!(v["running"], false);
+    }
+
+    #[test]
+    fn av_video_push_poll_roundtrip() {
+        // drain first so parallel order can't leak a frame in
+        let _ = video_poll_remote_json();
+        let v: serde_json::Value = serde_json::from_str(&video_poll_remote_json()).unwrap();
+        assert!(v["frame"].is_null());
+
+        // reject short buffers
+        let v: serde_json::Value =
+            serde_json::from_str(&video_push_remote_json("AAAA", 320, 240)).unwrap();
+        assert_eq!(v["ok"], false);
+
+        let i420 = b64_encode(&vec![0x10u8; 320 * 240 * 3 / 2]);
+        let v: serde_json::Value =
+            serde_json::from_str(&video_push_remote_json(&i420, 320, 240)).unwrap();
+        assert_eq!(v["ok"], true);
+
+        let v: serde_json::Value = serde_json::from_str(&video_poll_remote_json()).unwrap();
+        assert_eq!(v["frame"]["width"], 320);
+        assert_eq!(v["frame"]["height"], 240);
+        assert_eq!(v["frame"]["data"], i420);
+
+        // poll drains
+        let v: serde_json::Value = serde_json::from_str(&video_poll_remote_json()).unwrap();
+        assert!(v["frame"].is_null());
+    }
+
+    #[test]
+    fn av_black_iframe_shape() {
+        let v: serde_json::Value = serde_json::from_str(&black_iframe_json()).unwrap();
+        assert_eq!(v["ok"], true);
+        assert_eq!(v["width"], 176);
+        assert_eq!(v["height"], 144);
+        assert_eq!(v["nals"].as_array().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn av_dry_run_loops() {
+        let v: serde_json::Value = serde_json::from_str(&call_dry_run_json()).unwrap();
+        assert_eq!(v["ok"], true);
+        assert_eq!(v["audio_sent"], 25);
+        assert_eq!(v["audio_received"], 25);
+        assert_eq!(v["echo_detected"], true);
+        assert_eq!(v["video_packets"], 5);
+        assert_eq!(v["video_nals"], 5);
+    }
+
+    #[test]
+    fn av_ffi_camera_begin_rejects_zero() {
+        unsafe {
+            let p = ostmac_camera_begin(0, 0, 0);
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            crate::ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
+    fn av_ffi_push_null_is_arg_error() {
+        unsafe {
+            let fmt = CString::new("bgra").unwrap();
+            let p = ostmac_camera_push(std::ptr::null(), 2, 2, fmt.as_ptr());
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            crate::ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+}

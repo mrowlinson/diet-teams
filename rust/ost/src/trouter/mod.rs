@@ -239,7 +239,10 @@ async fn handle_frame(frame: &str, http: &reqwest::Client, skype_token: &str) {
             crate::event_hub::publish(json_str.to_string()); // OstMac: feed embedders
 
             // If this is a call event, try to parse and auto-answer.
-            if is_call {
+            // Embedders with UI-driven signaling (OstMac) set
+            // TEAMS_MANUAL_CALLS=1 to take accept/end themselves; the
+            // invitation is still published to event_hub above either way.
+            if is_call && std::env::var_os("TEAMS_MANUAL_CALLS").is_none() {
                 handle_call_event(json_str, http, skype_token).await;
             }
         } else {

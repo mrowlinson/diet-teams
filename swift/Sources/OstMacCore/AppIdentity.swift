@@ -11,6 +11,7 @@ public enum AppIdentity {
     public static let minimumOS = "14.0"
     public static let aboutWindowID = "about"
     public static let authWindowID = "auth"
+    public static let avWindowID = "av"
     public static let tagline = "Teams client for macOS"
 }
 

@@ -7,7 +7,9 @@
 //! - teams: joined teams with channels (requires sign-in)
 //! - messages: full history for one chat (requires sign-in)
 //! - send: post one message to a chat (requires sign-in)
+//! - presence: own get/set + per-user get (Graph presence, requires sign-in)
 //! - trouter: background push connection with a polled event channel
+//! - calls: signaling-only place/accept/end + echo-bot + recorder inject
 //!
 //! Dropped for now: TUI, audio/video, call media.
 
@@ -22,24 +24,26 @@ use ost::auth::{AuthConfig, TokenStore};
 use ost::config::Config;
 use serde_json::json;
 
+pub mod av;
+pub mod calls;
 pub mod realtime;
 
 // ---------------------------------------------------------------------------
 // Small helpers
 // ---------------------------------------------------------------------------
 
-fn now_secs() -> u64 {
+pub(crate) fn now_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
 }
 
-fn err_json(code: &str, detail: impl std::fmt::Display) -> String {
+pub(crate) fn err_json(code: &str, detail: impl std::fmt::Display) -> String {
     json!({"ok": false, "error": code, "detail": detail.to_string()}).to_string()
 }
 
-fn cstr_to_string(p: *const c_char) -> Result<String, String> {
+pub(crate) fn cstr_to_string(p: *const c_char) -> Result<String, String> {
     if p.is_null() {
         return Err("null pointer".to_string());
     }
@@ -49,11 +53,11 @@ fn cstr_to_string(p: *const c_char) -> Result<String, String> {
         .map_err(|e| format!("invalid utf-8: {}", e))
 }
 
-fn string_to_c(s: String) -> *mut c_char {
+pub(crate) fn string_to_c(s: String) -> *mut c_char {
     CString::new(s).map(|c| c.into_raw()).unwrap_or(std::ptr::null_mut())
 }
 
-fn rt() -> Result<tokio::runtime::Runtime, String> {
+pub(crate) fn rt() -> Result<tokio::runtime::Runtime, String> {
     tokio::runtime::Runtime::new().map_err(|e| format!("runtime: {}", e))
 }
 
@@ -604,6 +608,144 @@ pub fn send_json(chat_id: &str, text: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Presence (om-presence lane: ost CLI get/set + TUI LoadPresence parity)
+// ---------------------------------------------------------------------------
+
+fn presence_envelope(availability: &str, activity: &str) -> String {
+    json!({
+        "ok": true,
+        "availability": availability,
+        "activity": activity,
+    })
+    .to_string()
+}
+
+/// ost `set_presence` status table, verbatim (lowercased input):
+/// available, busy, dnd|donotdisturb, away, offline.
+fn presence_status_pair(status: &str) -> Option<(&'static str, &'static str)> {
+    match status.to_lowercase().as_str() {
+        "available" => Some(("Available", "Available")),
+        "busy" => Some(("Busy", "InACall")),
+        "dnd" | "donotdisturb" => Some(("DoNotDisturb", "Presenting")),
+        "away" => Some(("Away", "Away")),
+        "offline" => Some(("Offline", "OffWork")),
+        _ => None,
+    }
+}
+
+/// Own presence via Graph /me/presence (ost `get_presence_data`).
+/// `{ok:true, availability, activity}` or `{ok:false}`.
+pub fn presence_json() -> String {
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let info = ost::api::get_presence_data(&client)
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            Ok(presence_envelope(&info.availability, &info.activity))
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("presence", e),
+    }
+}
+
+/// Set own preferred presence (ost `set_presence` table + body, minus the
+/// CLI print). Unknown/empty `status` is rejected before any network.
+/// Returns the applied `{ok:true, availability, activity}`.
+pub fn set_presence_json(status: &str) -> String {
+    let want = status.trim();
+    if want.is_empty() {
+        return err_json("arg", "empty status");
+    }
+    let (availability, activity) = match presence_status_pair(want) {
+        Some(p) => p,
+        None => {
+            return err_json(
+                "arg",
+                format!(
+                    "Unknown status: {}. Use: available, busy, dnd, away, offline",
+                    want
+                ),
+            )
+        }
+    };
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let body = serde_json::json!({
+                "sessionId": "teams-cli",
+                "availability": availability,
+                "activity": activity,
+                "expirationDuration": "PT1H"
+            });
+            client
+                .graph_post("/me/presence/setUserPreferredPresence", &body)
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            Ok(presence_envelope(availability, activity))
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("presence_set", e),
+    }
+}
+
+/// One other user's presence via Graph /users/{id}/presence (same wire
+/// shape as /me/presence). `user_id` is an Entra ID or UPN; empty or
+/// path-breaking ids are rejected before any network.
+/// `{ok:true, id, availability, activity}` or `{ok:false}`.
+pub fn user_presence_json(user_id: &str) -> String {
+    let id = user_id.trim();
+    if id.is_empty() {
+        return err_json("arg", "empty user_id");
+    }
+    if id.contains('/') || id.chars().any(|c| c.is_whitespace()) {
+        return err_json("arg", "user_id must not contain '/' or whitespace");
+    }
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let resp = client
+                .graph_get(&format!("/users/{}/presence", id))
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            #[derive(serde::Deserialize)]
+            struct P {
+                availability: String,
+                activity: String,
+            }
+            let p: P = resp
+                .json()
+                .await
+                .map_err(|e| format!("Failed to parse presence response: {}", e))?;
+            Ok(json!({
+                "ok": true,
+                "id": id,
+                "availability": p.availability,
+                "activity": p.activity,
+            })
+            .to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("presence_user", e),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Trouter event channel
 // ---------------------------------------------------------------------------
 
@@ -633,6 +775,9 @@ pub fn trouter_start() -> c_int {
         },
         Err(_) => return -2,
     }
+    // UI-driven signaling: the bg loop must not auto-answer incoming
+    // calls (ost honors this; invitations still reach event_hub).
+    std::env::set_var("TEAMS_MANUAL_CALLS", "1");
     let rt = match rt().map(Arc::new) {
         Ok(r) => r,
         Err(_) => return -3,
@@ -674,9 +819,11 @@ pub fn trouter_poll_json() -> String {
 /// Drain queued Trouter events as typed realtime messages.
 ///
 /// `{ok:true, messages:[{chat_id,id,sender,text,time,is_edit,edited_id?}],
-/// resync:bool, skipped:n}`. `resync` is true when a `trouter.message_loss`
-/// frame was seen: the UI must re-fetch visible conversations (push had a
-/// gap). `skipped` counts non-message frames (handshake, presence, calls…).
+/// resync:bool, skipped:n, calls:[{kind,call_id,peer,peer_name,detail?}]}`.
+/// `resync` is true when a `trouter.message_loss` frame was seen: the UI
+/// must re-fetch visible conversations (push had a gap). `skipped` counts
+/// non-message frames (handshake, presence…). `calls` carries incoming
+/// invitations / remote ends (also recorded in the call slot).
 /// NOTE: drains the same queue as [`trouter_poll_json`] — use one consumer.
 pub fn trouter_poll_typed_json() -> String {
     let events = ost::event_hub::drain(64);
@@ -690,11 +837,13 @@ pub fn trouter_poll_typed_json() -> String {
     }
     let mut batch = realtime::parse_batch(&values);
     batch.skipped += unparseable;
+    let call_events = calls::scan_events(&events);
     json!({
         "ok": true,
         "messages": batch.messages,
         "resync": batch.resync,
         "skipped": batch.skipped,
+        "calls": call_events,
     })
     .to_string()
 }
@@ -855,6 +1004,79 @@ pub extern "C" fn ostmac_refresh() -> *mut c_char {
 #[no_mangle]
 pub extern "C" fn ostmac_sign_out() -> *mut c_char {
     string_to_c(sign_out_json())
+}
+
+/// Own presence JSON (Graph /me/presence). See [`presence_json`].
+/// Caller frees with [`ostmac_free`].
+#[no_mangle]
+pub extern "C" fn ostmac_presence() -> *mut c_char {
+    string_to_c(presence_json())
+}
+
+/// Set own preferred presence. `status` is one of: available, busy,
+/// dnd (donotdisturb), away, offline (case-insensitive). See
+/// [`set_presence_json`]. Caller frees with [`ostmac_free`].
+#[no_mangle]
+pub extern "C" fn ostmac_presence_set(status: *const c_char) -> *mut c_char {
+    match cstr_to_string(status) {
+        Ok(s) => string_to_c(set_presence_json(&s)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
+/// Current call slot JSON. See [`calls::call_status_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_call_status() -> *mut c_char {
+    string_to_c(calls::call_status_json())
+}
+
+/// Place an outgoing call to a thread id (1:1 or channel), signaling
+/// only. Blocks up to `timeout_secs` (clamped 5..120) waiting for the
+/// answer. See [`calls::call_place_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_call_place(
+    thread_id: *const c_char,
+    timeout_secs: c_int,
+) -> *mut c_char {
+    match cstr_to_string(thread_id) {
+        Ok(t) => string_to_c(calls::call_place_json(&t, timeout_secs as i32)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
+/// One other user's presence JSON (`user_id` = Entra ID or UPN).
+/// See [`user_presence_json`]. Caller frees with [`ostmac_free`].
+#[no_mangle]
+pub extern "C" fn ostmac_presence_user(user_id: *const c_char) -> *mut c_char {
+    match cstr_to_string(user_id) {
+        Ok(id) => string_to_c(user_presence_json(&id)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
+/// Place the echo-bot test call, signaling only. See [`calls::call_echo_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_call_echo(timeout_secs: c_int) -> *mut c_char {
+    string_to_c(calls::call_echo_json(timeout_secs as i32))
+}
+
+/// Accept the ringing incoming call. See [`calls::call_accept_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_call_accept() -> *mut c_char {
+    string_to_c(calls::call_accept_json())
+}
+
+/// End/decline the active call. See [`calls::call_end_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_call_end() -> *mut c_char {
+    string_to_c(calls::call_end_json())
+}
+
+/// Inject the recorder bot into the connected outgoing call.
+/// See [`calls::call_record_inject_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_call_record_inject() -> *mut c_char {
+    string_to_c(calls::call_record_inject_json())
 }
 
 /// Free a string returned by any `ostmac_*` call. Null-safe.
@@ -1221,6 +1443,160 @@ mod tests {
         assert_eq!(v["messages"][0]["edited_id"], "111");
         assert_eq!(v["messages"][1]["is_edit"], true);
         assert_eq!(v["messages"][1]["chat_id"], "19:u@thread.v2");
+    }
+
+    #[test]
+    fn presence_status_table_matches_ost() {
+        // ost api/presence.rs set_presence mapping, verbatim.
+        for (input, avail, act) in [
+            ("available", "Available", "Available"),
+            ("busy", "Busy", "InACall"),
+            ("dnd", "DoNotDisturb", "Presenting"),
+            ("donotdisturb", "DoNotDisturb", "Presenting"),
+            ("away", "Away", "Away"),
+            ("offline", "Offline", "OffWork"),
+            ("Available", "Available", "Available"),
+            ("DND", "DoNotDisturb", "Presenting"),
+            ("  busy  ", "Busy", "InACall"),
+        ] {
+            assert_eq!(
+                presence_status_pair(input.trim()),
+                Some((avail, act)),
+                "input {:?}",
+                input
+            );
+        }
+        for bad in ["", "online", "invisible", "be right back", "avail able"] {
+            assert_eq!(presence_status_pair(bad), None, "input {:?}", bad);
+        }
+    }
+
+    #[test]
+    fn ffi_call_place_null_is_arg_error() {
+        unsafe {
+            let p = ostmac_call_place(std::ptr::null(), 30);
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
+    fn presence_envelope_shape() {
+        let v: serde_json::Value =
+            serde_json::from_str(&presence_envelope("Busy", "InACall")).unwrap();
+        assert_eq!(v["ok"], true);
+        assert_eq!(v["availability"], "Busy");
+        assert_eq!(v["activity"], "InACall");
+    }
+
+    #[test]
+    fn set_presence_rejects_bad_status_without_network() {
+        for bad in ["", "   ", "online", "invisible"] {
+            let v: serde_json::Value =
+                serde_json::from_str(&set_presence_json(bad)).unwrap();
+            assert_eq!(v["ok"], false, "status {:?}", bad);
+            assert_eq!(v["error"], "arg");
+        }
+        // Unknown-status detail mirrors the ost CLI message.
+        let v: serde_json::Value =
+            serde_json::from_str(&set_presence_json("online")).unwrap();
+        assert!(v["detail"].as_str().unwrap().contains("Unknown status: online"));
+    }
+
+    #[test]
+    fn user_presence_rejects_bad_ids_without_network() {
+        for bad in ["", "   ", "a/b", "a b", "x\ty", "../me"] {
+            let v: serde_json::Value =
+                serde_json::from_str(&user_presence_json(bad)).unwrap();
+            assert_eq!(v["ok"], false, "id {:?}", bad);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
+    fn ffi_presence_set_null_is_arg_error() {
+        unsafe {
+            let p = ostmac_presence_set(std::ptr::null());
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
+    fn ffi_presence_user_null_is_arg_error() {
+        unsafe {
+            let p = ostmac_presence_user(std::ptr::null());
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
+    fn ffi_presence_set_empty_roundtrip() {
+        let st = CString::new("").unwrap();
+        unsafe {
+            let p = ostmac_presence_set(st.as_ptr());
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
+    fn ffi_call_status_envelope() {
+        let _t = calls::test_lock();
+        unsafe {
+            let p = ostmac_call_status();
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], true);
+            assert!(v.get("call").is_some());
+        }
+    }
+
+    #[test]
+    fn typed_poll_carries_calls() {
+        let _t = calls::test_lock();
+        let _ = ost::event_hub::drain(1024);
+        ost::event_hub::publish(
+            r#"{"callInvitation":{"callModalities":["Audio"],
+                "links":{"end":"https://c.example/end"}},
+                "participants":{"from":{"id":"8:orgid:aaa","displayName":"Doe, Jane"}},
+                "debugContent":{"callId":"call-9"}}"#
+                .to_string(),
+        );
+        let v: serde_json::Value =
+            serde_json::from_str(&trouter_poll_typed_json()).unwrap();
+        assert_eq!(v["ok"], true);
+        assert_eq!(v["calls"].as_array().unwrap().len(), 1);
+        assert_eq!(v["calls"][0]["kind"], "incoming");
+        assert_eq!(v["calls"][0]["call_id"], "call-9");
+        assert_eq!(v["calls"][0]["peer_name"], "Doe, Jane");
+        // Slot recorded: status shows the ringing call.
+        let s: serde_json::Value =
+            serde_json::from_str(&calls::call_status_json()).unwrap();
+        assert_eq!(s["call"]["state"], "ringing");
+        // Close it so later tests start clean (each clears anyway).
+        let _ = calls::scan_events(&[
+            r#"{"callEnd":{"code":200,"subCode":0,"phrase":"OK"}}"#.to_string()
+        ]);
     }
 
     #[test]

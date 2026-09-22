@@ -56,11 +56,21 @@ public struct RealtimeMessage: Decodable, Sendable, Identifiable {
 }
 
 /// Typed poll envelope from ostmac_trouter_poll_typed.
+/// `calls` is nil on old core builds (pre om-signal) — treat as no events.
 public struct RealtimePoll: Decodable, Sendable {
     public let ok: Bool
     public let messages: [RealtimeMessage]
     public let resync: Bool
     public let skipped: Int
+    public let calls: [CallEvent]?
+
+    public init(ok: Bool, messages: [RealtimeMessage], resync: Bool, skipped: Int, calls: [CallEvent]? = nil) {
+        self.ok = ok
+        self.messages = messages
+        self.resync = resync
+        self.skipped = skipped
+        self.calls = calls
+    }
 }
 
 /// Pure reconnect backoff: 1,2,4,8,16,30,30,… seconds. Deterministic
@@ -94,6 +104,7 @@ public final class RealtimeFeed: @unchecked Sendable {
     private var seenOrder: [String] = []
     private var subs: [UUID: @Sendable (RealtimeMessage) -> Void] = [:]
     private var resyncSubs: [UUID: @Sendable () -> Void] = [:]
+    private var callSubs: [UUID: @Sendable (CallEvent) -> Void] = [:]
     private var attempt = 0
     private var pollCountValue = 0
     private var lastErrorValue: String?
@@ -150,6 +161,16 @@ public final class RealtimeFeed: @unchecked Sendable {
     public func onResync(_ h: @escaping @Sendable () -> Void) -> UUID {
         let t = UUID()
         lock.lock(); resyncSubs[t] = h; lock.unlock()
+        return t
+    }
+
+    /// Subscribe to call events (incoming invitation / remote end).
+    /// The core already recorded them in the call slot; the handler
+    /// just refreshes UI state.
+    @discardableResult
+    public func onCall(_ h: @escaping @Sendable (CallEvent) -> Void) -> UUID {
+        let t = UUID()
+        lock.lock(); callSubs[t] = h; lock.unlock()
         return t
     }
 
@@ -242,10 +263,13 @@ public final class RealtimeFeed: @unchecked Sendable {
         }
         let msgHandlers = Array(subs.values)
         let rsHandlers = p.resync ? Array(resyncSubs.values) : []
+        let callHandlers = Array(callSubs.values)
+        let callEvents = p.calls ?? []
         lock.unlock()
         if notify {
             for m in fresh { for h in msgHandlers { h(m) } }
             for h in rsHandlers { h() }
+            for e in callEvents { for h in callHandlers { h(e) } }
         }
         return (fresh.count, p.resync)
     }

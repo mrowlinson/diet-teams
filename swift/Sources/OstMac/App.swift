@@ -8,13 +8,15 @@
 // Usage:
 //   OstMac [--demo | --demo-rich] [--chat <id> [--name <n>]] [--say <text>]
 //          [--show-about] [--show-settings] [--auth-state <name>]
+//          [--show-call incoming|active] [--show-av]
+// --show-call seeds the call banner offline (demo state, no core calls).
 // --demo runs fully offline (canned chats/messages, local send echo).
 // --demo-rich is --demo preselected on the rich thread (mentions, code,
 // edited + failed bubbles, Yesterday/Today separators).
 // --chat preselects (or opens directly when absent from the list).
 // --say auto-sends once into the open chat. In live mode that is a REAL
 // send via core — never use it on shared chats for testing.
-// --show-about / --show-settings open those windows at launch (shot hooks).
+// --show-about / --show-settings / --show-av open those windows at launch (shot hooks).
 // --show-teams opens the sidebar on the Teams browser (shot hook).
 // --auth-state <name> opens the Auth window with a canned state, never
 // touching core/network (names: signed-out, starting, code, polling,
@@ -92,6 +94,10 @@ struct OstMacAppMain: App {
             }
         }
         .defaultSize(width: 440, height: 520)
+        Window("Call A/V", id: AppIdentity.avWindowID) {
+            AvPanelView()
+        }
+        .defaultSize(width: 600, height: 600)
         Settings {
             SettingsView(auth: state.auth)
         }
@@ -108,6 +114,9 @@ private struct OstMacCommands: Commands {
         CommandGroup(replacing: .appInfo) {
             Button("About OstMac") { openWindow(id: AppIdentity.aboutWindowID) }
         }
+        CommandMenu("Call") {
+            Button("Call A/V Test") { openWindow(id: AppIdentity.avWindowID) }
+        }
     }
 }
 
@@ -119,6 +128,8 @@ final class AppState: ObservableObject {
     let conv = ConversationStore()
     let feed = RealtimeFeed()
     let auth = AuthViewModel()
+    let presence = PresenceStore()
+    let call: CallStore
     @Published var openChatID: String?
     @Published var signedIn: Bool?
     @Published var coreVersion = "?"
@@ -140,6 +151,11 @@ final class AppState: ObservableObject {
 
     init(args: [String]) {
         isDemo = args.contains("--demo") || args.contains("--demo-rich")
+        call = CallStore(demo: isDemo)
+        // Shot hook: --show-call incoming|active seeds the banner offline.
+        if let i = args.firstIndex(of: "--show-call"), i + 1 < args.count {
+            call.seedDemo(state: args[i + 1])
+        }
         if let i = args.firstIndex(of: "--chat"), i + 1 < args.count {
             preselectID = args[i + 1]
         } else if args.contains("--demo-rich") {
@@ -160,6 +176,10 @@ final class AppState: ObservableObject {
         if isDemo {
             chats = ChatListViewModel(fetcher: { _ in DemoData.chatsResponse() })
             teams = TeamsViewModel(fetcher: { DemoData.teamsResponse() })
+            presence.adoptOwn(DemoData.ownPresence())
+            for (chatID, peer) in DemoData.peerPresence() {
+                presence.adoptChatPeer(chatID: chatID, response: peer)
+            }
         } else {
             chats = ChatListViewModel()
             teams = TeamsViewModel()
@@ -220,11 +240,15 @@ final class AppState: ObservableObject {
             }
         }
         if !isDemo {
+            presence.refreshOwnSoon() // own dot; non-critical on failure
             feed.subscribe { [weak self] msg in
                 Task { @MainActor [weak self] in self?.handleRealtime(msg) }
             }
             feed.onResync { [weak self] in
                 Task { @MainActor [weak self] in self?.handleResync() }
+            }
+            feed.onCall { [weak self] ev in
+                Task { @MainActor [weak self] in self?.call.ingest(ev) }
             }
             feed.start()
             refreshFeedStatus()
@@ -303,6 +327,7 @@ final class AppState: ObservableObject {
         feedState = feed.currentState
         feedPolls = feed.pollCount
         feedError = feed.lastError
+        if !isDemo { call.refresh() } // re-read slot (place/accept landed?)
     }
 
     /// Gate transition (fired from the $state sink for every auth
@@ -317,7 +342,10 @@ final class AppState: ObservableObject {
             if contentOpened {
                 chats.refresh()
                 teams.refresh()
-                if !isDemo { feed.start() }
+                if !isDemo {
+                    feed.start()
+                    presence.refreshOwnSoon()
+                }
             } else {
                 Task { await openContentIfAllowed() }
             }
@@ -325,6 +353,7 @@ final class AppState: ObservableObject {
         case .signedOut, .signingOut, .expired, .refreshFailed, .error:
             signedIn = false
             feed.stop()
+            presence.clear()
             refreshFeedStatus()
         default:
             break
@@ -339,10 +368,12 @@ struct RootView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            CallBanner(store: state.call)
             if state.isDemo || state.auth.state.allowsContent {
                 NavigationSplitView {
                     SidebarColumn(
                         chats: state.chats, teams: state.teams,
+                        presence: state.presence,
                         openChatID: state.openChatID,
                         initialSection: CommandLine.arguments.contains("--show-teams") ? .teams : .chats,
                         onOpenChannel: { id, name in state.openChannel(channelID: id, channelName: name) }
@@ -352,7 +383,10 @@ struct RootView: View {
                     if state.openChatID == nil {
                         emptyDetail
                     } else {
-                        ConversationView(store: state.conv)
+                        ConversationView(
+                            store: state.conv, presence: state.presence,
+                            call: state.call,
+                            isGroup: state.chats.selectedChat?.is_group ?? true)
                     }
                 }
             } else {
@@ -361,13 +395,16 @@ struct RootView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             Divider()
-            StatusBar()
+            StatusBar(call: state.call)
         }
         .frame(minWidth: 760, minHeight: 520)
         .onAppear {
-            // Shot hooks: open About/Settings/Auth windows from launch args.
+            // Shot hooks: open About/Settings/Auth/A-V windows from launch args.
             if CommandLine.arguments.contains("--show-about") {
                 openWindow(id: AppIdentity.aboutWindowID)
+            }
+            if CommandLine.arguments.contains("--show-av") {
+                openWindow(id: AppIdentity.avWindowID)
             }
             if CommandLine.arguments.contains("--show-settings") {
                 openSettings()
@@ -392,20 +429,33 @@ struct RootView: View {
 
 struct StatusBar: View {
     @EnvironmentObject private var state: AppState
+    @ObservedObject var call: CallStore
 
     var body: some View {
         HStack(spacing: 12) {
             Text("core \(state.coreVersion) · init=\(state.initCode)")
                 .font(.caption).monospaced().foregroundStyle(.secondary)
+            if let c = call.call, c.isActive {
+                Text("call: \(c.state) · \(c.displayPeer)")
+                    .font(.caption).monospaced().foregroundStyle(.green)
+                    .lineLimit(1)
+            } else if !state.isDemo, state.signedIn == true {
+                Button("Echo test") { call.echo() }
+                    .font(.caption)
+                    .disabled(call.busy)
+                    .help("Place the echo-bot test call (signaling only)")
+            }
             if state.isDemo {
                 Text("DEMO · offline")
                     .font(.caption).bold()
                     .padding(.horizontal, 6).padding(.vertical, 2)
                     .background(.orange.opacity(0.2))
                     .clipShape(Capsule())
+                PresencePicker(store: state.presence)
             } else {
                 Text(state.signedIn.map { $0 ? "signed in" : "signed out" } ?? "auth ?")
                     .font(.caption).foregroundStyle(.secondary)
+                PresencePicker(store: state.presence)
                 HStack(spacing: 4) {
                     Circle().fill(feedColor).frame(width: 8, height: 8)
                     Text(feedText).font(.caption).monospaced()
