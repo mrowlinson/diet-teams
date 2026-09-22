@@ -18,6 +18,18 @@ public final class CameraCapture: NSObject, ObservableObject {
     private let queue = DispatchQueue(label: "dev.ostmac.camera")
     /// Touched only from the delegate queue (serial); locked for Sendable.
     private nonisolated let pushCount = LockedInt()
+    /// Live-send path (om-liveav): VT-encode each frame and push NALs to the
+    /// Rust send queue. Box is queue-confined; flag toggles from any thread.
+    private nonisolated let liveBox = StreamEncoderBox()
+    private nonisolated let liveFlag = LockedFlag()
+
+    /// Enable/disable live-send encoding (call when a live call connects).
+    public func setLiveSend(_ on: Bool) {
+        liveFlag.set(on)
+        if !on { liveBox.reset() }
+    }
+
+    public var liveSend: Bool { liveFlag.get() }
 
     /// Request camera access. True = granted.
     public static func requestAccess() async -> Bool {
@@ -64,11 +76,15 @@ public final class CameraCapture: NSObject, ObservableObject {
         running = false
         status = "stopping…"
         let session = session
+        let box = liveBox
+        let flag = liveFlag
         queue.async { [weak self] in
             session.stopRunning()
             session.inputs.forEach { session.removeInput($0) }
             session.outputs.forEach { session.removeOutput($0) }
             try? RustCore.cameraEnd()
+            flag.set(false)
+            box.reset()
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.output = nil
@@ -120,6 +136,43 @@ private final class LockedInt: @unchecked Sendable {
     }
 }
 
+private final class LockedFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = false
+    func set(_ v: Bool) {
+        lock.lock(); defer { lock.unlock() }; value = v
+    }
+    func get() -> Bool {
+        lock.lock(); defer { lock.unlock() }; return value
+    }
+}
+
+/// Queue-confined stream encoder: created lazily at first live frame,
+/// recreated when capture dims change. Encode runs off the lock.
+private final class StreamEncoderBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var encoder: H264StreamEncoder?
+    private var dims = (0, 0)
+
+    func encode(bgra: Data, width: Int, height: Int) throws -> [Data] {
+        lock.lock()
+        if encoder == nil || dims != (width, height) {
+            encoder = H264StreamEncoder(width: width, height: height)
+            dims = (width, height)
+        }
+        let enc = encoder
+        lock.unlock()
+        guard let enc else { throw H264EncodeError.session(-1) }
+        return try enc.encode(bgra: bgra)
+    }
+
+    func reset() {
+        lock.lock(); defer { lock.unlock() }
+        encoder = nil
+        dims = (0, 0)
+    }
+}
+
 public enum CameraError: Error, Sendable {
     case noDevice
     case cannotAddInput
@@ -154,6 +207,22 @@ extension CameraCapture: AVCaptureVideoDataOutputSampleBufferDelegate {
                 pixels: packed, width: w, height: h, fmt: "bgra")
             pushCount.increment()
             Task { @MainActor [weak self] in self?.lastStats = stats }
+            if liveFlag.get() {
+                // Live send: VT-encode + push NALs; transient failures drop
+                // the frame (engine falls back to black IDR when idle).
+                let box = liveBox
+                do {
+                    let nals = try box.encode(bgra: packed, width: w, height: h)
+                    _ = try RustCore.videoSendPush(nals: nals)
+                } catch {
+                    // First failure surfaces; the rest stay silent.
+                    if pushCount.current == 1 {
+                        Task { @MainActor [weak self] in
+                            self?.status = "live encode: \(error.localizedDescription)"
+                        }
+                    }
+                }
+            }
         } catch {
             // Push failures are transient; surface at most the first one.
             if pushCount.current == 0 {

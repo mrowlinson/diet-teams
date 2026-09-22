@@ -53,6 +53,9 @@ pub struct CallInfo {
     pub started_at: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
+    /// True once the live media engine (ICE/SRTP/RTP) is attached.
+    #[serde(default)]
+    pub live_media: bool,
 }
 
 impl CallInfo {
@@ -350,6 +353,7 @@ fn note_incoming(n: CallNotification) -> (CallInfo, bool) {
         state: "ringing".to_string(),
         controller: None,
         started_at: now_secs(),
+        live_media: false,
         detail: if modalities.is_empty() {
             None
         } else {
@@ -376,6 +380,7 @@ fn note_incoming(n: CallNotification) -> (CallInfo, bool) {
 
 /// Mark the active call ended (remote callEnd frame). Returns the call id.
 fn note_end(detail: Option<String>) -> Option<String> {
+    crate::live::stop_engine();
     let mut guard = lock_current();
     let cur = guard.as_mut()?;
     if !cur.info.active() {
@@ -387,6 +392,7 @@ fn note_end(detail: Option<String>) -> Option<String> {
 }
 
 fn note_failed(detail: String) -> Option<String> {
+    crate::live::stop_engine();
     let mut guard = lock_current();
     let cur = guard.as_mut()?;
     if !cur.info.active() {
@@ -522,6 +528,16 @@ async fn post_empty(http: &reqwest::Client, skype_token: &str, url: &str) -> Res
 /// Accept the ringing incoming call: SDP media answer first (generated,
 /// never streamed — ost order), then the acceptance POST.
 pub fn call_accept_json() -> String {
+    accept_inner(false)
+}
+
+/// Accept the ringing incoming call with live media: the SDP answer carries
+/// real ports + candidates, then the media engine (ICE/SRTP/RTP) attaches.
+pub fn call_accept_live_json() -> String {
+    accept_inner(true)
+}
+
+fn accept_inner(live: bool) -> String {
     let (notification, id) = {
         let guard = lock_current();
         match guard.as_ref() {
@@ -545,13 +561,34 @@ pub fn call_accept_json() -> String {
         Ok(t) => t,
         Err(e) => return err_json("auth", e),
     };
-    let run = || -> Result<(bool, String), String> {
+    let run = || -> Result<(bool, String, Option<crate::live::EngineParams>), String> {
         let rt = rt()?;
         rt.block_on(async {
             let http = reqwest::Client::new();
+            // Live: bind real media ports (+ bounded srflx) before answering.
+            let live_socks = if live {
+                let audio_sock = tokio::net::UdpSocket::bind("0.0.0.0:0")
+                    .await
+                    .map_err(|e| format!("udp bind: {}", e))?;
+                let video_sock = tokio::net::UdpSocket::bind("0.0.0.0:0")
+                    .await
+                    .map_err(|e| format!("udp bind: {}", e))?;
+                let srflx = async {
+                    let a = ice::gather_srflx_candidate(&audio_sock, ice::DEFAULT_STUN_SERVER).await;
+                    let v = ice::gather_srflx_candidate(&video_sock, ice::DEFAULT_STUN_SERVER).await;
+                    (a, v)
+                };
+                let (a_srflx, v_srflx) = tokio::time::timeout(Duration::from_secs(10), srflx)
+                    .await
+                    .unwrap_or((None, None));
+                Some((audio_sock, video_sock, a_srflx, v_srflx))
+            } else {
+                None
+            };
             // Media answer first (best-effort: ost still accepts without).
             let mut answered = false;
             let mut warn = String::new();
+            let mut handoff: Option<crate::live::EngineParams> = None;
             if let Some(blob) = notification
                 .call_invitation
                 .as_ref()
@@ -560,12 +597,68 @@ pub fn call_accept_json() -> String {
             {
                 match sdp::parse_sdp_offer(blob) {
                     Ok(offer) => {
-                        let answer =
-                            sdp::generate_sdp_answer_full(&sdp::get_local_ip(), 0, 0, &offer, &[], &[]);
+                        let local_ip = sdp::get_local_ip();
+                        let (answer, socks) = match live_socks {
+                            Some((ref a, ref v, ref a_srflx, ref v_srflx)) => {
+                                let ap = a.local_addr().map(|x| x.port()).unwrap_or(0);
+                                let vp = v.local_addr().map(|x| x.port()).unwrap_or(0);
+                                let host = |port: u16| ice::IceCandidate {
+                                    foundation: "1".to_string(),
+                                    component: 1,
+                                    transport: ice::Transport::Udp,
+                                    priority: 2130706431,
+                                    address: local_ip.clone(),
+                                    port,
+                                    candidate_type: ice::CandidateType::Host,
+                                    raddr: None,
+                                    rport: None,
+                                };
+                                let mut ac = vec![host(ap)];
+                                ac.extend(a_srflx.clone());
+                                let mut vc = vec![host(vp)];
+                                vc.extend(v_srflx.clone());
+                                (
+                                    sdp::generate_sdp_answer_full(
+                                        &local_ip, ap, vp, &offer, &ac, &vc,
+                                    ),
+                                    true,
+                                )
+                            }
+                            None => (
+                                sdp::generate_sdp_answer_full(&local_ip, 0, 0, &offer, &[], &[]),
+                                false,
+                            ),
+                        };
                         match signaling::send_media_answer(&http, &skype, &notification, &answer.sdp)
                             .await
                         {
-                            Ok(()) => answered = true,
+                            Ok(()) => {
+                                answered = true;
+                                if socks {
+                                    // live_socks is Some exactly when the
+                                    // real-port branch ran.
+                                    let (a, v, _, _) = live_socks.unwrap();
+                                    handoff = Some(crate::live::EngineParams {
+                                        audio_sock: a
+                                            .into_std()
+                                            .map_err(|e| format!("audio sock: {}", e))?,
+                                        video_sock: v
+                                            .into_std()
+                                            .map_err(|e| format!("video sock: {}", e))?,
+                                        local_audio_crypto: answer.audio_crypto_line.clone(),
+                                        local_video_crypto: answer.video_crypto_line.clone(),
+                                        local_audio_ufrag: answer.audio_ice_ufrag.clone(),
+                                        local_audio_pwd: answer.audio_ice_pwd.clone(),
+                                        local_video_ufrag: answer.video_ice_ufrag.clone(),
+                                        local_video_pwd: answer.video_ice_pwd.clone(),
+                                        remote_sdp: blob.clone(),
+                                        controlling: false,
+                                        video_ssrc: video::generate_ssrc(),
+                                        cname: extract_mri(&skype)
+                                            .unwrap_or_else(|| "ostmac".to_string()),
+                                    });
+                                }
+                            }
                             Err(e) => warn = format!("media answer failed: {:#}", e),
                         }
                     }
@@ -577,19 +670,40 @@ pub fn call_accept_json() -> String {
             signaling::accept_call(&http, &skype, &notification)
                 .await
                 .map_err(|e| format!("accept: {:#}", e))?;
-            Ok((answered, warn))
+            Ok((answered, warn, handoff))
         })
     };
     match run() {
-        Ok((answered, warn)) => {
+        Ok((answered, warn, handoff)) => {
+            let mut warn = warn;
+            let mut live_on = false;
+            if let Some(params) = handoff {
+                match crate::live::start_engine(params) {
+                    Ok(()) => live_on = true,
+                    Err(e) => {
+                        warn = if warn.is_empty() {
+                            format!("live media failed: {}", e)
+                        } else {
+                            format!("{}; live media failed: {}", warn, e)
+                        };
+                    }
+                }
+            } else if live {
+                warn = if warn.is_empty() {
+                    "no media answer; signaling only".to_string()
+                } else {
+                    warn
+                };
+            }
             let mut guard = lock_current();
             if let Some(s) = guard.as_mut().filter(|s| s.info.id == id) {
                 s.info.state = "connected".to_string();
+                s.info.live_media = live_on;
                 s.info.detail = if warn.is_empty() { None } else { Some(warn) };
             }
             let call = guard.as_ref().map(|s| s.info.clone());
             serde_json::json!({"ok": true, "accepted": true,
-                "media_answered": answered, "call": call})
+                "media_answered": answered, "live_media": live_on, "call": call})
             .to_string()
         }
         Err(e) => {
@@ -599,8 +713,11 @@ pub fn call_accept_json() -> String {
     }
 }
 
+
 /// End/decline the active call via its stored end URL.
+/// Stops the live media engine first when one is attached.
 pub fn call_end_json() -> String {
+    crate::live::stop_engine();
     let (url, id) = {
         let guard = lock_current();
         match guard.as_ref() {
@@ -824,16 +941,46 @@ pub fn call_place_json(thread_id: &str, timeout_secs: i32) -> String {
     if thread_id.trim().is_empty() {
         return err_json("arg", "empty thread_id");
     }
-    place_inner(Some(thread_id.trim()), false, clamp_timeout(timeout_secs))
+    place_inner(
+        Some(thread_id.trim()),
+        false,
+        clamp_timeout(timeout_secs),
+        false,
+    )
+}
+
+/// Place an outgoing call with live media: same signaling as
+/// [`call_place_json`], then the media engine (ICE/SRTP/RTP, mic + camera
+/// send, speaker + incoming-video queues) attaches to the accepted leg.
+pub fn call_place_live_json(thread_id: &str, timeout_secs: i32) -> String {
+    if thread_id.trim().is_empty() {
+        return err_json("arg", "empty thread_id");
+    }
+    place_inner(
+        Some(thread_id.trim()),
+        false,
+        clamp_timeout(timeout_secs),
+        true,
+    )
 }
 
 /// Place the echo-bot test call (`UserInitiatedTestCall` via 1:1 epconv
 /// + `invite_echo_bot`, same as `ost call --echo` up to the media leg).
 pub fn call_echo_json(timeout_secs: i32) -> String {
-    place_inner(None, true, clamp_timeout(timeout_secs))
+    place_inner(None, true, clamp_timeout(timeout_secs), false)
 }
 
-fn place_inner(thread_override: Option<&str>, echo: bool, timeout: Duration) -> String {
+/// Place the echo-bot test call with live media attached on acceptance.
+pub fn call_echo_live_json(timeout_secs: i32) -> String {
+    place_inner(None, true, clamp_timeout(timeout_secs), true)
+}
+
+fn place_inner(
+    thread_override: Option<&str>,
+    echo: bool,
+    timeout: Duration,
+    live: bool,
+) -> String {
     {
         let guard = lock_current();
         if let Some(s) = guard.as_ref().filter(|s| s.info.active()) {
@@ -921,6 +1068,7 @@ fn place_inner(thread_override: Option<&str>, echo: bool, timeout: Duration) -> 
                 controller: None,
                 started_at: now_secs(),
                 detail: None,
+                live_media: false,
             },
             end_url: None,
             notification: None,
@@ -933,7 +1081,15 @@ fn place_inner(thread_override: Option<&str>, echo: bool, timeout: Duration) -> 
         });
     }
 
-    let run = || -> Result<(String, Option<String>, String), String> {
+    let run = || -> Result<
+        (
+            String,
+            Option<String>,
+            String,
+            Option<crate::live::EngineParams>,
+        ),
+        String,
+    > {
         let r = rt()?;
         r.block_on(async {
             let http = reqwest::Client::new();
@@ -997,17 +1153,22 @@ fn place_inner(thread_override: Option<&str>, echo: bool, timeout: Duration) -> 
                 }
             };
             let _ = tokio::time::timeout(Duration::from_secs(10), srflx).await;
+            let our_audio_ufrag = sdp::generate_ice_ufrag();
+            let our_audio_pwd = sdp::generate_ice_pwd();
+            let our_video_ufrag = sdp::generate_ice_ufrag();
+            let our_video_pwd = sdp::generate_ice_pwd();
+            let video_ssrc = video::generate_ssrc();
             let offer = sdp::generate_av_sdp_offer(&sdp::AvSdpParams {
                 local_ip: &local_ip,
                 audio_port,
                 video_port,
-                audio_ufrag: &sdp::generate_ice_ufrag(),
-                audio_pwd: &sdp::generate_ice_pwd(),
-                video_ufrag: &sdp::generate_ice_ufrag(),
-                video_pwd: &sdp::generate_ice_pwd(),
+                audio_ufrag: &our_audio_ufrag,
+                audio_pwd: &our_audio_pwd,
+                video_ufrag: &our_video_ufrag,
+                video_pwd: &our_video_pwd,
                 audio_candidates: &audio_cands,
                 video_candidates: &video_cands,
-                video_ssrc_base: video::generate_ssrc(),
+                video_ssrc_base: video_ssrc,
                 audio_ssrc: video::generate_ssrc(),
             });
             // Place.
@@ -1091,21 +1252,68 @@ fn place_inner(thread_override: Option<&str>, echo: bool, timeout: Duration) -> 
                     s.trouter_surl = surl;
                 }
             }
-            Ok((controller, acc.end_url, warns.join("; ")))
+            // Live handoff: sockets (as std, runtime-free) + offer crypto /
+            // ICE creds + the answer SDP for the media engine thread.
+            let mut warns = warns;
+            let handoff = if live {
+                match acc.sdp {
+                    Some(ref answer) => Some(crate::live::EngineParams {
+                        audio_sock: audio_sock
+                            .into_std()
+                            .map_err(|e| format!("audio sock: {}", e))?,
+                        video_sock: video_sock
+                            .into_std()
+                            .map_err(|e| format!("video sock: {}", e))?,
+                        local_audio_crypto: offer.audio_crypto_line.clone(),
+                        local_video_crypto: Some(offer.video_crypto_line.clone()),
+                        local_audio_ufrag: our_audio_ufrag,
+                        local_audio_pwd: our_audio_pwd,
+                        local_video_ufrag: Some(our_video_ufrag),
+                        local_video_pwd: Some(our_video_pwd),
+                        remote_sdp: answer.clone(),
+                        controlling: true,
+                        video_ssrc,
+                        cname: caller_mri.clone(),
+                    }),
+                    None => {
+                        warns.push("accepted without SDP; no live media".to_string());
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+            Ok((controller, acc.end_url, warns.join("; "), handoff))
         })
     };
 
     match run() {
-        Ok((controller, end_url, warns)) => {
+        Ok((controller, end_url, warns, handoff)) => {
+            let mut warns = warns;
+            let mut live_on = false;
+            if let Some(params) = handoff {
+                match crate::live::start_engine(params) {
+                    Ok(()) => live_on = true,
+                    Err(e) => {
+                        if warns.is_empty() {
+                            warns = format!("live media failed: {}", e);
+                        } else {
+                            warns = format!("{}; live media failed: {}", warns, e);
+                        }
+                    }
+                }
+            }
             let mut guard = lock_current();
             if let Some(s) = guard.as_mut().filter(|s| s.info.id == call_id) {
                 s.info.state = "connected".to_string();
                 s.info.controller = Some(controller);
                 s.end_url = end_url;
+                s.info.live_media = live_on;
                 s.info.detail = if warns.is_empty() { None } else { Some(warns) };
             }
             let call = guard.as_ref().map(|s| s.info.clone());
-            serde_json::json!({"ok": true, "placed": true, "accepted": true, "call": call})
+            serde_json::json!({"ok": true, "placed": true, "accepted": true,
+                "live_media": live_on, "call": call})
                 .to_string()
         }
         Err(e) => {
@@ -1304,10 +1512,11 @@ mod tests {
     #[test]
     fn place_empty_thread_rejected_without_network() {
         for bad in ["", "   "] {
-            let v: serde_json::Value =
-                serde_json::from_str(&call_place_json(bad, 30)).unwrap();
-            assert_eq!(v["ok"], false);
-            assert_eq!(v["error"], "arg");
+            for f in [call_place_json(bad, 30), call_place_live_json(bad, 30)] {
+                let v: serde_json::Value = serde_json::from_str(&f).unwrap();
+                assert_eq!(v["ok"], false);
+                assert_eq!(v["error"], "arg");
+            }
         }
     }
 
@@ -1315,11 +1524,18 @@ mod tests {
     fn accept_end_inject_without_slot_are_errors() {
         let _t = test_lock();
         clear_current();
-        for f in [call_accept_json(), call_end_json(), call_record_inject_json()] {
+        for f in [
+            call_accept_json(),
+            call_accept_live_json(),
+            call_end_json(),
+            call_record_inject_json(),
+        ] {
             let v: serde_json::Value = serde_json::from_str(&f).unwrap();
             assert_eq!(v["ok"], false);
         }
         let v: serde_json::Value = serde_json::from_str(&call_accept_json()).unwrap();
+        assert_eq!(v["error"], "no_incoming");
+        let v: serde_json::Value = serde_json::from_str(&call_accept_live_json()).unwrap();
         assert_eq!(v["error"], "no_incoming");
         let v: serde_json::Value = serde_json::from_str(&call_end_json()).unwrap();
         assert_eq!(v["error"], "no_call");

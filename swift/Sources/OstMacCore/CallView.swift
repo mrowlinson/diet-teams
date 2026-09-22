@@ -12,7 +12,10 @@ public final class CallStore: ObservableObject {
     @Published public private(set) var busy = false
     @Published public private(set) var error: String?
     @Published public private(set) var lastAction = ""
+    @Published public private(set) var media: LiveMediaStats?
     private var generation = 0
+    private var mediaGeneration = 0
+    private var mediaPolling = false
     private let demo: Bool
 
     public init(demo: Bool = false) {
@@ -36,7 +39,40 @@ public final class CallStore: ObservableObject {
             } catch {
                 fetched = nil
             }
-            await MainActor.run { self.call = fetched }
+            await MainActor.run {
+                self.call = fetched
+                self.syncMediaPoll()
+            }
+        }
+    }
+
+    /// Run the 1s media-stats loop exactly while a live call is up.
+    private func syncMediaPoll() {
+        let live = call?.liveMedia == true && (call?.isActive ?? false)
+        let polling = mediaPolling
+        if live, !polling {
+            mediaPolling = true
+            mediaGeneration += 1
+            let gen = mediaGeneration
+            Task.detached(priority: .utility) { [weak self] in
+                while self?.mediaPolling == true, self?.mediaGeneration == gen {
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    guard self?.mediaPolling == true, self?.mediaGeneration == gen else { return }
+                    do {
+                        let m = try RustCore.callMedia().media
+                        await MainActor.run { [weak self] in
+                            guard let self, self.mediaGeneration == gen else { return }
+                            self.media = m
+                        }
+                    } catch {
+                        // Transient; next tick retries.
+                    }
+                }
+            }
+        } else if !live, polling {
+            mediaPolling = false
+            mediaGeneration += 1 // supersede any parked loop
+            media = nil
         }
     }
 
@@ -54,6 +90,13 @@ public final class CallStore: ObservableObject {
                 peerName: "Doe, Jane", thread: "19:demo@thread.v2",
                 state: "connected", controller: "https://demo/conv/x",
                 startedAt: 1, detail: "outgoing leg · ● Rec injects recorder")
+        case "live":
+            call = CallInfo(
+                id: "demo-call", dir: "out", peer: "8:orgid:demo",
+                peerName: "Doe, Jane", thread: "19:demo@thread.v2",
+                state: "connected", controller: "https://demo/conv/x",
+                startedAt: 1, detail: "echo bot · a/v flowing",
+                liveMedia: true)
         default:
             call = nil
         }
@@ -64,9 +107,10 @@ public final class CallStore: ObservableObject {
             // Offline echo: flip local state so the banner is exercisable.
             lastAction = "demo:\(label)"
             switch label {
-            case "accept", "place", "echo":
-                if var c = call { c = CallInfo(id: c.id, dir: c.dir, peer: c.peer, peerName: c.peerName, thread: c.thread, state: "connected", controller: c.controller, startedAt: c.startedAt, detail: c.detail); call = c }
-                else { call = CallInfo(id: "demo-call", dir: "out", peer: "", peerName: "Doe, Jane", state: "connected") }
+            case "accept", "place", "echo", "accept-live", "place-live", "echo-live":
+                let live = label.hasSuffix("-live")
+                if var c = call { c = CallInfo(id: c.id, dir: c.dir, peer: c.peer, peerName: c.peerName, thread: c.thread, state: "connected", controller: c.controller, startedAt: c.startedAt, detail: c.detail, liveMedia: live ? true : c.liveMedia); call = c }
+                else { call = CallInfo(id: "demo-call", dir: "out", peer: "", peerName: "Doe, Jane", state: "connected", liveMedia: live ? true : nil) }
             case "end":
                 call = nil
             default:
@@ -90,7 +134,10 @@ public final class CallStore: ObservableObject {
             switch result {
             case let .success(r):
                 lastAction = label
-                if let c = r.call { call = c } else { refresh() }
+                if let c = r.call {
+                    call = c
+                    syncMediaPoll()
+                } else { refresh() }
                 if let rej = r.rejection, r.accepted == false { error = rej }
             case let .failure(e):
                 error = String(describing: e)
@@ -103,12 +150,24 @@ public final class CallStore: ObservableObject {
         run("place") { try RustCore.callPlace(threadID: threadID, timeoutSecs: timeoutSecs) }
     }
 
+    public func placeLive(threadID: String, timeoutSecs: Int32 = 30) {
+        run("place-live") { try RustCore.callPlaceLive(threadID: threadID, timeoutSecs: timeoutSecs) }
+    }
+
     public func echo(timeoutSecs: Int32 = 30) {
         run("echo") { try RustCore.callEcho(timeoutSecs: timeoutSecs) }
     }
 
+    public func echoLive(timeoutSecs: Int32 = 30) {
+        run("echo-live") { try RustCore.callEchoLive(timeoutSecs: timeoutSecs) }
+    }
+
     public func accept() {
         run("accept") { try RustCore.callAccept() }
+    }
+
+    public func acceptLive() {
+        run("accept-live") { try RustCore.callAcceptLive() }
     }
 
     public func end() {
@@ -133,17 +192,33 @@ public struct CallBanner: View {
 
     public var body: some View {
         if let c = store.call, c.isActive {
-            HStack(spacing: 10) {
-                Image(systemName: icon(for: c))
-                    .foregroundStyle(.green)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(title(for: c)).font(.subheadline).bold()
-                    Text(subtitle(for: c))
-                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 10) {
+                    Image(systemName: icon(for: c))
+                        .foregroundStyle(.green)
+                    if c.liveMedia == true {
+                        Text("LIVE")
+                            .font(.caption2).bold()
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(.red.opacity(0.85))
+                            .foregroundStyle(.white)
+                            .clipShape(Capsule())
+                            .accessibilityLabel("Live media active")
+                    }
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(title(for: c)).font(.subheadline).bold()
+                        Text(subtitle(for: c))
+                            .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                    Spacer()
+                    if store.busy { ProgressView().controlSize(.small) }
+                    buttons(for: c)
                 }
-                Spacer()
-                if store.busy { ProgressView().controlSize(.small) }
-                buttons(for: c)
+                if c.liveMedia == true, let m = store.media {
+                    Text(mediaLine(m))
+                        .font(.caption).monospaced()
+                        .foregroundStyle(.secondary).lineLimit(1)
+                }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -182,18 +257,32 @@ public struct CallBanner: View {
     }
 
     private func subtitle(for c: CallInfo) -> String {
-        let base = "signaling only — no audio yet"
+        let base = c.liveMedia == true
+            ? "live media — mic/camera send, speaker/video recv"
+            : "signaling only — no audio yet"
         guard let d = c.detail, !d.isEmpty else { return base }
         if d.contains("signaling only") { return d } // seeded/echo detail
         return "\(base) · \(d)"
     }
 
+    private func mediaLine(_ m: LiveMediaStats) -> String {
+        if let e = m.error, !e.isEmpty { return "media error: \(e)" }
+        return "a \(m.audio_recv)/\(m.audio_sent) v \(m.video_recv)/\(m.video_sent)" +
+            " ice=\(m.ice_audio.isEmpty ? "…" : "ok")/\(m.ice_video.isEmpty ? "…" : "ok")" +
+            " q=\(m.send_queued)/\(m.recv_pending)"
+    }
+
     @ViewBuilder
     private func buttons(for c: CallInfo) -> some View {
         if c.dir == "in", c.state == "ringing" {
-            Button("Accept") { store.accept() }
+            Button("Accept live") { store.acceptLive() }
                 .buttonStyle(.borderedProminent)
                 .disabled(store.busy)
+                .help("Accept with live audio/video")
+            Button("Accept") { store.accept() }
+                .buttonStyle(.bordered)
+                .disabled(store.busy)
+                .help("Accept signaling only")
             Button("Decline") { store.end() }
                 .buttonStyle(.bordered)
                 .disabled(store.busy)
