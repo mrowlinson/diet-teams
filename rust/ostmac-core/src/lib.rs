@@ -849,6 +849,60 @@ mod tests {
     }
 
     #[test]
+    fn page_envelope_carries_cursor_and_raw() {
+        // om-core-union: convrich success shape (only arg-rejection was pinned).
+        let page = ost::api::MessagesPage {
+            messages: vec![ost::api::MessageInfo {
+                id: "m1".to_string(),
+                sender: "A Sender".to_string(),
+                timestamp: "2026-09-22T12:00:00Z".to_string(),
+                content: "hi Bob".to_string(),
+                raw: "<p>hi <at>Bob</at></p>".to_string(),
+            }],
+            backward_link: Some(
+                "https://h/v1/conversations/19:x/messages?page=2".to_string(),
+            ),
+        };
+        let v: serde_json::Value =
+            serde_json::from_str(&page_to_json("19:x", &page)).unwrap();
+        assert_eq!(v["ok"], true);
+        assert_eq!(v["chat_id"], "19:x");
+        assert_eq!(v["messages"].as_array().unwrap().len(), 1);
+        assert_eq!(v["messages"][0]["raw"], "<p>hi <at>Bob</at></p>");
+        assert_eq!(
+            v["page_token"],
+            "https://h/v1/conversations/19:x/messages?page=2"
+        );
+    }
+
+    #[test]
+    fn page_envelope_exhausted_token_is_null() {
+        let page = ost::api::MessagesPage {
+            messages: vec![],
+            backward_link: None,
+        };
+        let v: serde_json::Value =
+            serde_json::from_str(&page_to_json("19:x", &page)).unwrap();
+        assert_eq!(v["ok"], true);
+        assert!(v["page_token"].is_null());
+        assert_eq!(v["messages"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn ffi_messages_page_null_chat_id_is_arg_error() {
+        let tok = CString::new("https://h/conversations/19:x").unwrap();
+        unsafe {
+            let p = ostmac_messages_page(std::ptr::null(), tok.as_ptr(), 10);
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
     fn ffi_messages_null_is_arg_error() {
         unsafe {
             let p = ostmac_messages(std::ptr::null(), 10);
