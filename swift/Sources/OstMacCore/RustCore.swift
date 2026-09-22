@@ -23,6 +23,14 @@ public enum RustCore {
         }
     }
 
+    public static func refresh() throws -> RefreshResponse {
+        try call(ostmac_refresh(), as: RefreshResponse.self)
+    }
+
+    public static func signOut() throws -> SignOutResponse {
+        try call(ostmac_sign_out(), as: SignOutResponse.self)
+    }
+
     public static func chats(limit: Int32 = 20) throws -> ChatsResponse {
         try call(ostmac_chats(limit), as: ChatsResponse.self)
     }

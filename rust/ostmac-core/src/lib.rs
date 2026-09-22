@@ -306,6 +306,50 @@ pub fn device_poll_json(session: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Refresh + sign-out (om-authux lane)
+// ---------------------------------------------------------------------------
+
+/// Refresh AAD + derived tokens via the stored refresh token. Returns:
+/// - `{ok:true, refreshed:true, tokens:{...}}` — refresh succeeded
+/// - `{ok:true, refreshed:false}` — no refresh token stored (run device flow)
+/// - `{ok:false, ...}` — refresh attempted and failed (retryable)
+pub fn refresh_json() -> String {
+    let run = || -> Result<bool, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            ost::auth::oauth::refresh()
+                .await
+                .map_err(|e| format!("{:#}", e))
+        })
+    };
+    match run() {
+        Ok(true) => {
+            let tokens = Config::load()
+                .map(|c| token_summary(&c))
+                .unwrap_or(json!({}));
+            json!({"ok": true, "refreshed": true, "tokens": tokens}).to_string()
+        }
+        Ok(false) => json!({"ok": true, "refreshed": false}).to_string(),
+        Err(e) => err_json("refresh", e),
+    }
+}
+
+/// Clear all stored tokens (sign out). Drops pending device-code sessions
+/// too. Returns `{ok:true}` or `{ok:false}` when the config can't load/save.
+pub fn sign_out_json() -> String {
+    lock_sessions().clear();
+    let run = || -> Result<(), String> {
+        let mut cfg = Config::load().map_err(|e| e.to_string())?;
+        cfg.clear_tokens();
+        cfg.save().map_err(|e| e.to_string())
+    };
+    match run() {
+        Ok(()) => json!({"ok": true}).to_string(),
+        Err(e) => err_json("sign_out", e),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Chats
 // ---------------------------------------------------------------------------
 
@@ -615,6 +659,18 @@ pub extern "C" fn ostmac_trouter_poll_typed() -> *mut c_char {
 #[no_mangle]
 pub extern "C" fn ostmac_trouter_stop() -> c_int {
     trouter_stop()
+}
+
+/// Refresh tokens via the stored refresh token. See [`refresh_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_refresh() -> *mut c_char {
+    string_to_c(refresh_json())
+}
+
+/// Clear all stored tokens (sign out). See [`sign_out_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_sign_out() -> *mut c_char {
+    string_to_c(sign_out_json())
 }
 
 /// Free a string returned by any `ostmac_*` call. Null-safe.

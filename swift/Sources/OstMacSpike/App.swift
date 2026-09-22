@@ -23,6 +23,8 @@ final class CoreLog: ObservableObject {
 struct ContentView: View {
     @StateObject private var log = CoreLog()
     @StateObject private var chats = ChatListViewModel()
+    @StateObject private var auth = AuthViewModel()
+    @State private var authShown = false
     @State private var coreVersion = "?"
     @State private var initCode: Int32 = -99
     @State private var signedIn: Bool?
@@ -51,6 +53,7 @@ struct ContentView: View {
                 }
                 HStack {
                     Button(trouterOn ? "Trouter stop" : "Trouter start") { toggleTrouter() }
+                    Button("Account…") { authShown = true }
                     Button("Clear log") { log.lines = [] }
                 }
                 if let s = deviceSession {
@@ -70,6 +73,14 @@ struct ContentView: View {
             .padding()
         }
         .frame(minWidth: 700, minHeight: 480)
+        .sheet(isPresented: $authShown) {
+            VStack {
+                AuthView(model: auth)
+                Button("Close") { authShown = false }
+                    .padding(.bottom)
+            }
+            .task { await auth.refreshStatus() }
+        }
         .onAppear {
             coreVersion = RustCore.version()
             initCode = RustCore.initialize()

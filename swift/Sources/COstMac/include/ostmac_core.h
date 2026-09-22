@@ -46,6 +46,15 @@ char *ostmac_trouter_poll_typed(void);
 // Stop background Trouter: 0 stopped, -1 idle.
 int ostmac_trouter_stop(void);
 
+// Refresh AAD + derived tokens via the stored refresh token:
+// {ok, refreshed, tokens?}. refreshed=false means no refresh token stored
+// (run device flow). Caller frees. Hits network when a refresh token exists.
+char *ostmac_refresh(void);
+
+// Clear all stored tokens (sign out); drops pending device sessions.
+// {ok:true} or {ok:false}. Caller frees. No network.
+char *ostmac_sign_out(void);
+
 // Free a string from any ostmac_* call. Null-safe.
 void ostmac_free(char *s);
 
