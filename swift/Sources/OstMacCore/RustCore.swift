@@ -93,6 +93,12 @@ public enum RustCore {
         }
     }
 
+    public static func resolveMri(mri: String) throws -> ResolveMriResponse {
+        try mri.withCString { ptr in
+            try call(ostmac_resolve_mri(ptr), as: ResolveMriResponse.self)
+        }
+    }
+
     public static func trouterStart() -> Int32 { ostmac_trouter_start() }
     public static func trouterStop() -> Int32 { ostmac_trouter_stop() }
 

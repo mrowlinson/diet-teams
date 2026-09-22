@@ -343,6 +343,83 @@ public struct UserPresenceResponse: Decodable, Sendable {
     }
 }
 
+// MARK: - MRI resolution (om-steal-ids lane)
+
+/// Graph user behind a Teams MRI, from core `ostmac_resolve_mri`
+/// (Graph /users/{aad-oid}). `email` is nil for guests (no mail).
+public struct ResolveMriResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let id: String
+    public let email: String?
+    public let display_name: String
+
+    /// Host-side construction (mock fetchers, caches).
+    public init(ok: Bool, id: String, email: String?, display_name: String) {
+        self.ok = ok
+        self.id = id
+        self.email = email
+        self.display_name = display_name
+    }
+}
+
+// MARK: - Token health (om-steal-ids lane)
+
+/// One timed probe in a health report (port of teams-access
+/// `HealthProbeResult`: name/ok/status/detail/durationMs).
+public struct HealthProbe: Sendable, Equatable {
+    public let name: String
+    public let ok: Bool
+    public let status: Int?
+    public let detail: String
+    public let durationMs: Int
+
+    public init(name: String, ok: Bool, status: Int? = nil, detail: String, durationMs: Int) {
+        self.name = name
+        self.ok = ok
+        self.status = status
+        self.detail = detail
+        self.durationMs = durationMs
+    }
+}
+
+/// Overall health verdict (teams-access `overall`, verbatim).
+public enum HealthOverall: String, Sendable {
+    case ok, degraded, broken
+}
+
+/// One audience token slot in a health report (offline, from status).
+public struct HealthToken: Sendable, Equatable {
+    public let audience: String
+    public let present: Bool
+    public let expired: Bool
+
+    public init(audience: String, present: Bool, expired: Bool) {
+        self.audience = audience
+        self.present = present
+        self.expired = expired
+    }
+
+    public var state: String {
+        !present ? "missing" : expired ? "expired" : "fresh"
+    }
+}
+
+/// Full diagnostics report: offline per-audience token slots + live
+/// probe results + verdict. Built host-side (no core envelope).
+public struct HealthReport: Sendable {
+    public let overall: HealthOverall
+    public let tokens: [HealthToken]
+    public let probes: [HealthProbe]
+    public let accountUPN: String?
+
+    public init(overall: HealthOverall, tokens: [HealthToken], probes: [HealthProbe], accountUPN: String? = nil) {
+        self.overall = overall
+        self.tokens = tokens
+        self.probes = probes
+        self.accountUPN = accountUPN
+    }
+}
+
 // MARK: - Calls (om-signal lane: signaling only, no audio/video)
 
 /// One call record from core `ostmac_call_*`. `state` is

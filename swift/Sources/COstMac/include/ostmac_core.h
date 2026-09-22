@@ -86,6 +86,11 @@ char *ostmac_presence_set(const char *status);
 // {ok,id,availability,activity}. Caller frees. Hits network.
 char *ostmac_presence_user(const char *user_id);
 
+// Resolve a Teams MRI (8:orgid:<aad-oid>) to a Graph user:
+// {ok,id,email?,display_name}. {ok:false,error:"not_found"} for unknown
+// users (permanent). Caller frees. Hits network.
+char *ostmac_resolve_mri(const char *mri);
+
 // Current call slot JSON: {ok, call:{id,dir,peer,peer_name,thread,
 // state,controller?,started_at,detail?}|null}. Caller frees. No network.
 char *ostmac_call_status(void);

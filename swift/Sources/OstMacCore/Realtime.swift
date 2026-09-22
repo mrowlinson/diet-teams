@@ -26,6 +26,10 @@ public struct RealtimeMessage: Decodable, Sendable, Identifiable {
     public let chatID: String
     public let msgId: String
     public let sender: String
+    /// Raw sender MRI (`8:orgid:…`) when the event carried one; nil on
+    /// old core builds and non-MRI senders. Presence resolves it for
+    /// live chatmate dots.
+    public let senderID: String?
     public let text: String
     public let time: String
     public let isEdit: Bool
@@ -37,20 +41,23 @@ public struct RealtimeMessage: Decodable, Sendable, Identifiable {
     enum CodingKeys: String, CodingKey {
         case chatID = "chat_id"
         case msgId = "id"
-        case sender, text, time
+        case sender, senderID = "sender_id", text, time
         case isEdit = "is_edit"
         case editedID = "edited_id"
         case raw
     }
 
-    /// Host-side construction (tests, mock feeds). Wire decoding untouched.
+    /// Host-side construction (tests, mock feeds). `senderID`/`raw`
+    /// default to nil (old core builds omit them); wire decoding untouched.
     public init(
-        chatID: String, msgId: String, sender: String, text: String,
-        time: String, isEdit: Bool, editedID: String? = nil, raw: String? = nil
+        chatID: String, msgId: String, sender: String,
+        senderID: String? = nil, text: String, time: String,
+        isEdit: Bool, editedID: String? = nil, raw: String? = nil
     ) {
         self.chatID = chatID
         self.msgId = msgId
         self.sender = sender
+        self.senderID = senderID
         self.text = text
         self.time = time
         self.isEdit = isEdit
@@ -63,6 +70,7 @@ public struct RealtimeMessage: Decodable, Sendable, Identifiable {
         chatID = try c.decode(String.self, forKey: .chatID)
         msgId = try c.decode(String.self, forKey: .msgId)
         sender = try c.decode(String.self, forKey: .sender)
+        senderID = try c.decodeIfPresent(String.self, forKey: .senderID)
         text = try c.decode(String.self, forKey: .text)
         time = try c.decode(String.self, forKey: .time)
         isEdit = try c.decode(Bool.self, forKey: .isEdit)
