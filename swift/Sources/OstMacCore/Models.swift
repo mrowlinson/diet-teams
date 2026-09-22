@@ -49,6 +49,21 @@ public struct DevicePoll: Decodable, Sendable {
     public let tokens: TokenSummary?
 }
 
+// MARK: - Auth refresh / sign-out (om-authux lane)
+
+/// Refresh envelope: `refreshed=false` means no refresh token is stored
+/// (run the device-code flow); `tokens` is present only when refreshed.
+public struct RefreshResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let refreshed: Bool
+    public let tokens: TokenSummary?
+}
+
+/// `{ok:true}` after tokens are cleared.
+public struct SignOutResponse: Decodable, Sendable {
+    public let ok: Bool
+}
+
 public struct ChatItem: Decodable, Sendable, Identifiable {
     public var id: String { chatId }
     public let chatId: String

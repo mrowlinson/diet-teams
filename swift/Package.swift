@@ -22,6 +22,7 @@ let package = Package(
     platforms: [.macOS(.v14)],
     products: [
         .executable(name: "OstMac", targets: ["OstMac"]),
+        .executable(name: "OstMacAuth", targets: ["OstMacAuth"]),
     ],
     targets: [
         .target(name: "COstMac", publicHeadersPath: "include"),
@@ -31,6 +32,11 @@ let package = Package(
         .executableTarget(
             name: "OstMac",
             dependencies: ["OstMacApp", "OstMacCore", "OstMacChatList", "COstMac"],
+            linkerSettings: rustLink
+        ),
+        .executableTarget(
+            name: "OstMacAuth",
+            dependencies: ["OstMacCore", "COstMac"],
             linkerSettings: rustLink
         ),
         .testTarget(
