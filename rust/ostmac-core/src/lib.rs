@@ -1452,8 +1452,9 @@ pub fn trouter_poll_json() -> String {
 
 /// Drain queued Trouter events as typed realtime messages.
 ///
-/// `{ok:true, messages:[{chat_id,id,sender,text,time,is_edit,edited_id?}],
-/// resync:bool, skipped:n, calls:[{kind,call_id,peer,peer_name,detail?}]}`.
+/// `{ok:true, messages:[{chat_id,id,sender,sender_id?,text,time,
+/// is_edit,edited_id?,message_type,reactions?,raw}], resync:bool, skipped:n,
+/// calls:[{kind,call_id,peer,peer_name,detail?}]}`.
 /// `resync` is true when a `trouter.message_loss` frame was seen: the UI
 /// must re-fetch visible conversations (push had a gap). `skipped` counts
 /// non-message frames (handshake, presence…). `calls` carries incoming
