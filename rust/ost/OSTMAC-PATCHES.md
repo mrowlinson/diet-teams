@@ -150,6 +150,24 @@ needing maintainer buy-in. Minor PRs stand alone; majors are separate PRs.
     shape. Live-verified 2026-09-23 (`chats`: labels applied, 1:1s
     mate-named).
 
+19. [minor] `src/api/media.rs` + `src/api/client.rs` +
+    `tests/imgfix_live_probe.rs` (new) — **live AMS fetch fix (om-imgfix
+    lane)**. Inline images 401d: the ASM object-store family
+    (`*.asm.skype.com`, `*.asyncgw.teams.microsoft.com`) authenticates
+    with `Authorization: skype_token …`, not the chat-service scheme
+    (`Authentication: skypetoken=` + `X-SkypeToken`), which is kept for
+    chat-hosted views (`…msg.teams.microsoft.com…`). New pure
+    `media::auth_headers` picks the scheme per host; `media_get`
+    delegates transport to `media_fetch` so the mocked repro matrix
+    (local TCP stub, no new deps) pins all three legs: ASM/chat header
+    mapping, same-host 302 follow, 401 surfacing, non-image shape
+    passthrough, 15 MB cap. `MediaBytes` gains `Debug`. Committed
+    `#[ignore]`d live probe harvests one AMS `<img>` from newest pages
+    then issues a single redirect-disabled GET with production headers
+    (status/size/shape booleans only, bytes discarded). Verified: live
+    probe pre-fix 401 on `us-api.asm.skype.com …/views/imgo`; matrix
+    red→green on the mapping; app screenshots show loaded images.
+
 ## Upstream PRs (2026-09-22, base 0892144; main red on sdp E0308 until #5)
 
 Minor (standalone modulo #5-first; merge in any order after):
