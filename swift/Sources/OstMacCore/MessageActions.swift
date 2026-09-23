@@ -1,9 +1,12 @@
 // MessageActions.swift — om-msgactions lane: copy/forward/save helpers.
 //
 // Pure logic behind the bubble context menu (top-level items only, never
-// a submenu). The views in ConversationView.swift own the pasteboard /
-// sheet / save-panel calls; everything testable lives here plus
-// ConversationStore.forward(_:toChatID:) (demo-recorded, live via send).
+// a submenu). Copy builds a text+rich payload and hands it to an injected
+// writer (tests capture it; production passes the live pasteboard
+// writer), so no test ever touches the live pasteboard. Forward posts
+// via ConversationStore.forward(_:toChatID:) (demo-recorded, live via
+// the plain send path) with a forwarded-attribution header.
+import AppKit
 import Foundation
 
 /// Copy/forward/save text + filename builders. No view or FFI code.
@@ -21,11 +24,65 @@ public enum MessageActions {
         return ([body] + rows).filter { !$0.isEmpty }.joined(separator: "\n")
     }
 
-    /// What Forward sends to the picked chat: the plain bubble text, no
-    /// attribution prefix (the destination bubble already stamps its own
-    /// sender/time; a prefix would double-attribute on every hop).
+    /// One Copy payload: the plain bubble text plus an RTF rendering
+    /// of the same text (bold mentions, monospaced code, links), so
+    /// rich targets paste styled text and plain targets paste text.
+    /// `rtf` is nil when there is no text to style.
+    public struct CopyPayload: Sendable, Equatable {
+        public let text: String
+        public let rtf: Data?
+
+        public init(text: String, rtf: Data? = nil) {
+            self.text = text
+            self.rtf = rtf
+        }
+    }
+
+    /// Build the Copy payload for one bubble: `copyText` plus its RTF.
+    /// Pure — the caller decides where it goes via `copy(_:write:)`.
+    public static func copyPayload(
+        for message: ChatMessage, highlighting ownName: String? = nil
+    ) -> CopyPayload {
+        let text = copyText(for: message)
+        guard !text.isEmpty else { return CopyPayload(text: text, rtf: nil) }
+        let styled = NSAttributedString(MessageRender.attributedBody(
+            text: text, raw: message.raw, highlighting: ownName))
+        let rtf = try? styled.data(
+            from: NSRange(location: 0, length: styled.length),
+            documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf])
+        return CopyPayload(text: text, rtf: rtf)
+    }
+
+    /// Copy one bubble through an injected writer: production passes
+    /// `liveCopyWriter`, tests pass a capturing closure (no live
+    /// pasteboard involved).
+    public static func copy(
+        _ message: ChatMessage, highlighting ownName: String? = nil,
+        write: (CopyPayload) -> Void
+    ) {
+        write(copyPayload(for: message, highlighting: ownName))
+    }
+
+    /// The production Copy writer: text as `.string`, RTF as `.rtf`
+    /// when present. The only live-pasteboard touch in the copy path.
+    public static func liveCopyWriter(_ payload: CopyPayload) {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(payload.text, forType: .string)
+        if let rtf = payload.rtf {
+            pb.setData(rtf, forType: .rtf)
+        }
+    }
+
+    /// What Forward posts to the picked chat: the plain bubble text
+    /// with a one-line forwarded-attribution header naming the
+    /// original sender (the plain send path carries no forward
+    /// metadata, so the header is the attribution; the destination
+    /// bubble still stamps its own sender/time below it).
     public static func forwardBody(for message: ChatMessage) -> String {
-        copyText(for: message)
+        let who = message.sender.trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = who.isEmpty ? "Unknown" : who
+        return "Forwarded from \(name):\n\(copyText(for: message))"
     }
 
     /// What Save writes to disk: a stable header (sender + raw ISO

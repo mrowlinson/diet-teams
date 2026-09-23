@@ -584,17 +584,11 @@ struct MessageBubble: View {
             ? "Remove \(emoji)" : "React \(emoji)"
     }
 
-    /// Full-message copy for the bubble menu (Auth.swift precedent).
-    static func copyMessage(_ message: ChatMessage) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(message.content, forType: .string)
-    }
-
-    /// Copy the bubble text (what the bubble shows) to the pasteboard.
+    /// Copy the bubble (text + rich) through the injected live writer.
     private func copyBody() {
-        let pb = NSPasteboard.general
-        pb.clearContents()
-        pb.setString(MessageActions.copyText(for: message), forType: .string)
+        MessageActions.copy(
+            message, highlighting: highlightName,
+            write: MessageActions.liveCopyWriter)
     }
 
     /// Save the bubble (sender + timestamp header + text) via a save panel.

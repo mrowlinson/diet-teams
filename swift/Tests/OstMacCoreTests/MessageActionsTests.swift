@@ -28,10 +28,11 @@ final class MessageActionsTests: XCTestCase {
             "(see note)")
     }
 
-    func testForwardBodyIsPlainTextNoPrefix() {
+    func testForwardBodyCarriesAttribution() {
         let m = msg(content: "(clap) Gorgeous")
-        XCTAssertEqual(MessageActions.forwardBody(for: m), "👏 Gorgeous")
-        XCTAssertEqual(MessageActions.forwardBody(for: m), MessageActions.copyText(for: m))
+        XCTAssertEqual(
+            MessageActions.forwardBody(for: m),
+            "Forwarded from Tom Becker:\n👏 Gorgeous")
     }
 
     func testForwardPreviewCollapsesAndTruncates() {
@@ -96,7 +97,8 @@ final class MessageActionsTests: XCTestCase {
         XCTAssertEqual(
             store.lastForward,
             MessageActions.ForwardRecord(
-                messageID: m.id, destChatID: "demo-2", body: m.content))
+                messageID: m.id, destChatID: "demo-2",
+                body: "Forwarded from Tom Becker:\n\(m.content)"))
         XCTAssertEqual(store.lastForwardDestName, "Ava Lindqvist")
         // Forwarding never mutates the open thread.
         XCTAssertEqual(store.messages.count, ConversationStore.demoMessages.count)

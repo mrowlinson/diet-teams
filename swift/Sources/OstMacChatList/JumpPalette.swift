@@ -36,6 +36,16 @@ public struct JumpTarget: Identifiable, Hashable, Sendable {
     }
 }
 
+/// Forward destinations (om-copyforward): the jump rows narrowed to
+/// chats and channels that can receive a forward. Channel-less team
+/// rows are dropped (nothing to post to), so the forward sheet never
+/// shows a disabled row.
+public enum ForwardPicker {
+    public static func targets(chats: [ChatItem], teams: [TeamItem]) -> [JumpTarget] {
+        JumpTargets.build(chats: chats, teams: teams).filter { $0.openID != nil }
+    }
+}
+
 /// Builds palette rows: chats, then channels (team-qualified), then teams
 /// (open their first channel; nil when the team has no channels).
 public enum JumpTargets {

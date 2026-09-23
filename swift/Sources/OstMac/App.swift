@@ -841,7 +841,7 @@ struct RootView: View {
         .sheet(item: $state.forwardMessage) { msg in
             ForwardSheet(
                 message: msg,
-                targets: JumpTargets.build(chats: state.chats.chats, teams: state.teams.teams),
+                targets: ForwardPicker.targets(chats: state.chats.chats, teams: state.teams.teams),
                 initialQuery: OstMacAppMain.jumpQuery(args: CommandLine.arguments)
             ) { id, name in
                 state.forwardPicked(destID: id, destName: name)
