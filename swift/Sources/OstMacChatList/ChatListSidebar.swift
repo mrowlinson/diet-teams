@@ -9,16 +9,20 @@ public struct ChatListSidebar: View {
     @ObservedObject private var model: ChatListViewModel
     @ObservedObject private var presence: PresenceStore
     @ObservedObject private var unread: UnreadStore
+    @ObservedObject private var mentions: MentionStore
     @State private var searchText = ""
+    @State private var mentionsOnly = false
 
     public init(
         model: ChatListViewModel, presence: PresenceStore = PresenceStore(),
         unread: UnreadStore = UnreadStore(),
+        mentions: MentionStore = MentionStore(),
         initialFilter: String = ""
     ) {
         self.model = model
         self.presence = presence
         self.unread = unread
+        self.mentions = mentions
         _searchText = State(initialValue: initialFilter)
     }
 
@@ -52,13 +56,28 @@ public struct ChatListSidebar: View {
     }
 
     private var loadedList: some View {
-        let visible = ChatListFormat.filter(model.chats, query: searchText)
+        // Text filter first, mentions filter second: both preserve
+        // order (filtering never re-sorts — pin-top owns the comparator).
+        var visible = ChatListFormat.filter(model.chats, query: searchText)
+        if mentionsOnly {
+            visible = ChatListFormat.filterMentions(visible, mentionedIDs: mentions.mentionedIDs)
+        }
+        let queryBlank = searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         return VStack(spacing: 0) {
             DietSearchField("Filter chats", text: $searchText)
                 .padding(.horizontal, DietSpace.sm)
                 .padding(.vertical, DietSpace.sm)
             DietSeamH()
-            if visible.isEmpty, !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            mentionsRow
+            DietSeamH()
+            if visible.isEmpty, mentionsOnly, queryBlank {
+                DietEmptyState(
+                    systemImage: "at",
+                    title: "No mentions",
+                    message: "Threads that mention you appear here.",
+                    actionLabel: "Show all chats",
+                    action: { mentionsOnly = false })
+            } else if visible.isEmpty, !queryBlank {
                 DietEmptyState(
                     systemImage: "magnifyingglass",
                     title: "No matches",
@@ -81,6 +100,39 @@ public struct ChatListSidebar: View {
                 .listStyle(.sidebar)
             }
         }
+    }
+
+    /// Mentions filter row (om-mentions): stable id `mentions`. Tapping
+    /// toggles the mentioning-threads filter; the count names the
+    /// flagged threads. Always present (stable for shots/tests), muted
+    /// at zero. Client-side only — never refetches the list.
+    private var mentionsRow: some View {
+        Button {
+            mentionsOnly.toggle()
+        } label: {
+            HStack(spacing: DietSpace.sm) {
+                Image(systemName: mentionsOnly ? "at.circle.fill" : "at.circle")
+                    .font(.system(size: DietSize.iconMD))
+                    .foregroundStyle(mentionsOnly ? Color.accentColor : DietColor.textSecondaryColor)
+                Text("Mentions")
+                    .font(DietType.headline)
+                    .foregroundStyle(mentionsOnly ? DietColor.textPrimaryColor : DietColor.textSecondaryColor)
+                Spacer()
+                if mentions.count > 0 {
+                    Text("\(mentions.count)")
+                        .font(DietType.captionMono)
+                        .foregroundStyle(DietColor.textSecondaryColor)
+                }
+            }
+            .padding(.horizontal, DietSpace.sm)
+            .padding(.vertical, DietSpace.xs)
+            .contentShape(Rectangle())
+            .background(mentionsOnly ? Color.accentColor.opacity(0.12) : .clear)
+        }
+        .buttonStyle(.plain)
+        .id("mentions")
+        .accessibilityIdentifier("mentions")
+        .help("Show only threads that mention you")
     }
 }
 

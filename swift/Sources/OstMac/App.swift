@@ -205,6 +205,7 @@ final class AppState: ObservableObject {
     let feed = RealtimeFeed()
     let notifs = MessageNotifications()
     let unread = UnreadStore()
+    let mentions = MentionStore()
     let auth = AuthViewModel()
     let presence = PresenceStore()
     let call: CallStore
@@ -326,6 +327,7 @@ final class AppState: ObservableObject {
             for (chatID, peer) in DemoData.peerPresence() {
                 presence.adoptChatPeer(chatID: chatID, response: peer)
             }
+            mentions.adopt(DemoData.mentionedChatIDs)
         } else {
             chats = ChatListViewModel()
             teams = TeamsViewModel()
@@ -494,6 +496,7 @@ final class AppState: ObservableObject {
         openChatID = id
         persistedSelection = id
         unread.markRead(chatID: id) // om-notifbadge: opening marks read
+        mentions.markRead(chatID: id) // om-mentions: opening clears the flag
         if isDemo {
             let name = chatName ?? DemoData.name(for: id) ?? "Conversation"
             var msgs = DemoData.messages(for: id)
@@ -597,9 +600,20 @@ final class AppState: ObservableObject {
         let chatName = chats.chats.first(where: { $0.id == msg.chatID })?.name ?? ""
         let decision = rulesDecision(for: msg, chatName: chatName)
         unread.ingest(decision: decision, chatID: msg.chatID, openChatID: openChatID)
+        mentions.ingest(
+            realtime: msg, ownName: conv.ownDisplayName,
+            ownerMRI: resolvedOwnerMRI, openChatID: openChatID)
         maybeNotify(msg, chatName: chatName, decision: decision)
         guard msg.isFor(chatID: openChatID) else { return }
         conv.ingest(realtime: msg)
+    }
+
+    /// Owner MRI for live-event matching: configured value wins, else
+    /// the Graph-learned one (nil until it lands — the display-name
+    /// backup covers the gap). Shared by the rules decision and the
+    /// mention tracker so both gates see the same identity.
+    private var resolvedOwnerMRI: String? {
+        rulesConfig.owner.mri.isEmpty ? ownerMRI : rulesConfig.owner.mri
     }
 
     /// One rules decision for a live event (owns the meeting-start
@@ -608,9 +622,8 @@ final class AppState: ObservableObject {
     private func rulesDecision(for msg: RealtimeMessage, chatName: String) -> ChatFilter.Decision {
         var cfg = rulesConfig
         if let own = conv.ownDisplayName, !own.isEmpty { cfg.owner.displayName = own }
-        let mri: String? = cfg.owner.mri.isEmpty ? ownerMRI : cfg.owner.mri
         return ChatFilter.decide(
-            message: msg, chatDisplayName: chatName, ownerMRI: mri,
+            message: msg, chatDisplayName: chatName, ownerMRI: resolvedOwnerMRI,
             rules: cfg, meetingDedup: &meetingDedup, now: Date())
     }
 
@@ -730,6 +743,7 @@ final class AppState: ObservableObject {
             feed.stop()
             presence.clear()
             unread.markAllRead() // om-notifbadge: dock clears on sign-out
+            mentions.markAllRead() // om-mentions: flags clear on sign-out
             refreshFeedStatus()
         default:
             break
@@ -760,6 +774,7 @@ struct RootView: View {
                         reminders: state.reminders,
                         presence: state.presence,
                         unread: state.unread,
+                        mentions: state.mentions,
                         openChatID: state.openChatID,
                         initialSection: RootView.initialSection,
                         initialFilter: OstMacAppMain.filterQuery(args: CommandLine.arguments),
