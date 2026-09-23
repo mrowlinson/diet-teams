@@ -1,5 +1,6 @@
 // JumpPaletteView.swift — om-cmdk lane: Cmd+K fuzzy jump-to sheet.
 // Search field + ranked rows; Up/Down moves, Return jumps, Esc closes.
+import DietDesign
 import SwiftUI
 
 /// Fuzzy jump-to palette. `targets` is the full row set (chats, channels,
@@ -22,14 +23,22 @@ public struct JumpPaletteView: View {
         FuzzyMatch.ranked(targets, query: query)
     }
 
+    /// Results height: one sidebar row per match + breathing room,
+    /// clamped so the sheet never collapses or overflows.
+    static func listHeight(for matchCount: Int) -> CGFloat {
+        min(320, max(120, CGFloat(matchCount) * DietSize.sidebarRow + DietSpace.sm))
+    }
+
     public var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
+            HStack(spacing: DietSpace.sm) {
                 Image(systemName: "magnifyingglass")
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: DietSize.iconMD))
+                    .foregroundStyle(DietColor.textTertiaryColor)
                 TextField("Jump to chat, channel, or team", text: $query)
                     .textFieldStyle(.plain)
-                    .font(.title3)
+                    .font(DietType.title3)
+                    .foregroundStyle(DietColor.textPrimaryColor)
                     .focused($fieldFocused)
                     .onSubmit { pick(highlight) }
                     .onChange(of: query) { highlight = 0 }
@@ -37,50 +46,60 @@ public struct JumpPaletteView: View {
                     // window is key, which eats a synchronous focus grab.
                     .onAppear { DispatchQueue.main.async { fieldFocused = true } }
             }
-            .padding(12)
-            Divider()
+            .padding(DietSpace.md)
+            DietDividerH()
             if matches.isEmpty {
-                Text("No matches")
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, minHeight: 120)
+                DietEmptyState(
+                    systemImage: "magnifyingglass",
+                    title: "No matches",
+                    message: emptyMessage)
+                    .frame(minHeight: 160)
             } else {
                 List(0 ..< matches.count, id: \.self) { i in
                     let t = matches[i]
                     Button {
                         pick(i)
                     } label: {
-                        HStack(spacing: 10) {
+                        HStack(spacing: DietSpace.sm) {
                             Image(systemName: icon(for: t.kind))
-                                .foregroundStyle(.secondary)
-                                .frame(width: 18)
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(t.title).lineLimit(1)
+                                .font(.system(size: DietSize.iconMD))
+                                .foregroundStyle(DietColor.textSecondaryColor)
+                                .frame(width: DietSize.iconLG)
+                            VStack(alignment: .leading, spacing: DietSpace.xxs) {
+                                Text(t.title)
+                                    .font(DietType.body)
+                                    .foregroundStyle(DietColor.textPrimaryColor)
+                                    .lineLimit(1)
                                 Text(t.subtitle)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                                    .font(DietType.caption1)
+                                    .foregroundStyle(DietColor.textSecondaryColor)
                                     .lineLimit(1)
                             }
-                            Spacer()
+                            Spacer(minLength: DietSpace.sm)
                         }
-                        .padding(.vertical, 4)
+                        .padding(.vertical, DietSpace.xs)
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .disabled(t.openID == nil)
-                    .listRowBackground(i == highlight ? Color.accentColor.opacity(0.15) : Color.clear)
+                    .listRowBackground(
+                        i == highlight
+                            ? Color(nsColor: DietColor.accent).opacity(0.15)
+                            : Color.clear)
                 }
                 .listStyle(.plain)
                 // Explicit height: a bare min/max leaves List at its
                 // small ideal size (~3 rows); grow with the matches.
-                .frame(height: min(320, max(120, CGFloat(matches.count) * 56 + 8)))
+                .frame(height: Self.listHeight(for: matches.count))
             }
-            Divider()
+            DietDividerH()
             Text("↑↓ move · ⏎ jump · esc close")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .padding(8)
+                .font(DietType.caption1)
+                .foregroundStyle(DietColor.textSecondaryColor)
+                .padding(DietSpace.sm)
         }
         .frame(width: 460)
+        .background(DietColor.windowColor)
         .onKeyPress(.upArrow) { move(-1); return .handled }
         .onKeyPress(.downArrow) { move(1); return .handled }
         .onKeyPress(.escape) {
@@ -89,6 +108,12 @@ public struct JumpPaletteView: View {
             if !query.isEmpty { query = ""; return .handled }
             return .ignored
         }
+    }
+
+    private var emptyMessage: String {
+        query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "No chats, channels, or teams to jump to."
+            : "Nothing matches \"\(query)\". Try fewer letters."
     }
 
     private func move(_ delta: Int) {
