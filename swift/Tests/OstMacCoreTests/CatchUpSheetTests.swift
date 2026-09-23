@@ -32,14 +32,21 @@ final class CatchUpSheetTests: XCTestCase {
         }
     }
 
-    /// Store parked in `.loaded` via the canned transport.
+    /// Store parked in `.loaded` via the canned direct transport.
+    /// Explicit direct provider: exclusive routing sends the default
+    /// CLI provider to cliTransport always (see CatchUpFallbackTests),
+    /// so the default config would park in the CLI canary instead.
     private func loadedStore() async -> CatchUpStore {
+        let direct = CatchUpCannedTransport(stub: "TL;DR: standup happened.")
+        let cli = CatchUpCannedTransport(stub: "SHOULD NOT APPEAR")
         let store = CatchUpStore(
-            transport: CatchUpCannedTransport(stub: "TL;DR: standup happened."),
-            cliTransport: CatchUpCannedTransport(stub: "SHOULD NOT APPEAR"),
+            transport: direct,
+            cliTransport: cli,
             defaults: defaults, keyStore: CatchUpMemoryKeyStore())
-        store.adopt(CatchUpConfig(enabled: true, apiKey: "k"))
+        store.adopt(CatchUpConfig(provider: .openAICompatible, enabled: true, apiKey: "k"))
         await store.summarize(messages: thread(25))
+        XCTAssertEqual(direct.prompts.count, 1)
+        XCTAssertTrue(cli.prompts.isEmpty)
         XCTAssertEqual(store.state, .loaded("TL;DR: standup happened."))
         return store
     }
