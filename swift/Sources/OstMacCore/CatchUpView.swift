@@ -4,27 +4,87 @@
 // threads; the Settings section holds the provider picker + BYO key +
 // base URL + model. Both show the privacy note (thread text leaves
 // the machine).
+//
+// om-catchup-sheet-dismiss: presented as a popover (a window-modal
+// sheet cannot dismiss on click-outside) with Done + Esc +
+// click-outside dismiss; every close resets the summary state.
 import AppKit
 import SwiftUI
+
+// MARK: - Sheet dismissal routing
+
+/// One funnel for every catch-up dismiss intent. `close(presented:store:)`
+/// closes the presentation AND resets the summary state, so a reopen
+/// always starts from `.idle`. Each intent keeps its own entry point so
+/// regression tests pin all three paths:
+///   - Done button → `dismissViaDone`
+///   - Esc (`.onExitCommand`, fires from any focus — no trap) →
+///     `dismissViaEscape`
+///   - click-outside / any other system dismiss (binding `onChange`) →
+///     `dismissViaClickOutside`
+///
+/// All three are idempotent: dismissing an already-closed sheet is a
+/// no-op that still leaves the store at `.idle`.
+@MainActor
+public enum CatchUpSheet {
+    public static func open(presented: Binding<Bool>, store: CatchUpStore) {
+        store.reset()
+        presented.wrappedValue = true
+    }
+
+    public static func dismissViaDone(presented: Binding<Bool>, store: CatchUpStore) {
+        close(presented: presented, store: store)
+    }
+
+    public static func dismissViaEscape(presented: Binding<Bool>, store: CatchUpStore) {
+        close(presented: presented, store: store)
+    }
+
+    public static func dismissViaClickOutside(presented: Binding<Bool>, store: CatchUpStore) {
+        close(presented: presented, store: store)
+    }
+
+    private static func close(presented: Binding<Bool>, store: CatchUpStore) {
+        presented.wrappedValue = false
+        store.reset()
+    }
+}
 
 /// Sheet content: one Summarize tap → TL;DR/key-points/action-items.
 public struct CatchUpView: View {
     @ObservedObject private var catchUp: CatchUpStore
     private let messages: [ChatMessage]
     private let autoRun: Bool
+    private let onDone: () -> Void
 
     /// - autoRun: summarize once on appear (the --show-catchup shot
     ///   hook only; real taps always come from the button).
-    public init(catchUp: CatchUpStore, messages: [ChatMessage], autoRun: Bool = false) {
+    /// - onDone: Done / Esc tap. The host routes it through
+    ///   `CatchUpSheet.dismissViaDone` (close + state reset).
+    public init(
+        catchUp: CatchUpStore, messages: [ChatMessage], autoRun: Bool = false,
+        onDone: @escaping () -> Void = {}
+    ) {
         self.catchUp = catchUp
         self.messages = messages
         self.autoRun = autoRun
+        self.onDone = onDone
     }
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Thread catch-up")
-                .font(.headline)
+            HStack {
+                Text("Thread catch-up")
+                    .font(.headline)
+                Spacer(minLength: 12)
+                // Native macOS dismiss: a visible Done button that ALSO
+                // owns .cancelAction, so Esc dismisses from any focus
+                // (no focus trap). Summarize keeps .defaultAction (Return);
+                // the two shortcuts never conflict.
+                Button("Done", action: onDone)
+                    .buttonStyle(.bordered)
+                    .keyboardShortcut(.cancelAction)
+            }
             Text(CatchUp.privacyNote)
                 .font(.caption)
                 .foregroundStyle(.secondary)
