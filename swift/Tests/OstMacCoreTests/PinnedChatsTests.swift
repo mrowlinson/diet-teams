@@ -285,4 +285,63 @@ final class PinnedChatsTests: XCTestCase {
         XCTAssertEqual(model.state, .empty)
         XCTAssertTrue(model.chats.isEmpty)
     }
+
+    // MARK: - Pin dedupe (om-pindedupe)
+
+    func testDupNotificationsKeepsOnePinnedRow() {
+        let real = Self.chat(id: "19:notify@thread.v2", name: "Notifications")
+        XCTAssertEqual(PinnedChats.stableID(for: real), PinnedChats.notificationsID)
+        let out = PinnedChats.sorted([Self.chat(id: "8:a", name: "A"), real])
+        // Exactly one Notifications row: the real thread, pinned second.
+        XCTAssertEqual(out.map(\.id), [PinnedChats.mentionsID, "19:notify@thread.v2", "8:a"])
+        XCTAssertEqual(out[1].name, "Notifications")
+        XCTAssertEqual(PinnedChats.sorted(out), out)
+        // Counts key off the survivor's own id.
+        let dock = FakeDockBadge()
+        let unread = UnreadStore(dock: dock)
+        unread.ingest(
+            decision: .notify(reason: "chat-message"),
+            chatID: real.id, openChatID: nil)
+        XCTAssertEqual(unread.count(for: out[1].id), 1)
+    }
+
+    func testDupMentionsKeepsOnePinnedRow() async {
+        let real = Self.chat(id: "8:m", name: "  MENTIONS ")
+        XCTAssertEqual(PinnedChats.stableID(for: real), PinnedChats.mentionsID)
+        let model = ChatListViewModel(fetcher: { _ in
+            Self.response([Self.chat(id: "8:a", name: "A"), real])
+        })
+        await model.load()
+        // Exactly one Mentions row: the real thread, pinned first —
+        // and the pinned position survives recency bubbling.
+        XCTAssertEqual(
+            model.displayChats.map(\.id),
+            ["8:m", PinnedChats.notificationsID, "8:a"])
+        model.ingest(realtime: Self.live(chat: "8:a"))
+        XCTAssertEqual(
+            model.displayChats.map(\.id),
+            ["8:m", PinnedChats.notificationsID, "8:a"])
+        // Counts key off the survivor's own id.
+        let mentions = MentionStore()
+        mentions.adopt([real.id])
+        XCTAssertEqual(mentions.count, 1)
+        XCTAssertTrue(mentions.contains(chatID: model.displayChats[0].id))
+    }
+
+    func testNoDupKeepsFactoryRows() {
+        let out = PinnedChats.sorted([
+            Self.chat(id: "8:a", name: "A"),
+            Self.chat(id: "8:b", name: "B"),
+        ])
+        XCTAssertEqual(
+            out.map(\.id),
+            [PinnedChats.mentionsID, PinnedChats.notificationsID, "8:a", "8:b"])
+        // Near-misses never claim a slot.
+        XCTAssertEqual(
+            PinnedChats.stableID(for: Self.chat(id: "8:c", name: "Notification prefs")), "8:c")
+        XCTAssertEqual(
+            PinnedChats.stableID(for: Self.chat(id: "8:d", name: "My mentions digest")), "8:d")
+        XCTAssertEqual(
+            PinnedChats.stableID(for: Self.chat(id: "8:e", name: "  ")), "8:e")
+    }
 }

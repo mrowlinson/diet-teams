@@ -12,6 +12,15 @@
 // `displayChats`; the sidebar filters the projection. Unread counts live in
 // UnreadStore keyed by chat id, so pinning never touches them (no reset,
 // no accrual here).
+//
+// om-pindedupe: a real thread whose name matches a pinned row
+// ("Notifications", "Mentions") shares that row's stable identity —
+// without dedupe the sidebar shows two same-named rows. `sorted(_:)`
+// collapses each pinned slot to exactly one row: the real thread wins
+// over any synthetic row (a real conversation is never hidden), keeps
+// the pinned position, and keeps its own id so its unread/counts
+// entries still apply. Real threads never dedupe against each other:
+// same-named extras stay in recency.
 import Foundation
 import OstMacCore
 
@@ -33,6 +42,19 @@ public enum PinnedChats {
     /// True for the two synthetic ids, false for every real chat id.
     public static func isSynthetic(_ id: String) -> Bool {
         id == mentionsID || id == notificationsID
+    }
+
+    /// Stable identity shared by a synthetic row and any real thread
+    /// that would render as the same entry: the synthetic id itself
+    /// for synthetic rows; for real threads, the pinned slot id whose
+    /// factory name the thread's name matches (trimmed,
+    /// case-insensitive); otherwise the thread's own id. Pure.
+    public static func stableID(for chat: ChatItem) -> String {
+        if isSynthetic(chat.id) { return chat.id }
+        let name = chat.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if name == mentionsRow.name.lowercased() { return mentionsID }
+        if name == notificationsRow.name.lowercased() { return notificationsID }
+        return chat.id
     }
 
     /// Pin rank: Mentions 0, Notifications 1, every real chat 2.
@@ -63,26 +85,46 @@ public enum PinnedChats {
     /// Pin the synthetic rows above recency: Mentions, Notifications,
     /// then the input's real chats in their original order (stable —
     /// ingest bubbling and core recency pass through untouched).
-    /// Missing synthetic rows are inserted from the factory; incoming
-    /// synthetic rows keep their own preview/sender/time; duplicate ids
-    /// collapse to their first occurrence. Idempotent.
+    /// Missing slots backfill from the factory; incoming synthetic
+    /// rows keep their own preview/sender/time; duplicate ids collapse
+    /// to their first occurrence. Idempotent.
+    ///
+    /// om-pindedupe: each pinned slot holds exactly one row. A real
+    /// thread sharing the slot's stable identity (see `stableID(for:)`)
+    /// is promoted into the pinned position and the synthetic row is
+    /// dropped — the survivor keeps its own id, so unread/counts keyed
+    /// by that id still apply. Real threads never collapse into each
+    /// other: same-named extras stay in recency order.
     public static func sorted(_ chats: [ChatItem]) -> [ChatItem] {
         var seen = Set<String>()
-        var mentions: ChatItem?
-        var notifications: ChatItem?
-        var rest: [ChatItem] = []
-        rest.reserveCapacity(chats.count + 2)
+        var unique: [ChatItem] = []
+        unique.reserveCapacity(chats.count)
         for chat in chats {
             guard seen.insert(chat.id).inserted else { continue }
-            switch chat.id {
-            case mentionsID:
-                mentions = chat
-            case notificationsID:
-                notifications = chat
-            default:
-                rest.append(chat)
-            }
+            unique.append(chat)
         }
-        return [mentions ?? mentionsRow, notifications ?? notificationsRow] + rest
+        let mentions = occupant(slotID: mentionsID, factory: mentionsRow, in: unique)
+        let notifications = occupant(slotID: notificationsID, factory: notificationsRow, in: unique)
+        let occupantIDs: Set<String> = [mentions.id, notifications.id]
+        var rest: [ChatItem] = []
+        rest.reserveCapacity(unique.count)
+        for chat in unique {
+            if occupantIDs.contains(chat.id) { continue }
+            if isSynthetic(chat.id) { continue }
+            rest.append(chat)
+        }
+        return [mentions, notifications] + rest
+    }
+
+    /// One slot's occupant: the first real thread sharing the slot's
+    /// stable identity wins over any synthetic row (never hide a real
+    /// conversation); otherwise the first claimant; otherwise factory.
+    private static func occupant(slotID: String, factory: ChatItem, in chats: [ChatItem]) -> ChatItem {
+        var first: ChatItem?
+        for chat in chats where stableID(for: chat) == slotID {
+            if first == nil { first = chat }
+            if !isSynthetic(chat.id) { return chat }
+        }
+        return first ?? factory
     }
 }
