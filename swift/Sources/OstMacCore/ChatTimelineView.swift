@@ -19,6 +19,8 @@ struct ChatTimelineView: View {
     var sharedFiles: [SharedFile] = []
     /// Doc-row Open tap (om-inline-docs passthrough).
     var onOpenDoc: (InlineDoc) -> Void = { InlineDocs.open($0) }
+    /// Preview-row tap (om-linkpreview passthrough).
+    var onOpenLink: (URL) -> Void = { LinkPreviewOpen.default($0) }
     @StateObject private var scroll = ChatScrollModel()
 
     var body: some View {
@@ -68,7 +70,8 @@ struct ChatTimelineView: View {
                                     onEdit: { onEdit(msg) },
                                     onDelete: { onDelete(msg) },
                                     sharedFiles: sharedFiles,
-                                    onOpenDoc: onOpenDoc
+                                    onOpenDoc: onOpenDoc,
+                                    onOpenLink: onOpenLink
                                 )
                                 .id(msg.id)
                                 .onAppear { scroll.visibleIDs.insert(msg.id) }
