@@ -1,4 +1,5 @@
 // ChatListTests.swift — ViewModel states/selection + format helpers (mocked fetch).
+import Combine
 import XCTest
 
 import OstMacChatList
@@ -238,5 +239,199 @@ final class ChatListTests: XCTestCase {
         XCTAssertEqual(ChatListFormat.previewLine(sender: "Ann", preview: nil), "Ann")
         XCTAssertEqual(ChatListFormat.previewLine(sender: nil, preview: nil), "")
         XCTAssertEqual(ChatListFormat.previewLine(sender: " ", preview: "  "), "")
+    }
+
+    // MARK: - Sidebar churn (om-sidebarchurn)
+
+    nonisolated static func evt(
+        chat: String, text: String, sender: String = "S",
+        senderID: String? = nil, type: String? = nil,
+        edit: Bool = false, reactions: [ReactionCount]? = nil,
+        raw: String? = nil
+    ) -> RealtimeMessage {
+        RealtimeMessage(
+            chatID: chat, msgId: UUID().uuidString, sender: sender,
+            senderID: senderID, text: text,
+            time: "2026-09-23T10:00:00Z", isEdit: edit,
+            raw: raw, reactions: reactions, messageType: type)
+    }
+
+    static func churnModel() -> ChatListViewModel {
+        ChatListViewModel(fetcher: { _ in DemoData.churnChatsResponse() })
+    }
+
+    /// Beacons, blobs, bookends, media cards, and reaction-only patches
+    /// leave every row byte-identical (stable identity, no publish).
+    func testChurnSkipsBeaconsBlobsCardsAndReactionOnly() async {
+        let model = Self.churnModel()
+        await model.load()
+        let before = model.chats
+        let meeting = DemoData.churnMeetingID
+        let skips: [RealtimeMessage] = [
+            Self.evt(chat: meeting, text: "Sprint PlanningPlay", sender: "?", type: "Text"),
+            Self.evt(
+                chat: meeting, text: #"{"scopeId":"s","storageId":"t","meetingTenantId":"m"}"#,
+                sender: "?", type: "Text"),
+            Self.evt(
+                chat: meeting, text: "Hi! I'm here to help with the meeting.",
+                sender: "Facilitator", type: "Text"),
+            Self.evt(
+                chat: meeting, text: "Q3 Review recording",
+                sender: "?", type: "RichText/Media_Card"),
+            Self.evt(
+                chat: DemoData.churnSyncID, text: "",
+                sender: "Tom Becker", type: "RichText/Html",
+                reactions: [ReactionCount(emoji: "👍", count: 2)]),
+            Self.evt(chat: "8:ghost", text: "live hello"),
+        ]
+        for m in skips { model.ingest(realtime: m) }
+        XCTAssertEqual(model.chats, before)
+        model.ingest(batch: skips)
+        XCTAssertEqual(model.chats, before)
+    }
+
+    /// Bots, system notices, and edits refresh the preview in place:
+    /// no reorder, no "?:" prefix on unattributed notices.
+    func testChurnBotSystemRefreshInPlace() async {
+        let model = Self.churnModel()
+        await model.load()
+        let order = model.chats.map(\.id)
+        model.ingest(realtime: Self.evt(
+            chat: DemoData.churnPollyID, text: "Priya voted: Thursday works best",
+            sender: "Polly", senderID: "28:00001111-2222-3333-4444-555566667777",
+            type: "Text"))
+        model.ingest(realtime: Self.evt(
+            chat: DemoData.churnStandupID, text: "Tom Becker added Priya Nair to the chat",
+            sender: "?", type: "ThreadActivity/AddMember"))
+        model.ingest(realtime: Self.evt(
+            chat: DemoData.churnSyncID, text: "Facilitator residue stays put",
+            sender: "Facilitator", type: "Text"))
+        XCTAssertEqual(model.chats.map(\.id), order)
+        let polly = model.chats.first { $0.id == DemoData.churnPollyID }!
+        XCTAssertEqual(polly.last_message_preview, "Priya voted: Thursday works best")
+        XCTAssertEqual(polly.last_message_sender, "Polly")
+        let standup = model.chats.first { $0.id == DemoData.churnStandupID }!
+        XCTAssertEqual(standup.last_message_preview, "Tom Becker added Priya Nair to the chat")
+        XCTAssertNil(standup.last_message_sender)
+        let sync = model.chats.first { $0.id == DemoData.churnSyncID }!
+        XCTAssertEqual(sync.last_message_preview, "Facilitator residue stays put")
+    }
+
+    /// Meeting previews are last user text: mixed cards refresh in place
+    /// with their human lines, chrome-only cards hold the row, and real
+    /// user text (even multi-line) still bubbles.
+    func testChurnMeetingPreviewIsHumanCardLines() async {
+        let model = Self.churnModel()
+        await model.load()
+        let meeting = DemoData.churnMeetingID
+        let order = model.chats.map(\.id)
+        model.ingest(realtime: Self.evt(
+            chat: meeting, text: "{\n\"scopeId\": \"s\"\n}\nStandup notes are posted in the thread",
+            sender: "?", type: "Text"))
+        XCTAssertEqual(model.chats.map(\.id), order)
+        XCTAssertEqual(
+            model.chats.first?.last_message_preview,
+            "Standup notes are posted in the thread")
+        XCTAssertNil(model.chats.first?.last_message_sender)
+        // Chrome-only cards: row (preview + sender) untouched, whether
+        // valid JSON (structural skip) or broken brackets (no human
+        // lines — the row keeps its last user text).
+        let held = model.chats
+        model.ingest(realtime: Self.evt(
+            chat: meeting, text: "{\n\"scopeId\": \"s\"\n}",
+            sender: "?", type: "Text"))
+        XCTAssertEqual(model.chats, held)
+        model.ingest(realtime: Self.evt(
+            chat: meeting, text: "{\n[broken\n}",
+            sender: "?", type: "Text"))
+        XCTAssertEqual(model.chats, held)
+        // Real user text bubbles with its full text.
+        model.ingest(realtime: Self.evt(
+            chat: meeting, text: "Starting now,\njoin when ready",
+            sender: "Priya Nair", type: "Text"))
+        XCTAssertEqual(model.chats.first?.id, meeting)
+        XCTAssertEqual(
+            model.chats.first?.last_message_preview,
+            "Starting now, join when ready")
+        // Human JSON paste in a normal chat still surfaces (status quo).
+        model.ingest(realtime: Self.evt(
+            chat: DemoData.churnSyncID, text: #"{"a":1}"#,
+            sender: "Tom Becker", type: "Text"))
+        XCTAssertEqual(model.chats.first?.id, DemoData.churnSyncID)
+    }
+
+    /// Image-only messages bubble with a sender-line preview; human
+    /// text in any thread bubbles; unknown types bubble (old cores).
+    func testChurnSurfacesImagesAndUnknownTypes() {
+        let list = DemoData.churnChatsResponse().chats
+        let img = ChatListViewModel.ingested(
+            Self.evt(
+                chat: DemoData.churnSyncID, text: "", sender: "Tom Becker",
+                type: "RichText/Html", raw: #"<p><img src="https://h/v1/imgo"></p>"#),
+            into: list)
+        XCTAssertEqual(img.first?.id, DemoData.churnSyncID)
+        XCTAssertEqual(img.first?.last_message_preview, "")
+        let unknown = ChatListViewModel.ingested(
+            Self.evt(chat: DemoData.churnPollyID, text: "untyped hello"),
+            into: list)
+        XCTAssertEqual(unknown.first?.id, DemoData.churnPollyID)
+    }
+
+    func testHumanLines() {
+        XCTAssertEqual(SidebarIngest.humanLines("single"), "single")
+        XCTAssertEqual(
+            SidebarIngest.humanLines("first\nsecond"),
+            "first second")
+        XCTAssertEqual(
+            SidebarIngest.humanLines("{\n\"k\": \"v\"\n}\nHuman line here"),
+            "Human line here")
+        XCTAssertNil(SidebarIngest.humanLines("{\n\"k\": \"v\"\n}"))
+        XCTAssertNil(SidebarIngest.humanLines("  \n "))
+        XCTAssertEqual(
+            SidebarIngest.decide(
+                message: Self.evt(chat: "19:meeting_x@thread.v2", text: "hi"),
+                chatName: "M"),
+            .bubble)
+        XCTAssertEqual(
+            SidebarIngest.decide(
+                message: Self.evt(
+                    chat: "19:meeting_x@thread.v2", text: "MPlay",
+                    sender: "?", type: "Text"),
+                chatName: "M"),
+            .skip)
+    }
+
+    /// The demo burst folds to a stable order with ONE publish: only the
+    /// user-active chat moves; selection survives; a beacons-only batch
+    /// publishes nothing.
+    func testChurnBurstCoalescesToOnePublish() async {
+        let model = Self.churnModel()
+        await model.load()
+        model.selectedChatID = DemoData.churnStandupID
+        var publishes = 0
+        let sub = model.$chats.dropFirst().sink { _ in publishes += 1 }
+        model.ingest(batch: DemoData.churnBurst())
+        XCTAssertEqual(publishes, 1)
+        XCTAssertEqual(
+            model.chats.map(\.id),
+            [DemoData.churnSyncID, DemoData.churnMeetingID,
+             DemoData.churnPollyID, DemoData.churnStandupID])
+        XCTAssertEqual(
+            model.chats[0].last_message_preview,
+            "Recording is up — link in the thread (fixed)")
+        XCTAssertEqual(
+            model.chats[1].last_message_preview,
+            "Standup notes are posted in the thread")
+        XCTAssertNil(model.chats[1].last_message_sender)
+        XCTAssertEqual(
+            model.chats[2].last_message_preview,
+            "Priya voted: Thursday works best")
+        XCTAssertEqual(
+            model.chats[3].last_message_preview,
+            "Tom Becker added Priya Nair to the chat")
+        XCTAssertEqual(model.selectedChatID, DemoData.churnStandupID)
+        model.ingest(batch: Array(DemoData.churnBurst().prefix(5)))
+        XCTAssertEqual(publishes, 1)
+        withExtendedLifetime(sub) {}
     }
 }

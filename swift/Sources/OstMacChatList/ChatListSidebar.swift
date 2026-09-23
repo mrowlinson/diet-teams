@@ -64,7 +64,9 @@ public struct ChatListSidebar: View {
                     action: { searchText = "" })
             } else {
                 List(selection: $model.selectedChatID) {
-                    ForEach(visible) { chat in
+                    // Explicit row identity: rows survive reorder bursts
+                    // without content/position mismatch (stable ids).
+                    ForEach(visible, id: \.id) { chat in
                         ChatRow(
                             chat: chat,
                             peerAvailability: chat.is_group ? nil : .some(presence.availabilityForChat(chat.id))

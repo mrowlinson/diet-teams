@@ -110,12 +110,12 @@ public enum MeetingSignal: Sendable, Equatable {
 
     /// Empty sender, or the core's "?" missing-name marker (the beacon
     /// path never carries a display name).
-    static func isUnknownSender(_ senderName: String) -> Bool {
+    public static func isUnknownSender(_ senderName: String) -> Bool {
         let t = senderName.trimmingCharacters(in: .whitespacesAndNewlines)
         return t.isEmpty || t == "?"
     }
 
-    static func isFacilitator(_ senderName: String) -> Bool {
+    public static func isFacilitator(_ senderName: String) -> Bool {
         senderName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "facilitator"
     }
 

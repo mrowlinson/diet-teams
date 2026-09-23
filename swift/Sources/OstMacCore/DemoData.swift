@@ -161,6 +161,10 @@ public enum DemoData {
         case mediaID: return mediaMessages()
         case reactionsID: return reactionsMessages()
         case repliesID: return repliesMessages()
+        case churnMeetingID: return churnMeetingMessages
+        case churnSyncID: return churnSyncMessages
+        case churnPollyID: return churnPollyMessages
+        case churnStandupID: return churnStandupMessages
         default: break
         }
         if chatID.hasPrefix("demo-chan-") { return channelMessages }
@@ -491,4 +495,128 @@ public enum DemoData {
     public static func resetDemoAppends() {
         demoAppended = [:]
     }
+
+    // MARK: - Sidebar churn demo (om-sidebarchurn: --show-sidebarchurn)
+
+    /// Churn-demo rows (NOT part of `chats`: the shot hook swaps the
+    /// whole fetcher so the standard demo + its count assertions stay
+    /// untouched). Initial order: meeting on top; the burst moves ONLY
+    /// the user-active chat above it.
+    public static let churnMeetingID = "19:meeting_churn123@thread.v2"
+    public static let churnSyncID = "demo-churn-sync"
+    public static let churnPollyID = "demo-churn-polly"
+    public static let churnStandupID = "demo-churn-standup"
+
+    public static func churnChatsResponse() -> ChatsResponse {
+        ChatsResponse(ok: true, chats: [
+            ChatItem(
+                chatId: churnMeetingID, name: "Sprint Planning", is_group: true,
+                last_message_time: "2026-09-23T09:00:00Z",
+                last_message_sender: "Priya Nair",
+                last_message_preview: "Running 5 late, start without me"),
+            ChatItem(
+                chatId: churnPollyID, name: "Polly",
+                last_message_time: "2026-09-23T08:50:00Z",
+                last_message_sender: "Polly",
+                last_message_preview: "Yesterday's poll is closed"),
+            ChatItem(
+                chatId: churnStandupID, name: "Platform Standup", is_group: true,
+                last_message_time: "2026-09-23T08:40:00Z",
+                last_message_sender: "Tom Becker",
+                last_message_preview: "Build is green"),
+            ChatItem(
+                chatId: churnSyncID, name: "Design Sync", is_group: true,
+                last_message_time: "2026-09-23T08:30:00Z",
+                last_message_sender: "Tom Becker",
+                last_message_preview: "Mocks are up for review"),
+        ])
+    }
+
+    /// The burst the shot hook folds after load: a meeting beacon storm
+    /// (skipped), a reaction-only patch (skipped), a media card
+    /// (skipped), a mixed card (its human lines refresh the meeting
+    /// preview in place), a bot poll note + a system notice (in place),
+    /// a user message (bubbles) + its edit (in place). Final order:
+    /// Sync, Meeting, Polly, Standup.
+    public static func churnBurst() -> [RealtimeMessage] {
+        [
+            RealtimeMessage(
+                chatID: churnMeetingID, msgId: "ch-b1", sender: "?",
+                text: "Sprint PlanningPlay", time: "2026-09-23T09:01:00Z",
+                isEdit: false, messageType: "Text"),
+            RealtimeMessage(
+                chatID: churnMeetingID, msgId: "ch-b2", sender: "?",
+                text: #"{"scopeId":"s","storageId":"t","meetingTenantId":"m"}"#,
+                time: "2026-09-23T09:02:00Z", isEdit: false, messageType: "Text"),
+            RealtimeMessage(
+                chatID: churnMeetingID, msgId: "ch-b3", sender: "Facilitator",
+                text: "Hi! I'm here to help with the meeting — ask me for a recap.",
+                time: "2026-09-23T09:03:00Z", isEdit: false, messageType: "Text"),
+            RealtimeMessage(
+                chatID: churnSyncID, msgId: "ch-b4", sender: "Tom Becker",
+                text: "", time: "2026-09-23T09:04:00Z", isEdit: false,
+                reactions: [ReactionCount(emoji: "👍", count: 2)],
+                messageType: "RichText/Html"),
+            RealtimeMessage(
+                chatID: churnMeetingID, msgId: "ch-b5", sender: "?",
+                text: "Q3 Review recording", time: "2026-09-23T09:05:00Z",
+                isEdit: false, messageType: "RichText/Media_Card"),
+            RealtimeMessage(
+                chatID: churnMeetingID, msgId: "ch-b6", sender: "?",
+                text: "{\n\"scopeId\": \"s\",\n\"storageId\": \"t\"\n}\nStandup notes are posted in the thread",
+                time: "2026-09-23T09:06:00Z", isEdit: false, messageType: "Text"),
+            RealtimeMessage(
+                chatID: churnSyncID, msgId: "ch-b7", sender: "Tom Becker",
+                text: "Recording is up — link in the thread",
+                time: "2026-09-23T09:07:00Z", isEdit: false,
+                messageType: "RichText/Html"),
+            RealtimeMessage(
+                chatID: churnPollyID, msgId: "ch-b8", sender: "Polly",
+                senderID: "28:00001111-2222-3333-4444-555566667777",
+                text: "Priya voted: Thursday works best",
+                time: "2026-09-23T09:08:00Z", isEdit: false, messageType: "Text"),
+            RealtimeMessage(
+                chatID: churnStandupID, msgId: "ch-b9", sender: "?",
+                text: "Tom Becker added Priya Nair to the chat",
+                time: "2026-09-23T09:09:00Z", isEdit: false,
+                messageType: "ThreadActivity/AddMember"),
+            RealtimeMessage(
+                chatID: churnSyncID, msgId: "ch-b10", sender: "Tom Becker",
+                text: "Recording is up — link in the thread (fixed)",
+                time: "2026-09-23T09:10:00Z", isEdit: true, editedID: "ch-b7",
+                messageType: "RichText/Html"),
+        ]
+    }
+
+    private static let churnMeetingMessages: [ChatMessage] = [
+        ChatMessage(
+            id: "chm-1", sender: "Tom Becker",
+            timestamp: "2026-09-23T08:55:00Z",
+            content: "Agenda: sprint review, then retro. Starting in 5."),
+        ChatMessage(
+            id: "chm-2", sender: "Priya Nair",
+            timestamp: "2026-09-23T09:00:00Z",
+            content: "Running 5 late, start without me"),
+    ]
+
+    private static let churnSyncMessages: [ChatMessage] = [
+        ChatMessage(
+            id: "chs-1", sender: "Tom Becker",
+            timestamp: "2026-09-23T08:30:00Z",
+            content: "Mocks are up for review"),
+    ]
+
+    private static let churnPollyMessages: [ChatMessage] = [
+        ChatMessage(
+            id: "chp-1", sender: "Polly",
+            timestamp: "2026-09-23T08:50:00Z",
+            content: "Yesterday's poll is closed"),
+    ]
+
+    private static let churnStandupMessages: [ChatMessage] = [
+        ChatMessage(
+            id: "chh-1", sender: "Tom Becker",
+            timestamp: "2026-09-23T08:40:00Z",
+            content: "Build is green"),
+    ]
 }
