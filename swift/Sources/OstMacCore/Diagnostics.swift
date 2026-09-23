@@ -1,0 +1,46 @@
+// Diagnostics.swift — om-statusbar lane: pure one-line formatters for the
+// counters that moved out of the status bar into the Diagnostics window
+// (Window ▸ Diagnostics). The slim status bar (Live dot + errors) and the
+// Diagnostics window share these so the tooltip and the rows never drift.
+// Tested (DiagnosticsTests); views stay dumb.
+import Foundation
+
+public enum DiagnosticsFormat {
+    /// `core 1.2.3 · init=0` (was the status bar's leading counter).
+    public static func coreLine(version: String, initCode: Int32) -> String {
+        "core \(version) · init=\(initCode)"
+    }
+
+    /// Session one-liner: demo mode, signed in/out, or still checking.
+    public static func sessionLine(isDemo: Bool, signedIn: Bool?) -> String {
+        if isDemo { return "DEMO · offline" }
+        return switch signedIn {
+        case .some(true): "signed in"
+        case .some(false): "signed out"
+        case .none: "auth ?"
+        }
+    }
+
+    /// Full feed line with counters (was the status bar's feed text).
+    public static func feedLine(
+        state: RealtimeFeed.State, events: Int, polls: Int, resyncs: Int
+    ) -> String {
+        switch state {
+        case .live:
+            "Live · \(events) new · \(polls) polls · \(resyncs) resyncs"
+        case .retryWait:
+            "Connecting… (\(events) new · \(resyncs) resyncs)"
+        case .stopped:
+            "Realtime off"
+        }
+    }
+
+    /// Short feed state word for the status-bar dot tooltip prefix.
+    public static func feedWord(state: RealtimeFeed.State) -> String {
+        switch state {
+        case .live: "Live"
+        case .retryWait: "Connecting…"
+        case .stopped: "Realtime off"
+        }
+    }
+}

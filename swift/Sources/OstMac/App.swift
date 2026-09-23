@@ -19,6 +19,7 @@
 // --say auto-sends once into the open chat. In live mode that is a REAL
 // send via core — never use it on shared chats for testing.
 // --show-about / --show-settings / --show-av open those windows at launch (shot hooks).
+// --show-diagnostics opens the Diagnostics window at launch (shot hook).
 // --av-mic-denied seeds the Call A/V panel's mic-denied hint (shot hook).
 // --show-teams opens the sidebar on the Teams browser (shot hook).
 // --show-shared opens the conversation on the Shared files tab (shot hook).
@@ -137,6 +138,11 @@ struct OstMacAppMain: App {
             AvPanelView()
         }
         .defaultSize(width: 600, height: 740)
+        Window("Diagnostics", id: AppIdentity.diagWindowID) {
+            DiagnosticsView()
+                .environmentObject(state)
+        }
+        .defaultSize(width: 440, height: 480)
         Settings {
             SettingsView(auth: state.auth, catchUp: state.catchUp)
         }
@@ -167,6 +173,9 @@ private struct OstMacCommands: Commands {
                 NotificationCenter.default.post(name: .showJumpPalette, object: nil)
             }
             .keyboardShortcut("k", modifiers: .command)
+        }
+        CommandGroup(after: .windowList) {
+            Button("Diagnostics") { openWindow(id: AppIdentity.diagWindowID) }
         }
     }
 }
@@ -717,7 +726,7 @@ struct RootView: View {
                     .background(DietColor.windowColor)
             }
             DietSeamH()
-            StatusBar(call: state.call)
+            StatusBar()
         }
         .frame(minWidth: 760, minHeight: 520)
         .onReceive(NotificationCenter.default.publisher(for: .showJumpPalette)) { _ in
@@ -748,6 +757,9 @@ struct RootView: View {
             }
             if CommandLine.arguments.contains("--show-av") {
                 openWindow(id: AppIdentity.avWindowID)
+            }
+            if CommandLine.arguments.contains("--show-diagnostics") {
+                openWindow(id: AppIdentity.diagWindowID)
             }
             if CommandLine.arguments.contains("--show-settings") {
                 openSettings()
@@ -808,59 +820,23 @@ struct ForwardSheet: View {
     }
 }
 
+/// Slim status bar (om-statusbar): Live dot + feed errors only. All
+/// counters moved to the Diagnostics window (Window ▸ Diagnostics);
+/// the dot's tooltip/VoiceOver label carries the shared feed line.
 struct StatusBar: View {
     @EnvironmentObject private var state: AppState
-    @ObservedObject var call: CallStore
 
     var body: some View {
         HStack(spacing: DietSpace.sm) {
-            Text("core \(state.coreVersion) · init=\(state.initCode)")
-                .font(DietType.captionMono)
-                .foregroundStyle(DietColor.textSecondaryColor)
-            if let c = call.call, c.isActive {
-                Text("call: \(c.state) · \(c.displayPeer)")
-                    .font(DietType.captionMono)
-                    .foregroundStyle(Color(nsColor: DietColor.success))
+            Circle().fill(feedColor)
+                .frame(width: DietSpace.sm, height: DietSpace.sm)
+                .help(feedText)
+                .accessibilityLabel(feedText)
+            if let err = state.feedError {
+                Text(err)
+                    .font(DietType.caption1)
+                    .foregroundStyle(Color(nsColor: DietColor.danger))
                     .lineLimit(1)
-            } else if !state.isDemo, state.signedIn == true {
-                Button("Echo test") { call.echo() }
-                    .font(DietType.caption1)
-                    .disabled(call.busy)
-                    .help("Place the echo-bot test call (signaling only)")
-                Button("Echo live") { call.echoLive() }
-                    .font(DietType.caption1)
-                    .disabled(call.busy)
-                    .help("Place the echo-bot test call with live audio/video")
-            }
-            if state.isDemo {
-                Text("DEMO · offline")
-                    .font(DietType.caption1).bold()
-                    .foregroundStyle(Color(nsColor: DietColor.warning))
-                    .padding(.horizontal, DietSpace.sm)
-                    .padding(.vertical, DietSpace.xxs)
-                    .background(
-                        Color(nsColor: DietColor.warning).opacity(0.15),
-                        in: Capsule())
-                PresencePicker(store: state.presence)
-            } else {
-                Text(state.signedIn.map { $0 ? "signed in" : "signed out" } ?? "auth ?")
-                    .font(DietType.caption1)
-                    .foregroundStyle(DietColor.textSecondaryColor)
-                PresencePicker(store: state.presence)
-                HStack(spacing: DietSpace.xs) {
-                    Circle().fill(feedColor)
-                        .frame(
-                            width: DietSpace.sm, height: DietSpace.sm)
-                    Text(feedText)
-                        .font(DietType.captionMono)
-                        .foregroundStyle(DietColor.textSecondaryColor)
-                }
-                if let err = state.feedError {
-                    Text(err)
-                        .font(DietType.caption1)
-                        .foregroundStyle(Color(nsColor: DietColor.danger))
-                        .lineLimit(1)
-                }
             }
             Spacer()
         }
@@ -878,13 +854,8 @@ struct StatusBar: View {
     }
 
     private var feedText: String {
-        switch state.feedState {
-        case .live:
-            "Live · \(state.feedEvents) new · \(state.feedPolls) polls · \(state.feedResyncs) resyncs"
-        case .retryWait:
-            "Connecting… (\(state.feedEvents) new · \(state.feedResyncs) resyncs)"
-        case .stopped:
-            "Realtime off"
-        }
+        DiagnosticsFormat.feedLine(
+            state: state.feedState, events: state.feedEvents,
+            polls: state.feedPolls, resyncs: state.feedResyncs)
     }
 }
