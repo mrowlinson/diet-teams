@@ -1,13 +1,34 @@
-// ChatScroll.swift — om-scroll: follow/pill policy + per-chat scroll state.
+// ChatScroll.swift — om-scroll/om-scrollbottom: follow/pill policy +
+// per-chat scroll state.
 //
 // Autoscroll fires ONLY while the viewport hugs the tail (near bottom);
 // anywhere else, incoming mail lands in a new-message pill instead of
 // yanking the reader. Own echoes always follow (the Send tap already
 // implies the jump). History prepends hold the first-visible row, the
 // top load-more is debounced, and the initial landing re-asserts the
-// bottom while rows settle (short-land fix).
+// bottom while rows settle (short-land fix). Scrolled-up with nothing
+// new, a plain jump-to-latest stands in for the pill.
 import Foundation
 import SwiftUI
+
+/// Outcome of consuming one tail observation (om-scrollbottom).
+public enum ScrollAdvance: Equatable {
+    /// Tail moved and the viewport must follow (stick or own echo);
+    /// the read frontier already advanced to the new tail.
+    case follow
+    /// Tail moved while reading history: hold position, the pill counts it.
+    case pill
+    /// Tail unchanged (prepend or same-tail refresh): caller holds anchor.
+    case none
+}
+
+/// Bottom overlay state (om-scrollbottom): unread pill vs plain jump.
+public enum BottomAction: Equatable {
+    /// Unread mail waits: titled pill, tap jumps to latest.
+    case pill(String)
+    /// Scrolled up with nothing new: plain jump-to-latest.
+    case jump
+}
 
 /// Pure scroll decisions (testable without views).
 public enum ScrollPolicy {
@@ -28,6 +49,14 @@ public enum ScrollPolicy {
     public static func pillTitle(unseen: Int) -> String? {
         guard unseen > 0 else { return nil }
         return unseen == 1 ? "1 new message" : "\(unseen) new messages"
+    }
+
+    /// Bottom overlay decision (om-scrollbottom): the unread pill while
+    /// mail waits, else a plain jump control while scrolled up, else
+    /// nothing (already at the tail with nothing new).
+    public static func bottomAction(unseen: Int, nearBottom: Bool) -> BottomAction? {
+        if let title = pillTitle(unseen: unseen) { return .pill(title) }
+        return nearBottom ? nil : .jump
     }
 
     /// Minimum gap between top load-more fires (the row's onAppear
@@ -115,6 +144,46 @@ public final class ChatScrollModel: ObservableObject {
     /// First on-screen message in history order (prepend anchor).
     public func firstVisibleID(in messages: [ChatMessage]) -> String? {
         messages.first(where: { visibleIDs.contains($0.id) })?.id
+    }
+
+    /// Bottom dwell (sentinel on screen): hug the tail, mark read
+    /// through it (kills the pill).
+    public func noteBottomDwell(tailID: String?) {
+        nearBottom = true
+        lastReadID = tailID
+    }
+
+    /// Left the tail (sentinel off screen): settle passes cancel
+    /// outright (no yank races).
+    public func noteLeftBottom() {
+        nearBottom = false
+        cancelSettle()
+    }
+
+    /// Tail advance detector (om-scrollbottom state machine): the
+    /// current tail vs the last consumed one. Follow advances the read
+    /// frontier; pill leaves it (the count derives from it); none
+    /// changes nothing (pure prepend / same-tail refresh).
+    public func consumeTail(currentTailID: String?, isOwnTail: Bool) -> ScrollAdvance {
+        guard currentTailID != lastSeenID else { return .none }
+        lastSeenID = currentTailID
+        if ScrollPolicy.shouldFollow(nearBottom: nearBottom, isOwnTail: isOwnTail) {
+            lastReadID = currentTailID
+            return .follow
+        }
+        return .pill
+    }
+
+    /// Pill/jump tap: mark read through the tail, re-hug it (the caller
+    /// performs the scroll; the sentinel dwell re-asserts).
+    public func jumpToLatest(tailID: String?) {
+        lastReadID = tailID
+        nearBottom = true
+    }
+
+    /// Unread tail count past the read frontier for these messages.
+    public func unseenCount(messages: [ChatMessage]) -> Int {
+        ScrollPolicy.unseenCount(messages: messages, after: lastReadID)
     }
 
     public func cancelSettle() {
