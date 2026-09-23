@@ -76,6 +76,7 @@ final class RichConversationTests: XCTestCase {
     func testDaySectionsSplit() {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime]
+        f.timeZone = .current
         let now = Date()
         let iso: (Int) -> String = { d in
             f.string(from: Calendar.current.date(byAdding: .day, value: d, to: now)!)
