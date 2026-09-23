@@ -4,12 +4,15 @@
 //! families of `src`:
 //! - AMS object views (`…/v1/objects/…/views/imgo`,
 //!   `…asyncgw.teams.microsoft.com…`, `…api.asm.skype.com…`): need the
-//!   Skype token (same `Authentication: skypetoken=` header as the chat API).
+//!   Skype token as `Authorization: skype_token …` (object-store scheme;
+//!   the chat-service scheme 401s — om-imgfix). Chat-hosted views
+//!   (`…msg.teams.microsoft.com…`) keep the chat-service scheme.
 //! - public URLs (Giphy, external): plain GET, no auth — the token must
 //!   never leak to third-party hosts.
 //!
-//! [`needs_auth`] classifies the URL; [`fetch_media_data`] downloads it
-//! (15 MB cap). Callers surface bytes + content type to the embedder.
+//! [`needs_auth`] classifies the URL; [`auth_headers`] picks the token
+//! scheme per host family; [`fetch_media_data`] downloads it (15 MB cap).
+//! Callers surface bytes + content type to the embedder.
 
 use anyhow::{bail, Result};
 
@@ -19,6 +22,7 @@ use super::client::TeamsClient;
 pub const MAX_BYTES: usize = 15 * 1024 * 1024;
 
 /// Fetched bytes plus the server's content type, if any.
+#[derive(Debug)]
 pub struct MediaBytes {
     pub data: Vec<u8>,
     pub content_type: Option<String>,
@@ -50,6 +54,38 @@ pub fn needs_auth(url: &str) -> bool {
                 | "asm.skype.com"
                 | "asyncgw.teams.microsoft.com"
         )
+}
+
+/// True when the URL lives on the ASM object-store family
+/// (`*.asm.skype.com`, `*.asyncgw.teams.microsoft.com`). That family
+/// authenticates with `Authorization: skype_token …` (object-store scheme);
+/// the chat-service scheme 401s there (om-imgfix live probe).
+fn is_asm_host(url: &str) -> bool {
+    let host = match host_of(url) {
+        Some(h) => h,
+        None => return false,
+    };
+    host == "asm.skype.com"
+        || host.ends_with(".asm.skype.com")
+        || host == "asyncgw.teams.microsoft.com"
+        || host.ends_with(".asyncgw.teams.microsoft.com")
+}
+
+/// Token headers for one media URL: `(name, value)` pairs to attach.
+/// ASM object-store hosts take the object-store scheme, other Microsoft
+/// hosts the chat-service scheme, public hosts none (the token never
+/// leaks to third parties).
+pub fn auth_headers(url: &str, token: &str) -> Vec<(&'static str, String)> {
+    if !needs_auth(url) {
+        return Vec::new();
+    }
+    if is_asm_host(url) {
+        return vec![("Authorization", format!("skype_token {}", token))];
+    }
+    vec![
+        ("Authentication", format!("skypetoken={}", token)),
+        ("X-SkypeToken", token.to_string()),
+    ]
 }
 
 /// Lowercased host of an https URL, or None.
@@ -122,6 +158,56 @@ mod tests {
         assert!(!needs_auth("https://"));
         // Genuine subdomains (even odd-looking ones) are first-party.
         assert!(needs_auth("https://notams.skype.com/x"));
+    }
+
+    #[test]
+    fn asm_hosts_take_object_store_scheme() {
+        // om-imgfix: the chat-service scheme 401s on the ASM family
+        // (live probe: us-api.asm.skype.com …/views/imgo → 401).
+        for u in [
+            "https://us-api.asm.skype.com/v1/objects/0-eus-d1-abc/views/imgo",
+            "https://api.asm.skype.com/v1/objects/0-abc/views/imgo",
+            "https://us-prod.asyncgw.teams.microsoft.com/v1/objects/0-abc/views/imgo",
+            "https://euno-prod.asyncgw.teams.microsoft.com/v1/objects/0-abc/views/imgpsh_fullsize",
+            "https://US-API.ASM.SKYPE.COM/v1/objects/0-abc/views/imgo",
+        ] {
+            assert_eq!(
+                auth_headers(u, "T"),
+                vec![("Authorization", "skype_token T".to_string())],
+                "ASM scheme for {u}"
+            );
+        }
+    }
+
+    #[test]
+    fn chat_hosts_keep_chat_scheme() {
+        for u in [
+            "https://amer.ng.msg.teams.microsoft.com/v1/objects/0-abc/views/imgo",
+            "https://msg.skype.com/x",
+            "https://notams.skype.com/x",
+        ] {
+            assert_eq!(
+                auth_headers(u, "T"),
+                vec![
+                    ("Authentication", "skypetoken=T".to_string()),
+                    ("X-SkypeToken", "T".to_string()),
+                ],
+                "chat scheme for {u}"
+            );
+        }
+    }
+
+    #[test]
+    fn public_and_evil_hosts_send_no_token() {
+        for u in [
+            "https://media.giphy.com/media/abc/giphy.gif",
+            "https://asm.skype.com.evil.com/x",
+            "https://us-api.asm.skype.com.evil.com/v1/objects/0/views/imgo",
+            "http://us-api.asm.skype.com/x",
+            "not a url",
+        ] {
+            assert!(auth_headers(u, "T").is_empty(), "no token for {u}");
+        }
     }
 
     #[test]
