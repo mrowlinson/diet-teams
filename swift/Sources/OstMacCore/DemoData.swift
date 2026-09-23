@@ -14,6 +14,7 @@ public enum DemoData {
     public static let reactionsID = "demo-react"
     public static let repliesID = "demo-replies"
     public static let historyID = "demo-history"
+    public static let botpostsID = "demo-botposts"
 
     /// Sidebar rows. [0] is "demo" (matches ConversationStore.demo()).
     /// The rich row derives from the rich thread's last message, so its
@@ -39,6 +40,7 @@ public enum DemoData {
         reactionsChat(),
         repliesChat(),
         historyChat(),
+        botPostsChat(),
     ]
 
     /// Rich sidebar row: preview/sender/time from the rich thread's tail.
@@ -91,6 +93,17 @@ public enum DemoData {
         let last = msgs.last
         return ChatItem(
             chatId: historyID, name: "Demo — Long History", is_group: true,
+            last_message_time: last?.timestamp,
+            last_message_sender: last?.sender,
+            last_message_preview: last?.content)
+    }
+
+    /// Bot-posts sidebar row: preview/sender/time from the bot thread's tail.
+    public static func botPostsChat(now: Date = Date()) -> ChatItem {
+        let msgs = botPostsMessages(now: now)
+        let last = msgs.last
+        return ChatItem(
+            chatId: botpostsID, name: "Demo — Bot Posts", is_group: true,
             last_message_time: last?.timestamp,
             last_message_sender: last?.sender,
             last_message_preview: last?.content)
@@ -179,6 +192,7 @@ public enum DemoData {
         case churnPollyID: return churnPollyMessages
         case churnStandupID: return churnStandupMessages
         case historyID: return historyMessages()
+        case botpostsID: return botPostsMessages()
         default: break
         }
         if chatID.hasPrefix("demo-chan-") { return channelMessages }
@@ -446,6 +460,53 @@ public enum DemoData {
                 timestamp: iso(at(dayOffset: line.0, h: line.1, m: line.2)),
                 content: line.4, isOwn: line.5)
         }
+    }
+
+    /// Bot-posts thread (om-botposts): an RSS digest (prose + two
+    /// title+link rows), a build card (marked JSON → row, blob
+    /// suppressed), an unparseable card (server-held attachment →
+    /// placeholder), and a mixed deploy note (prose + one row). Fully
+    /// offline. Timestamps float off now (Today). `content` mirrors
+    /// core strip semantics (tags removed, no spaces added).
+    public static func botPostsMessages(now: Date = Date()) -> [ChatMessage] {
+        func iso(_ d: Date) -> String {
+            let f = ISO8601DateFormatter()
+            f.formatOptions = [.withInternetDateTime]
+            return f.string(from: d)
+        }
+        func at(h: Int, m: Int) -> Date {
+            var cal = Calendar.current
+            cal.timeZone = TimeZone.current
+            return cal.date(bySettingHour: h, minute: m, second: 0, of: now) ?? now
+        }
+        return [
+            ChatMessage(
+                id: "bot-1", sender: "Tech News RSS",
+                timestamp: iso(at(h: 8, m: 2)),
+                content: "Tech news digest — 2 new stories:"
+                    + "Swift 6.2 releasedConcurrency notes and migration guide."
+                    + "Rust 1.89 shipsConst generics progress.",
+                raw: "<p>Tech news digest — 2 new stories:</p>"
+                    + #"<attachment><p><a href="https://example.com/swift-62">Swift 6.2 released</a></p>"#
+                    + "<p>Concurrency notes and migration guide.</p></attachment>"
+                    + #"<attachment><p><a href="https://example.com/rust-189">Rust 1.89 ships</a></p>"#
+                    + "<p>Const generics progress.</p></attachment>"),
+            ChatMessage(
+                id: "bot-2", sender: "Build Bot",
+                timestamp: iso(at(h: 8, m: 5)),
+                content: #"{"@type":"MessageCard","@context":"https://schema.org/extensions","title":"Build green","text":"main passed all checks","potentialAction":[{"@type":"OpenUri","name":"View run","targets":[{"os":"default","uri":"https://example.com/builds/7"}]}]}"#,
+                raw: #"{"@type":"MessageCard","@context":"https://schema.org/extensions","title":"Build green","text":"main passed all checks","potentialAction":[{"@type":"OpenUri","name":"View run","targets":[{"os":"default","uri":"https://example.com/builds/7"}]}]}"#),
+            ChatMessage(
+                id: "bot-3", sender: "RSS Bot",
+                timestamp: iso(at(h: 8, m: 7)),
+                content: "",
+                raw: #"<attachment id="abc123"></attachment>"#),
+            ChatMessage(
+                id: "bot-4", sender: "Deploy Bot",
+                timestamp: iso(at(h: 8, m: 9)),
+                content: "Deploy finished: release 42 notes",
+                raw: #"<p>Deploy finished: </p><attachment><a href="https://example.com/deploys/42">release 42 notes</a></attachment>"#),
+        ]
     }
 
     /// Shared offline thread shown when a demo channel opens.

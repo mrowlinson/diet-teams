@@ -1,8 +1,8 @@
-// ConversationView.swift — om-conv/om-convrich/om-shared/om-notes/om-cmdk/om-catchup/om-reactions/om-msgactions/om-replies/om-history/om-scroll: SwiftUI chat window.
+// ConversationView.swift — om-conv/om-convrich/om-shared/om-notes/om-cmdk/om-catchup/om-reactions/om-msgactions/om-replies/om-history/om-scroll/om-botposts: SwiftUI chat window.
 // Rich bubbles (mentions, code spans, links), day separators, scroll-up
 // load-more paging, edited markers, failed-send retry, Shared files + Notes tabs,
 // GIF picker + thread catch-up + reaction picker/counts + copy/forward/save bubble menu,
-// quote replies (bubble quote + compose chip).
+// quote replies (bubble quote + compose chip), bot-post rows + placeholder.
 import AppKit
 import DietDesign
 import SwiftUI
@@ -316,8 +316,9 @@ struct MessageBubble: View {
                         }
                     }
                     quoteBlock
-                    let rendered = MessageRender.renderText(for: message)
+                    let rendered = MessageRender.bubbleText(for: message)
                     let images = MessageRender.images(fromRaw: message.raw)
+                    let posts = MessageRender.botPosts(fromRaw: message.raw ?? message.content)
                     if !rendered.isEmpty {
                         // No .textSelection: selectable Text owns the
                         // system menu and SwiftUI does not merge custom
@@ -325,7 +326,7 @@ struct MessageBubble: View {
                         // picker on the words. Copy lives in the bubble
                         // menu instead (full message; partial selection
                         // awaits a TextKit-backed bubble).
-                        Text(MessageRender.attributedBody(for: message))
+                        Text(MessageRender.attributedBody(text: rendered, raw: message.raw))
                             .font(DietType.body)
                             .tint(.accentColor)
                     }
@@ -340,6 +341,16 @@ struct MessageBubble: View {
                     }
                     ForEach(Array(photos.enumerated()), id: \.offset) { _, img in
                         RemoteImage(url: img.url, messageID: message.id, alt: img.alt)
+                    }
+                    if !posts.isEmpty {
+                        BotPostRows(posts: posts)
+                    }
+                    if MessageRender.showsPlaceholder(for: message) {
+                        Text("Bot post unavailable")
+                            .font(DietType.caption1)
+                            .italic()
+                            .foregroundStyle(DietColor.textTertiaryColor)
+                            .accessibilityLabel("Unsupported post format")
                     }
                     if failed {
                         HStack(spacing: DietSpace.xs) {
@@ -444,6 +455,42 @@ struct MessageBubble: View {
                 .italic()
                 .foregroundStyle(DietColor.textTertiaryColor)
         }
+    }
+}
+
+/// Bot-post rows (om-botposts): one native row per RSS/card item —
+/// title as a Link when an http(s) URL parsed, plain title otherwise.
+/// Links open in the default browser (Link's native behavior); only
+/// http(s) schemes render as links.
+struct BotPostRows: View {
+    let posts: [MessageRender.BotPost]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DietSpace.xxs) {
+            ForEach(Array(posts.enumerated()), id: \.offset) { _, post in
+                if let target = Self.linkTarget(for: post) {
+                    // Explicit accent + underline: the bubble's primary
+                    // foregroundStyle would otherwise flatten links into
+                    // plain text. Matches inline-link treatment.
+                    Link(destination: target) {
+                        Text(post.title).underline()
+                    }
+                    .font(DietType.body)
+                    .foregroundStyle(Color.accentColor)
+                } else {
+                    Text(post.title)
+                        .font(DietType.body)
+                }
+            }
+        }
+    }
+
+    /// Parsed http(s) link target, or nil for title-only rows.
+    static func linkTarget(for post: MessageRender.BotPost) -> URL? {
+        guard let raw = post.url, let url = URL(string: raw),
+              url.scheme == "http" || url.scheme == "https"
+        else { return nil }
+        return url
     }
 }
 

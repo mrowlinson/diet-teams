@@ -9,9 +9,16 @@ import Foundation
 /// Copy/forward/save text + filename builders. No view or FFI code.
 public enum MessageActions {
     /// What Copy puts on the pasteboard: exactly what the bubble shows
-    /// (shortcodes expanded, same source as MessageRender.attributedBody).
+    /// (shortcodes expanded, same source as MessageRender.attributedBody)
+    /// plus one `title — url` line per bot-post row (title alone when
+    /// no link parsed). Plain messages are unchanged (no rows).
     public static func copyText(for message: ChatMessage) -> String {
-        MessageRender.renderText(for: message)
+        let body = MessageRender.bubbleText(for: message)
+        let rows = MessageRender.botPosts(fromRaw: message.raw ?? message.content).map { post in
+            if let url = post.url { return "\(post.title) — \(url)" }
+            return post.title
+        }
+        return ([body] + rows).filter { !$0.isEmpty }.joined(separator: "\n")
     }
 
     /// What Forward sends to the picked chat: the plain bubble text, no

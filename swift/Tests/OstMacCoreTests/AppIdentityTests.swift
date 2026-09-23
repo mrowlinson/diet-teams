@@ -50,7 +50,7 @@ final class AppIdentityTests: XCTestCase {
     }
 
     func testDemoChats() {
-        XCTAssertEqual(DemoData.chats.count, 8)
+        XCTAssertEqual(DemoData.chats.count, 9)
         XCTAssertEqual(DemoData.chats[0].id, "demo")
         XCTAssertTrue(DemoData.chats.allSatisfy { !$0.name.isEmpty })
         XCTAssertTrue(DemoData.chats.contains { $0.is_group })
@@ -64,6 +64,8 @@ final class AppIdentityTests: XCTestCase {
         // om-replies: threaded-replies demo thread merged into the dataset.
         XCTAssertTrue(DemoData.chats.contains { $0.id == DemoData.repliesID })
         // om-history: 3-day history thread merged into the dataset.
-        XCTAssertEqual(DemoData.chats.last?.id, DemoData.historyID)
+        XCTAssertTrue(DemoData.chats.contains { $0.id == DemoData.historyID })
+        // om-botposts: bot-posts demo thread merged into the dataset.
+        XCTAssertEqual(DemoData.chats.last?.id, DemoData.botpostsID)
     }
 }
