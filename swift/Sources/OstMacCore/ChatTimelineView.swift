@@ -1,7 +1,8 @@
-// ChatTimelineView.swift — om-scroll/om-history/om-editdel/om-react-polish:
+// ChatTimelineView.swift — om-scroll/om-history/om-editdel/om-react-polish/om-scrollbottom:
 // message timeline with follow/pill, prepend anchoring, armed+debounced
 // paging, history loading/error states, edit/delete passthrough, the
-// more-picker shot hook, and settle re-asserts.
+// more-picker shot hook, settle re-asserts, and a jump-to-latest while
+// scrolled up with nothing new.
 //
 // Extracted from ConversationView so the scroll state (ChatScrollModel)
 // is owned per chat: the parent `.id()`s this view by chatID, giving
@@ -80,12 +81,10 @@ struct ChatTimelineView: View {
                         Color.clear
                             .frame(height: 1)
                             .onAppear {
-                                scroll.nearBottom = true
-                                scroll.lastReadID = store.messages.last?.id
+                                scroll.noteBottomDwell(tailID: store.messages.last?.id)
                             }
                             .onDisappear {
-                                scroll.nearBottom = false
-                                scroll.cancelSettle()
+                                scroll.noteLeftBottom()
                             }
                     }
                     .padding(DietSpace.md)
@@ -110,22 +109,44 @@ struct ChatTimelineView: View {
                         Self.postPickerShot(store: store, tries: 8)
                     }
                 }
-                if let title = ScrollPolicy.pillTitle(unseen: unseen) {
-                    Button { pillTap(proxy) } label: {
-                        HStack(spacing: DietSpace.xs) {
-                            Image(systemName: "arrow.down.circle.fill")
-                            Text(title)
-                                .font(DietType.caption1).bold()
+                if let action = bottomAction {
+                    switch action {
+                    case .pill(let title):
+                        Button { jumpTap(proxy) } label: {
+                            HStack(spacing: DietSpace.xs) {
+                                Image(systemName: "arrow.down.circle.fill")
+                                Text(title)
+                                    .font(DietType.caption1).bold()
+                            }
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, DietSpace.sm + DietSpace.xs)
+                            .padding(.vertical, DietSpace.xs)
+                            .background(Color.accentColor, in: Capsule())
+                            .shadow(color: .black.opacity(0.2), radius: 2, y: 1)
                         }
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, DietSpace.sm + DietSpace.xs)
-                        .padding(.vertical, DietSpace.xs)
-                        .background(Color.accentColor, in: Capsule())
-                        .shadow(color: .black.opacity(0.2), radius: 2, y: 1)
+                        .buttonStyle(.plain)
+                        .help("Jump to latest messages")
+                        .padding(.bottom, DietSpace.sm)
+                    case .jump:
+                        Button { jumpTap(proxy) } label: {
+                            HStack(spacing: DietSpace.xs) {
+                                Image(systemName: "arrow.down.circle")
+                                Text("Jump to latest")
+                                    .font(DietType.caption1).bold()
+                            }
+                            .foregroundStyle(DietColor.textPrimaryColor)
+                            .padding(.horizontal, DietSpace.sm + DietSpace.xs)
+                            .padding(.vertical, DietSpace.xs)
+                            .background(DietColor.wellColor, in: Capsule())
+                            .overlay(
+                                Capsule()
+                                    .stroke(DietColor.dividerColor, lineWidth: 1))
+                            .shadow(color: .black.opacity(0.15), radius: 2, y: 1)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Jump to latest messages")
+                        .padding(.bottom, DietSpace.sm)
                     }
-                    .buttonStyle(.plain)
-                    .help("Jump to latest messages")
-                    .padding(.bottom, DietSpace.sm)
                 }
             }
         }
@@ -136,7 +157,11 @@ struct ChatTimelineView: View {
     }
 
     private var unseen: Int {
-        ScrollPolicy.unseenCount(messages: store.messages, after: scroll.lastReadID)
+        scroll.unseenCount(messages: store.messages)
+    }
+
+    private var bottomAction: BottomAction? {
+        ScrollPolicy.bottomAction(unseen: unseen, nearBottom: scroll.nearBottom)
     }
 
     /// Top reach sentinel (paging primary): a persistent marker above
@@ -197,18 +222,15 @@ struct ChatTimelineView: View {
     /// (A prepend landing in the SAME update as an append takes the
     /// follow/pill path; the anchor only holds pure prepends.)
     private func handleMessagesChanged(_ proxy: ScrollViewProxy) {
-        let current = store.messages.last?.id
-        if current != scroll.lastSeenID {
-            scroll.lastSeenID = current
-            if ScrollPolicy.shouldFollow(
-                nearBottom: scroll.nearBottom,
-                isOwnTail: store.messages.last?.isOwn ?? false)
-            {
-                scroll.lastReadID = current
-                scrollToBottom(proxy)
-            }
-            // Else: the pill absorbs it (unseen derives from lastReadID).
-        } else {
+        switch scroll.consumeTail(
+            currentTailID: store.messages.last?.id,
+            isOwnTail: store.messages.last?.isOwn ?? false)
+        {
+        case .follow:
+            scrollToBottom(proxy)
+        case .pill:
+            break // the pill absorbs it (unseen derives from lastReadID)
+        case .none:
             let anchor = scroll.firstVisibleID(in: store.messages)
                 ?? scroll.prePrependFirstID
             if let anchor {
@@ -227,9 +249,8 @@ struct ChatTimelineView: View {
         }
     }
 
-    private func pillTap(_ proxy: ScrollViewProxy) {
-        scroll.lastReadID = store.messages.last?.id
-        scroll.nearBottom = true
+    private func jumpTap(_ proxy: ScrollViewProxy) {
+        scroll.jumpToLatest(tailID: store.messages.last?.id)
         scrollToBottom(proxy)
     }
 
