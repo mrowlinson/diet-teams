@@ -134,10 +134,9 @@ public struct ConversationView: View {
         .sheet(item: $editingMessage) { msg in
             editSheet(for: msg)
         }
-        .confirmationDialog(
+        .alert(
             "Delete this message?",
-            isPresented: $showDeleteConfirm,
-            titleVisibility: .visible
+            isPresented: $showDeleteConfirm
         ) {
             Button("Delete", role: .destructive) {
                 if let target = deletingMessage {
@@ -145,7 +144,9 @@ public struct ConversationView: View {
                 }
                 deletingMessage = nil
             }
+            .keyboardShortcut(.defaultAction)
             Button("Cancel", role: .cancel) { deletingMessage = nil }
+                .keyboardShortcut(.cancelAction)
         } message: {
             Text("This cannot be undone.")
         }
@@ -194,13 +195,15 @@ public struct ConversationView: View {
                 .lineLimit(3...8)
             HStack {
                 Spacer()
-                Button("Cancel") { editingMessage = nil }
-                    .buttonStyle(.dietSecondary)
+                Button("Cancel", role: .cancel) { editingMessage = nil }
+                    .buttonStyle(.bordered)
+                    .keyboardShortcut(.cancelAction)
                 Button("Save") {
                     store.edit(messageID: msg.id, text: editDraft)
                     editingMessage = nil
                 }
-                .buttonStyle(.dietPrimary)
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
                 .disabled(editDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     || editDraft.trimmingCharacters(in: .whitespacesAndNewlines) == msg.content)
             }
