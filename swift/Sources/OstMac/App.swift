@@ -401,14 +401,24 @@ final class AppState: ObservableObject {
             // working auth regardless.
             signedIn = true
         }
-        // Restore: explicit --chat wins, else last selection.
-        let target = preselectID ?? persistedSelection
-        if let id = target {
-            if chats.chats.contains(where: { $0.id == id }) {
-                chats.selectedChatID = id // sink opens it
-            } else {
-                open(chatID: id, chatName: preselectName)
-            }
+        // Restore (om-demo-select): explicit --chat wins, else the last
+        // selection — resolved against the loaded list, never blind. A
+        // restored id absent from the list falls back to the first chat
+        // (no direct open, no 404); demo threads never load outside the
+        // demo flags.
+        let action = SelectionRestore.resolve(
+            explicit: preselectID, restored: persistedSelection,
+            chats: chats.chats, isDemo: isDemo)
+        if !isDemo, let stale = persistedSelection, DemoData.isDemoID(stale) {
+            persistedSelection = nil // scrub pre-fix demo default
+        }
+        switch action {
+        case .select(let id):
+            chats.selectedChatID = id // sink opens it
+        case .openDirect(let id):
+            open(chatID: id, chatName: preselectName)
+        case .none:
+            break
         }
         if !isDemo {
             presence.refreshOwnSoon() // own dot; non-critical on failure
@@ -491,8 +501,14 @@ final class AppState: ObservableObject {
     }
 
     private func open(chatID id: String, chatName: String?) {
+        // Demo threads never load outside the demo flags (a stale
+        // demo-react default 404d the installed build); demo
+        // selections never reach shared defaults either.
+        guard isDemo || !DemoData.isDemoID(id) else { return }
         openChatID = id
-        persistedSelection = id
+        if SelectionRestore.shouldPersist(chatID: id) {
+            persistedSelection = id
+        }
         unread.markRead(chatID: id) // om-notifbadge: opening marks read
         if isDemo {
             let name = chatName ?? DemoData.name(for: id) ?? "Conversation"
