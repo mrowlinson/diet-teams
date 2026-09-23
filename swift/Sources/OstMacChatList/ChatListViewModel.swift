@@ -34,6 +34,15 @@ public final class ChatListViewModel: ObservableObject, ChatSelection {
 
     public var selectedChat: ChatItem? {
         chats.first { $0.id == selectedChatID }
+            ?? selectedChatID.flatMap(PinnedChats.row(for:))
+    }
+
+    /// Sidebar order: Mentions, Notifications, then recency. Pure
+    /// projection over `chats` (which stays real-chats-only,
+    /// recency-ordered); every ingest/filter/restart path re-derives it,
+    /// so the pin invariant holds without a stored copy that could drift.
+    public var displayChats: [ChatItem] {
+        PinnedChats.sorted(chats)
     }
 
     private let fetcher: Fetcher
@@ -53,6 +62,7 @@ public final class ChatListViewModel: ObservableObject, ChatSelection {
             chats = response.chats
             state = response.chats.isEmpty ? .empty : .loaded
             if let sel = selectedChatID,
+               !PinnedChats.isSynthetic(sel),
                !response.chats.contains(where: { $0.id == sel })
             {
                 selectedChatID = nil
