@@ -367,16 +367,49 @@ fn fallback_id(chat: &str, sender: &str, text: &str, time: &str) -> String {
     format!("h:{:08x}", (h.finish() & 0xffff_ffff) as u32)
 }
 
-/// Strip HTML tags + decode common entities (mirrors chat API display text).
+/// Block-level tags whose boundaries separate words (mirrors
+/// `ost::api::chat` strip_html; keep the two lists in sync).
+const BLOCK_TAGS: &[&str] = &[
+    "p", "div", "br", "section", "article", "header", "footer", "h1", "h2", "h3", "h4",
+    "h5", "h6", "ul", "ol", "li", "dl", "dt", "dd", "table", "tr", "td", "th",
+    "blockquote", "pre", "hr",
+];
+
+/// Strip HTML tags + decode common entities (mirrors chat API display
+/// text). Spacing-aware (om-chatnames): block boundaries become one
+/// space so live previews never glue words; no leading/trailing space.
 fn strip_html(html: &str) -> String {
     let mut out = String::with_capacity(html.len());
+    let mut tag = String::new();
     let mut in_tag = false;
+    let mut pending_space = false;
     for ch in html.chars() {
-        match ch {
-            '<' => in_tag = true,
-            '>' => in_tag = false,
-            _ if !in_tag => out.push(ch),
-            _ => {}
+        if in_tag {
+            if ch == '>' {
+                in_tag = false;
+                let body = tag.strip_prefix('/').unwrap_or(&tag);
+                let name: String = body
+                    .chars()
+                    .take_while(|c| !c.is_whitespace() && *c != '/')
+                    .collect();
+                if BLOCK_TAGS.contains(&name.to_lowercase().as_str()) {
+                    pending_space = true;
+                }
+                tag.clear();
+            } else {
+                tag.push(ch);
+            }
+        } else if ch == '<' {
+            in_tag = true;
+        } else {
+            if pending_space {
+                pending_space = false;
+                if !out.is_empty() && !out.ends_with(char::is_whitespace) && !ch.is_whitespace()
+                {
+                    out.push(' ');
+                }
+            }
+            out.push(ch);
         }
     }
     out.replace("&amp;", "&")
@@ -441,6 +474,15 @@ mod tests {
         assert!(serde_json::to_value(&bare.messages[0]).unwrap()
             .get("reactions")
             .is_none());
+    }
+
+    #[test]
+    fn strip_html_block_boundaries_space_words() {
+        assert_eq!(strip_html("<p>hi</p>"), "hi");
+        assert_eq!(strip_html("<p>Hello</p><p>World</p>"), "Hello World");
+        assert_eq!(strip_html("a<br>b"), "a b");
+        assert_eq!(strip_html("a<b>x</b>b"), "axb");
+        assert_eq!(strip_html("<p>a &amp; b</p>"), "a & b");
     }
 
     #[test]

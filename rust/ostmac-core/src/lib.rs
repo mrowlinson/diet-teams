@@ -2170,6 +2170,7 @@ mod tests {
     fn message_json_shape() {
         let m = ost::api::MessageInfo {
             id: "m1".to_string(),
+            sender_mri: "8:orgid:sender".to_string(),
             sender: "A Sender".to_string(),
             timestamp: "2026-09-22T12:00:00Z".to_string(),
             content: "hi".to_string(),
@@ -2191,6 +2192,7 @@ mod tests {
     fn message_json_shape_carries_reply_to() {
         let m = ost::api::MessageInfo {
             id: "m2".to_string(),
+            sender_mri: "8:orgid:b".to_string(),
             sender: "B".to_string(),
             timestamp: "t".to_string(),
             content: "On it!".to_string(),
@@ -2379,6 +2381,7 @@ mod tests {
         let page = ost::api::MessagesPage {
             messages: vec![ost::api::MessageInfo {
                 id: "m1".to_string(),
+                sender_mri: "8:orgid:sender".to_string(),
                 sender: "A Sender".to_string(),
                 timestamp: "2026-09-22T12:00:00Z".to_string(),
                 content: "hi Bob".to_string(),

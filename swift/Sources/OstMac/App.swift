@@ -307,7 +307,7 @@ final class AppState: ObservableObject {
             guard let id = note.userInfo?["chatID"] as? String else { return }
             Task { @MainActor [weak self] in
                 let name = self?.chats.chats.first(where: { $0.id == id })?.name
-                self?.jump(chatID: id, chatName: name ?? id)
+                self?.jump(chatID: id, chatName: name ?? "Conversation")
             }
         }
         _ = NotificationCenter.default.addObserver(
@@ -442,7 +442,7 @@ final class AppState: ObservableObject {
         openChatID = id
         persistedSelection = id
         if isDemo {
-            let name = chatName ?? DemoData.name(for: id) ?? id
+            let name = chatName ?? DemoData.name(for: id) ?? "Conversation"
             var msgs = DemoData.messages(for: id)
             if showCatchUp { msgs = Self.longThread(from: msgs) }
             conv.showDemo(
@@ -579,7 +579,7 @@ final class AppState: ObservableObject {
         Notifier.shared.onOpenChat = { [weak self] chatID in
             guard let strongSelf = self else { return }
             await MainActor.run {
-                let name = strongSelf.chats.chats.first(where: { $0.id == chatID })?.name ?? chatID
+                let name = strongSelf.chats.chats.first(where: { $0.id == chatID })?.name ?? "Conversation"
                 strongSelf.jump(chatID: chatID, chatName: name)
             }
         }
