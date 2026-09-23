@@ -1,0 +1,261 @@
+// ChatTimelineView.swift — om-scroll/om-history: message timeline with
+// follow/pill, prepend anchoring, armed+debounced paging, history
+// loading/error states, and settle re-asserts.
+//
+// Extracted from ConversationView so the scroll state (ChatScrollModel)
+// is owned per chat: the parent `.id()`s this view by chatID, giving
+// each chat a fresh model, sentinel, and settle generation.
+import DietDesign
+import SwiftUI
+
+struct ChatTimelineView: View {
+    @ObservedObject var store: ConversationStore
+    var onForward: (ChatMessage) -> Void = { _ in }
+    @StateObject private var scroll = ChatScrollModel()
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ZStack(alignment: .bottom) {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: DietSpace.sm) {
+                        pagingSentinel
+                        loadMoreRow
+                        if store.loading, store.messages.isEmpty {
+                            HStack {
+                                Spacer()
+                                ProgressView().controlSize(.small)
+                                Text("Loading recent messages…")
+                                    .font(DietType.caption1)
+                                    .foregroundStyle(DietColor.textSecondaryColor)
+                                Spacer()
+                            }
+                            .padding(.vertical, DietSpace.xl)
+                        } else if store.messages.isEmpty, !store.loading {
+                            if let err = store.error {
+                                DietEmptyState(
+                                    systemImage: "wifi.exclamationmark",
+                                    title: "Couldn't load messages",
+                                    message: err,
+                                    actionLabel: "Try Again",
+                                    action: { store.retryOpen() })
+                            } else {
+                                DietEmptyState(
+                                    systemImage: "bubble.left.and.bubble.right",
+                                    title: "No messages yet",
+                                    message: "Start the conversation below — your message appears here.")
+                            }
+                        }
+                        ForEach(sections, id: \.key) { section in
+                            DietDaySeparator(section.label)
+                            ForEach(section.messages) { msg in
+                                MessageBubble(
+                                    message: msg,
+                                    failed: store.failedIDs.contains(msg.id),
+                                    quoted: store.quotedParent(for: msg),
+                                    onRetry: { _ = store.retry(id: msg.id) },
+                                    onReact: { store.toggleReaction(messageID: msg.id, emoji: $0) },
+                                    onForward: { onForward(msg) },
+                                    onReply: { store.beginReply(to: msg) }
+                                )
+                                .id(msg.id)
+                                .onAppear { scroll.visibleIDs.insert(msg.id) }
+                                .onDisappear { scroll.visibleIDs.remove(msg.id) }
+                            }
+                        }
+                        // Bottom sentinel: on screen ⇔ viewport hugs the
+                        // tail. Dwell marks the read frontier (kills the
+                        // pill); leaving cancels settle (no yank races).
+                        Color.clear
+                            .frame(height: 1)
+                            .onAppear {
+                                scroll.nearBottom = true
+                                scroll.lastReadID = store.messages.last?.id
+                            }
+                            .onDisappear {
+                                scroll.nearBottom = false
+                                scroll.cancelSettle()
+                            }
+                    }
+                    .padding(DietSpace.md)
+                }
+                .defaultScrollAnchor(.bottom)
+                .onChange(of: store.messages.count) { handleMessagesChanged(proxy) }
+                .onChange(of: store.loading) { handleLoadingChanged(proxy) }
+                .onAppear {
+                    store.openIfNeeded()
+                    scroll.lastSeenID = store.messages.last?.id
+                    scroll.lastReadID = store.messages.last?.id
+                    if let target = Self.scrollTarget(args: CommandLine.arguments) {
+                        scrollTo(proxy, id: target)
+                    } else {
+                        settleToBottom(proxy)
+                    }
+                }
+                if let title = ScrollPolicy.pillTitle(unseen: unseen) {
+                    Button { pillTap(proxy) } label: {
+                        HStack(spacing: DietSpace.xs) {
+                            Image(systemName: "arrow.down.circle.fill")
+                            Text(title)
+                                .font(DietType.caption1).bold()
+                        }
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, DietSpace.sm + DietSpace.xs)
+                        .padding(.vertical, DietSpace.xs)
+                        .background(Color.accentColor, in: Capsule())
+                        .shadow(color: .black.opacity(0.2), radius: 2, y: 1)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Jump to latest messages")
+                    .padding(.bottom, DietSpace.sm)
+                }
+            }
+        }
+    }
+
+    private var sections: [MessageRender.DaySection] {
+        MessageRender.daySections(store.messages)
+    }
+
+    private var unseen: Int {
+        ScrollPolicy.unseenCount(messages: store.messages, after: scroll.lastReadID)
+    }
+
+    /// Top reach sentinel (paging primary): a persistent marker above
+    /// the load row. Appearing fires one armed+debounced page;
+    /// disappearing re-arms. Unlike the old button/spinner onAppear, the
+    /// sentinel never swaps on load state, so prepend rebuilds cannot
+    /// refire it — each page needs a genuine leave-and-return excursion.
+    private var pagingSentinel: some View {
+        Color.clear
+            .frame(height: 1)
+            .onAppear { fireAutoLoadMore() }
+            .onDisappear { scroll.armPaging() }
+    }
+
+    private var loadMoreRow: some View {
+        Group {
+            if store.loadingMore {
+                HStack {
+                    Spacer()
+                    ProgressView().controlSize(.small)
+                    Text("Loading older messages…")
+                        .font(DietType.caption1)
+                        .foregroundStyle(DietColor.textSecondaryColor)
+                    Spacer()
+                }
+            } else if store.canLoadMore {
+                // Explicit tap fallback: the sentinel above auto-fires on
+                // genuine reach-top; the tap covers readers whose sentinel
+                // never trips. Each tap loads one lazy day-chunk.
+                Button("Load older messages") { fireTapLoadMore() }
+                    .buttonStyle(.dietSecondary)
+                    .frame(maxWidth: .infinity)
+            }
+        }
+    }
+
+    /// Auto paging (primary): armed + debounced. Records the fallback
+    /// anchor, then loads. Disarms on fire, so prepend/rebuild onAppear
+    /// refires collapse until the reader leaves the top again.
+    private func fireAutoLoadMore() {
+        guard store.canLoadMore else { return }
+        guard scroll.shouldAutoFireLoadMore() else { return }
+        scroll.prePrependFirstID = store.messages.first?.id
+        store.loadMore()
+    }
+
+    /// Explicit tap (fallback): debounced, needs no arm. Disarms on fire
+    /// so the tap's own prepend rebuild cannot auto-chain.
+    private func fireTapLoadMore() {
+        guard store.canLoadMore else { return }
+        guard scroll.shouldTapLoadMore() else { return }
+        scroll.prePrependFirstID = store.messages.first?.id
+        store.loadMore()
+    }
+
+    /// Tail advance → follow or pill; stable tail + moved count →
+    /// prepended history (or same-tail refresh) → hold first-visible.
+    /// (A prepend landing in the SAME update as an append takes the
+    /// follow/pill path; the anchor only holds pure prepends.)
+    private func handleMessagesChanged(_ proxy: ScrollViewProxy) {
+        let current = store.messages.last?.id
+        if current != scroll.lastSeenID {
+            scroll.lastSeenID = current
+            if ScrollPolicy.shouldFollow(
+                nearBottom: scroll.nearBottom,
+                isOwnTail: store.messages.last?.isOwn ?? false)
+            {
+                scroll.lastReadID = current
+                scrollToBottom(proxy)
+            }
+            // Else: the pill absorbs it (unseen derives from lastReadID).
+        } else {
+            let anchor = scroll.firstVisibleID(in: store.messages)
+                ?? scroll.prePrependFirstID
+            if let anchor {
+                DispatchQueue.main.async { proxy.scrollTo(anchor, anchor: .top) }
+            }
+        }
+    }
+
+    /// History just landed: restart the settle landing (guarded by
+    /// near-bottom so a reader who scrolled during load keeps place).
+    private func handleLoadingChanged(_ proxy: ScrollViewProxy) {
+        if !store.loading, scroll.nearBottom {
+            scroll.lastSeenID = store.messages.last?.id
+            scroll.lastReadID = store.messages.last?.id
+            settleToBottom(proxy)
+        }
+    }
+
+    private func pillTap(_ proxy: ScrollViewProxy) {
+        scroll.lastReadID = store.messages.last?.id
+        scroll.nearBottom = true
+        scrollToBottom(proxy)
+    }
+
+    private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool = true) {
+        guard let last = store.messages.last else { return }
+        DispatchQueue.main.async {
+            if animated {
+                withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
+            } else {
+                proxy.scrollTo(last.id, anchor: .bottom)
+            }
+        }
+    }
+
+    /// Shot hook: `--scroll-to <message-id>` lands the initial scroll
+    /// on that bubble (scroll-state shots) instead of the tail.
+    /// Unknown ids are ignored (ScrollViewProxy.scrollTo is a no-op).
+    static func scrollTarget(args: [String]) -> String? {
+        guard let i = args.firstIndex(of: "--scroll-to"), i + 1 < args.count else { return nil }
+        let id = args[i + 1].trimmingCharacters(in: .whitespacesAndNewlines)
+        return id.isEmpty ? nil : id
+    }
+
+    private func scrollTo(_ proxy: ScrollViewProxy, id: String) {
+        DispatchQueue.main.async {
+            proxy.scrollTo(id, anchor: .top)
+        }
+    }
+
+    /// Initial land + timed re-asserts while the reader stays near the
+    /// bottom. Rows grow as images resolve, so one scroll lands short
+    /// (short-land); each pass re-reads live `nearBottom`, and leaving
+    /// the bottom cancels the task outright.
+    private func settleToBottom(_ proxy: ScrollViewProxy) {
+        scrollToBottom(proxy, animated: false)
+        scroll.cancelSettle()
+        scroll.settleTask = Task { @MainActor in
+            var waited: TimeInterval = 0
+            for step in ScrollPolicy.settleDelays {
+                let nanos = UInt64(max(0, step - waited) * 1_000_000_000)
+                try? await Task.sleep(nanoseconds: nanos)
+                waited = step
+                guard !Task.isCancelled else { return }
+                if scroll.nearBottom { scrollToBottom(proxy, animated: false) }
+            }
+        }
+    }
+}

@@ -1,8 +1,9 @@
-// RemoteImage.swift — om-richmedia: bubble image with load states.
+// RemoteImage.swift — om-richmedia/om-scroll: bubble image with load states.
 //
 // States: loading (placeholder) → loaded (aspect-fit, tap-to-expand sheet)
 // or failed (icon + retry). Bytes come from RichMediaCache (URL+msg keyed),
-// so paging/streaming re-renders never refetch.
+// so paging/streaming re-renders never refetch. All phases share one fixed
+// slot (RemoteImageSlot) so resolving bytes never shifts the timeline.
 import AppKit
 import SwiftUI
 
@@ -65,7 +66,22 @@ public final class RemoteImageModel: ObservableObject {
     }
 }
 
-/// Full-size bubble image: 260×200 cap, aspect fit, tap expands.
+/// Stable slot shared by every image phase (om-scroll): loading,
+/// loaded, and failed all occupy the same box, so resolving bytes never
+/// shifts the timeline (the short-land/settle counterpart at the row level).
+public enum RemoteImageSlot {
+    public static let width: CGFloat = 260
+    public static let height: CGFloat = 200
+    /// Emoticon row height, all states (failed alt text may run wider —
+    /// horizontal only, never a vertical shift).
+    public static let emoticonHeight: CGFloat = 22
+
+    public static func size(for _: RemoteImagePhase) -> CGSize {
+        CGSize(width: width, height: height)
+    }
+}
+
+/// Full-size bubble image: fixed 260×200 slot, aspect fit, tap expands.
 public struct RemoteImage: View {
     @StateObject private var model: RemoteImageModel
     private let alt: String
@@ -83,7 +99,6 @@ public struct RemoteImage: View {
                 ZStack {
                     RoundedRectangle(cornerRadius: 8)
                         .fill(Color.gray.opacity(0.25))
-                        .frame(width: 260, height: 160)
                     ProgressView()
                         .controlSize(.small)
                 }
@@ -94,7 +109,7 @@ public struct RemoteImage: View {
                         Image(nsImage: img)
                             .resizable()
                             .aspectRatio(contentMode: .fit)
-                            .frame(maxWidth: 260, maxHeight: 200)
+                            .frame(maxWidth: RemoteImageSlot.width, maxHeight: RemoteImageSlot.height)
                             .clipShape(RoundedRectangle(cornerRadius: 8))
                     }
                     .buttonStyle(.plain)
@@ -121,6 +136,7 @@ public struct RemoteImage: View {
                 .help(err)
             }
         }
+        .frame(width: RemoteImageSlot.width, height: RemoteImageSlot.height)
         .onAppear { model.load() }
     }
 }
@@ -172,6 +188,8 @@ public struct RemoteEmoticon: View {
             } else if !alt.isEmpty {
                 Text(alt)
                     .font(.body)
+                    .lineLimit(1)
+                    .frame(height: RemoteImageSlot.emoticonHeight)
             } else {
                 Image(systemName: "face.smiling")
                     .foregroundStyle(.secondary)
