@@ -109,6 +109,15 @@ public enum DemoData {
             last_message_preview: last?.content)
     }
 
+    /// True for canned demo/chat ids (om-demo-select). Single namespace
+    /// check: the exact "demo" root plus the "demo-" prefix (rows,
+    /// channels, churn rows, reminder/note fixtures), plus the churn
+    /// meeting id (a real-shaped 19: thread that only exists in the
+    /// --show-sidebarchurn dataset). Live Teams ids never match.
+    public static func isDemoID(_ id: String) -> Bool {
+        id == demoID || id.hasPrefix("demo-") || id == churnMeetingID
+    }
+
     public static func chatsResponse() -> ChatsResponse {
         ChatsResponse(ok: true, chats: chats)
     }
