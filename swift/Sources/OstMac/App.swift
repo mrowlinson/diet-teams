@@ -46,6 +46,8 @@
 // canned fetch failure + Try Again (shot hook, offline).
 // --scroll-to <message-id> lands the initial scroll on that bubble
 // (scroll-state shots; consumed by ConversationView).
+// --show-edit / --show-delete open the edit sheet / delete confirm for
+// the first own bubble at launch (om-editdel shot hooks, demo offline).
 // --auth-state <name> opens the Auth window with a canned state, never
 // touching core/network (names: signed-out, starting, code, polling,
 // browser, browser-working, signed-in, expired, refreshing,
@@ -774,7 +776,9 @@ struct RootView: View {
                             initialTab: CommandLine.arguments.contains("--show-shared") ? 1
                                 : (state.showNotes ? 2 : 0),
                             catchUpOpen: state.showCatchUp,
-                            onForward: { state.beginForward($0) })
+                            onForward: { state.beginForward($0) },
+                            editOpen: CommandLine.arguments.contains("--show-edit"),
+                            deleteOpen: CommandLine.arguments.contains("--show-delete"))
                     }
                 }
             } else {

@@ -1,6 +1,7 @@
-// ChatTimelineView.swift — om-scroll/om-history: message timeline with
-// follow/pill, prepend anchoring, armed+debounced paging, history
-// loading/error states, and settle re-asserts.
+// ChatTimelineView.swift — om-scroll/om-history/om-editdel: message
+// timeline with follow/pill, prepend anchoring, armed+debounced paging,
+// history loading/error states, edit/delete passthrough, and settle
+// re-asserts.
 //
 // Extracted from ConversationView so the scroll state (ChatScrollModel)
 // is owned per chat: the parent `.id()`s this view by chatID, giving
@@ -11,6 +12,8 @@ import SwiftUI
 struct ChatTimelineView: View {
     @ObservedObject var store: ConversationStore
     var onForward: (ChatMessage) -> Void = { _ in }
+    var onEdit: (ChatMessage) -> Void = { _ in }
+    var onDelete: (ChatMessage) -> Void = { _ in }
     @StateObject private var scroll = ChatScrollModel()
 
     var body: some View {
@@ -55,7 +58,9 @@ struct ChatTimelineView: View {
                                     onRetry: { _ = store.retry(id: msg.id) },
                                     onReact: { store.toggleReaction(messageID: msg.id, emoji: $0) },
                                     onForward: { onForward(msg) },
-                                    onReply: { store.beginReply(to: msg) }
+                                    onReply: { store.beginReply(to: msg) },
+                                    onEdit: { onEdit(msg) },
+                                    onDelete: { onDelete(msg) }
                                 )
                                 .id(msg.id)
                                 .onAppear { scroll.visibleIDs.insert(msg.id) }

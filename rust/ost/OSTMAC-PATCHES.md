@@ -189,6 +189,15 @@ needing maintainer buy-in. Minor PRs stand alone; majors are separate PRs.
     with "no joined team contains channel" instead of mis-posting to the
     OneDrive chat folder. Unit test: tacv2 suffix cases.
 
+17. [minor] `src/api/chat.rs` + `src/api/client.rs` + `src/api/mod.rs` +
+    `src/main.rs` — **edit + delete own messages (om-editdel lane)**.
+    Native chat service per-message URL (`PUT` edit with `skypeeditedid`,
+    `DELETE` remove); pure `message_url`/`edit_message_body` builders so
+    embedders pin the wire shape. `client.rs` gains `chat_put`/`chat_delete`
+    (skypetoken auth, `chat_post` parity). Re-exported in `mod.rs`; CLI
+    `edit --to --message-id` / `delete --to --message-id`. Unit test:
+    URL + escaped-body shape.
+
 ## Upstream PRs (2026-09-22, base 0892144; main red on sdp E0308 until #5)
 
 Minor (standalone modulo #5-first; merge in any order after):

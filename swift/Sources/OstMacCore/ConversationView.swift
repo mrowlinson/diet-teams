@@ -1,8 +1,9 @@
-// ConversationView.swift — om-conv/om-convrich/om-shared/om-notes/om-cmdk/om-catchup/om-reactions/om-msgactions/om-replies/om-history/om-scroll/om-botposts: SwiftUI chat window.
+// ConversationView.swift — om-conv/om-convrich/om-shared/om-notes/om-cmdk/om-catchup/om-reactions/om-msgactions/om-replies/om-history/om-scroll/om-botposts/om-editdel: SwiftUI chat window.
 // Rich bubbles (mentions, code spans, links), day separators, scroll-up
 // load-more paging, edited markers, failed-send retry, Shared files + Notes tabs,
 // GIF picker + thread catch-up + reaction picker/counts + copy/forward/save bubble menu,
-// quote replies (bubble quote + compose chip), bot-post rows + placeholder.
+// quote replies (bubble quote + compose chip), bot-post rows + placeholder,
+// own-message edit/delete (top-level context menu).
 import AppKit
 import DietDesign
 import SwiftUI
@@ -27,16 +28,28 @@ public struct ConversationView: View {
     /// Forward tap (om-msgactions): the host opens its jump-palette sheet
     /// (OstMac target owns JumpPaletteView; this module cannot import it).
     private let onForward: (ChatMessage) -> Void
+    /// Edit sheet target + draft (om-editdel).
+    @State private var editingMessage: ChatMessage?
+    @State private var editDraft = ""
+    /// Delete confirm target (om-editdel).
+    @State private var deletingMessage: ChatMessage?
+    @State private var showDeleteConfirm = false
+    @State private var shotSeeded = false
+    private let editOpen: Bool
+    private let deleteOpen: Bool
 
     /// - catchUpOpen: open the catch-up sheet at launch (the
     ///   --show-catchup shot hook only).
     /// - onForward: bubble Forward tap → host sheets the jump palette.
+    /// - editOpen/deleteOpen: open the edit sheet / delete confirm for the
+    ///   first own bubble at launch (--show-edit / --show-delete shot hooks).
     public init(
         store: ConversationStore, presence: PresenceStore = PresenceStore(),
         call: CallStore = CallStore(), shared: SharedFilesStore = SharedFilesStore(),
         notes: NotesStore = NotesStore(), catchUp: CatchUpStore = CatchUpStore(),
         isGroup: Bool = true, initialTab: Int = 0, catchUpOpen: Bool = false,
-        onForward: @escaping (ChatMessage) -> Void = { _ in }
+        onForward: @escaping (ChatMessage) -> Void = { _ in },
+        editOpen: Bool = false, deleteOpen: Bool = false
     ) {
         self.store = store
         self.presence = presence
@@ -48,6 +61,8 @@ public struct ConversationView: View {
         self.onForward = onForward
         _tab = State(initialValue: initialTab)
         _showCatchUp = State(initialValue: catchUpOpen)
+        self.editOpen = editOpen
+        self.deleteOpen = deleteOpen
     }
 
     public var body: some View {
@@ -76,7 +91,9 @@ public struct ConversationView: View {
             if tab == 0 {
                 // Per-chat identity: fresh scroll model/sentinel/settle per
                 // chat (see ChatTimelineView).
-                ChatTimelineView(store: store, onForward: onForward)
+                ChatTimelineView(
+                    store: store, onForward: onForward,
+                    onEdit: beginEdit, onDelete: beginDelete)
                     .id("chat-\(store.chatID ?? "-")")
                 DietSeamH()
                 sendBox
@@ -95,6 +112,85 @@ public struct ConversationView: View {
                 catchUp: catchUp, messages: store.messages,
                 autoRun: CommandLine.arguments.contains("--show-catchup"))
         }
+        .sheet(item: $editingMessage) { msg in
+            editSheet(for: msg)
+        }
+        .alert(
+            "Delete this message?",
+            isPresented: $showDeleteConfirm
+        ) {
+            Button("Delete", role: .destructive) {
+                if let target = deletingMessage {
+                    store.deleteMessage(id: target.id)
+                }
+                deletingMessage = nil
+            }
+            .keyboardShortcut(.defaultAction)
+            Button("Cancel", role: .cancel) { deletingMessage = nil }
+                .keyboardShortcut(.cancelAction)
+        } message: {
+            Text("This cannot be undone.")
+        }
+        .onAppear { seedEditDeleteShot() }
+        .onChange(of: store.messages.count) { seedEditDeleteShot() }
+    }
+
+    /// Open the edit sheet for one bubble (draft preseeded from content).
+    private func beginEdit(_ msg: ChatMessage) {
+        editDraft = msg.content
+        editingMessage = msg
+    }
+
+    /// Open the delete confirm for one bubble.
+    private func beginDelete(_ msg: ChatMessage) {
+        deletingMessage = msg
+        showDeleteConfirm = true
+    }
+
+    /// Shot hooks: --show-edit / --show-delete open the sheet/confirm for
+    /// the first own bubble once messages land (demo offline).
+    private func seedEditDeleteShot() {
+        guard !shotSeeded else { return }
+        guard editOpen || deleteOpen else { return }
+        guard let own = store.messages.first(where: \.isOwn) else { return }
+        shotSeeded = true
+        if editOpen {
+            beginEdit(own)
+        } else {
+            beginDelete(own)
+        }
+    }
+
+    private func editSheet(for msg: ChatMessage) -> some View {
+        VStack(alignment: .leading, spacing: DietSpace.sm) {
+            Text("Edit message")
+                .font(DietType.headline)
+                .foregroundStyle(DietColor.textPrimaryColor)
+            TextField("Message", text: $editDraft, axis: .vertical)
+                .textFieldStyle(.plain)
+                .font(DietType.body)
+                .foregroundStyle(DietColor.textPrimaryColor)
+                .padding(DietSpace.sm)
+                .background(DietColor.wellColor)
+                .clipShape(RoundedRectangle(cornerRadius: DietRadius.control))
+                .lineLimit(3...8)
+            HStack {
+                Spacer()
+                Button("Cancel", role: .cancel) { editingMessage = nil }
+                    .buttonStyle(.bordered)
+                    .keyboardShortcut(.cancelAction)
+                Button("Save") {
+                    store.edit(messageID: msg.id, text: editDraft)
+                    editingMessage = nil
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+                .disabled(editDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    || editDraft.trimmingCharacters(in: .whitespacesAndNewlines) == msg.content)
+            }
+        }
+        .padding(DietSpace.md)
+        .frame(minWidth: 320, idealWidth: 400)
     }
 
     /// Lazily load the Shared tab when selected (no unsigned core calls
@@ -295,6 +391,9 @@ struct MessageBubble: View {
     /// Forward tap (om-msgactions): the host sheets the jump palette.
     var onForward: () -> Void = {}
     var onReply: () -> Void = {}
+    /// Edit/delete (om-editdel): own bubbles only, top-level menu items.
+    var onEdit: () -> Void = {}
+    var onDelete: () -> Void = {}
 
     var body: some View {
         HStack(spacing: DietSpace.xs) {
@@ -387,7 +486,7 @@ struct MessageBubble: View {
                     message: message, onReact: onReact, failed: failed,
                     onCopy: { copyBody() }, onForward: onForward,
                     onSave: { saveBody() }, onRetry: onRetry,
-                    onReply: onReply))
+                    onReply: onReply, onEdit: onEdit, onDelete: onDelete))
             if !message.reactions.isEmpty {
                 ReactionTapbacks(reactions: message.reactions, onTap: onReact)
                     .offset(x: message.isOwn ? DietSpace.sm : -DietSpace.sm, y: -DietSpace.md)

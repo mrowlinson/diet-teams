@@ -1,6 +1,7 @@
-// ReactionMenuBridge.swift — om-reactions/om-msgactions/om-replies: the
-// bubble's ONE right-click menu (inline emoji row + Reply / Copy /
-// Forward / Save, all top-level, no submenu).
+// ReactionMenuBridge.swift — om-reactions/om-msgactions/om-replies/om-editdel:
+// the bubble's ONE right-click menu (inline emoji row + Reply / Copy /
+// Forward / Save, plus Edit / Delete on own bubbles — all top-level,
+// no submenu).
 //
 // Why AppKit: SwiftUI renders ControlGroup-in-menu as a submenu with an
 // inline preview (verified by screenshot: the row carries a ">" that
@@ -28,6 +29,8 @@ struct ReactionMenuBridge: NSViewRepresentable {
     var onSave: () -> Void = {}
     var onRetry: () -> Void = {}
     var onReply: () -> Void = {}
+    var onEdit: () -> Void = {}
+    var onDelete: () -> Void = {}
 
     func makeNSView(context: Context) -> ReactionMenuAnchorView {
         let view = ReactionMenuAnchorView()
@@ -39,6 +42,8 @@ struct ReactionMenuBridge: NSViewRepresentable {
         view.onSave = onSave
         view.onRetry = onRetry
         view.onReply = onReply
+        view.onEdit = onEdit
+        view.onDelete = onDelete
         context.coordinator.monitor = NSEvent.addLocalMonitorForEvents(
             matching: .rightMouseDown
         ) { [weak view] event in
@@ -60,6 +65,8 @@ struct ReactionMenuBridge: NSViewRepresentable {
         view.onSave = onSave
         view.onRetry = onRetry
         view.onReply = onReply
+        view.onEdit = onEdit
+        view.onDelete = onDelete
     }
 
     func dismantleNSView(_: ReactionMenuAnchorView, coordinator: Coordinator) {
@@ -88,6 +95,8 @@ final class ReactionMenuAnchorView: NSView {
     var onSave: () -> Void = {}
     var onRetry: () -> Void = {}
     var onReply: () -> Void = {}
+    var onEdit: () -> Void = {}
+    var onDelete: () -> Void = {}
 
     /// Upward overhang of the tapback badges (matches the ZStack offset).
     static let badgeOverhang: CGFloat = 20
@@ -139,6 +148,16 @@ final class ReactionMenuAnchorView: NSView {
             title: "Save…", action: #selector(saveAction), keyEquivalent: "")
         save.target = self
         menu.addItem(save)
+        if message.isOwn {
+            let edit = NSMenuItem(
+                title: "Edit…", action: #selector(editAction), keyEquivalent: "")
+            edit.target = self
+            menu.addItem(edit)
+            let delete = NSMenuItem(
+                title: "Delete…", action: #selector(deleteAction), keyEquivalent: "")
+            delete.target = self
+            menu.addItem(delete)
+        }
         if failed {
             let retry = NSMenuItem(
                 title: "Retry send", action: #selector(retryAction), keyEquivalent: "")
@@ -166,6 +185,14 @@ final class ReactionMenuAnchorView: NSView {
 
     @objc private func replyAction() {
         onReply()
+    }
+
+    @objc private func editAction() {
+        onEdit()
+    }
+
+    @objc private func deleteAction() {
+        onDelete()
     }
 }
 

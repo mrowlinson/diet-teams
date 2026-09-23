@@ -29,10 +29,11 @@ pub use teams::ChannelInfo;
 
 // Re-export data-returning functions for TUI integration
 pub use chat::{
-    build_reply_html, emoji_for_reaction_type, list_chats_data, reaction_add_body,
-    reaction_add_url, reaction_remove_url, reaction_type_for_emoji, read_messages_data,
-    read_messages_page, remove_reaction_with_client, reply_message_with_client, reply_snippet,
-    send_message_with_client, send_reaction_with_client, split_reply_quote, REPLY_SNIPPET_MAX,
+    build_reply_html, delete_message_with_client, edit_message_body, edit_message_with_client,
+    emoji_for_reaction_type, list_chats_data, message_url, reaction_add_body, reaction_add_url,
+    reaction_remove_url, reaction_type_for_emoji, read_messages_data, read_messages_page,
+    remove_reaction_with_client, reply_message_with_client, reply_snippet, send_message_with_client,
+    send_reaction_with_client, split_reply_quote, REPLY_SNIPPET_MAX,
 };
 pub use files::{download_file_data, list_chat_files_data, upload_file_data};
 pub use media::{fetch_media_data, MediaBytes, MAX_BYTES};
@@ -71,6 +72,16 @@ pub async fn react(chat_id: &str, message_id: &str, emoji: &str, remove: bool) -
 /// Reply to one message in a chat (quote reply, native Teams API)
 pub async fn reply_message(chat_id: &str, parent_id: &str, message: &str) -> Result<()> {
     chat::reply_message(chat_id, parent_id, message).await
+}
+
+/// Edit one own message (native Teams API, PUT per-message URL)
+pub async fn edit_message(chat_id: &str, message_id: &str, text: &str) -> Result<()> {
+    chat::edit_message(chat_id, message_id, text).await
+}
+
+/// Delete one own message (native Teams API, DELETE per-message URL)
+pub async fn delete_message(chat_id: &str, message_id: &str) -> Result<()> {
+    chat::delete_message(chat_id, message_id).await
 }
 
 /// Get current presence status

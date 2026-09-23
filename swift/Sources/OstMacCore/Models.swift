@@ -426,6 +426,32 @@ public struct SendResponse: Decodable, Sendable {
     }
 }
 
+/// `{ok,chat_id,message_id}` from `ostmac_edit`.
+public struct EditResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let chat_id: String?
+    public let message_id: String?
+
+    public init(ok: Bool, chat_id: String? = nil, message_id: String? = nil) {
+        self.ok = ok
+        self.chat_id = chat_id
+        self.message_id = message_id
+    }
+}
+
+/// `{ok,chat_id,message_id}` from `ostmac_delete`.
+public struct DeleteResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let chat_id: String?
+    public let message_id: String?
+
+    public init(ok: Bool, chat_id: String? = nil, message_id: String? = nil) {
+        self.ok = ok
+        self.chat_id = chat_id
+        self.message_id = message_id
+    }
+}
+
 // MARK: - Rich media (om-richmedia lane)
 
 /// One fetched inline image: base64 bytes + the server's content type.

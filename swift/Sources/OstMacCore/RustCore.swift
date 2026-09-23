@@ -101,6 +101,17 @@ public enum RustCore {
         }
     }
 
+    /// Edit one own message via core (blocking FFI: call off main thread).
+    public static func edit(chatID: String, messageID: String, text: String) throws -> EditResponse {
+        try chatID.withCString { idPtr in
+            try messageID.withCString { midPtr in
+                try text.withCString { textPtr in
+                    try call(ostmac_edit(idPtr, midPtr, textPtr), as: EditResponse.self)
+                }
+            }
+        }
+    }
+
     /// Remove one emoji reaction from a message (om-reactions).
     /// Blocking FFI (network): call off the main thread.
     public static func removeReaction(chatID: String, messageID: String, emoji: String) throws -> SendResponse {
@@ -131,6 +142,15 @@ public enum RustCore {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    /// Delete one own message via core (blocking FFI: call off main thread).
+    public static func deleteMessage(chatID: String, messageID: String) throws -> DeleteResponse {
+        try chatID.withCString { idPtr in
+            try messageID.withCString { midPtr in
+                try call(ostmac_delete(idPtr, midPtr), as: DeleteResponse.self)
             }
         }
     }
