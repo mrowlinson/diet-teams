@@ -1,4 +1,5 @@
 // ChatListSidebar.swift — SwiftUI sidebar: chats + loading/empty/error states.
+import DietDesign
 import OstMacCore
 import SwiftUI
 
@@ -9,76 +10,77 @@ public struct ChatListSidebar: View {
     @ObservedObject private var presence: PresenceStore
     @State private var searchText = ""
 
-    public init(model: ChatListViewModel, presence: PresenceStore = PresenceStore()) {
+    public init(
+        model: ChatListViewModel, presence: PresenceStore = PresenceStore(),
+        initialFilter: String = ""
+    ) {
         self.model = model
         self.presence = presence
+        _searchText = State(initialValue: initialFilter)
     }
 
     public var body: some View {
         Group {
             switch model.state {
             case .loading:
-                VStack(spacing: 8) {
+                VStack(spacing: DietSpace.sm) {
                     ProgressView()
-                    Text("Loading chats…").font(.callout)
-                        .foregroundStyle(.secondary)
+                    Text("Loading chats…")
+                        .font(DietType.callout)
+                        .foregroundStyle(DietColor.textSecondaryColor)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             case .empty:
-                VStack(spacing: 8) {
-                    Image(systemName: "bubble.left.and.bubble.right")
-                        .font(.largeTitle).foregroundStyle(.secondary)
-                    Text("No chats").font(.headline)
-                    Text("Your Teams conversations will appear here.")
-                        .font(.callout).foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                DietEmptyState(
+                    systemImage: "bubble.left.and.bubble.right",
+                    title: "No chats",
+                    message: "Your Teams conversations will appear here.")
             case .error(let message):
-                VStack(spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle")
-                        .font(.largeTitle).foregroundStyle(.secondary)
-                    Text("Couldn't load chats").font(.headline)
-                    Text(message).font(.callout)
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                    Button("Retry") { model.refresh() }
-                        .padding(.top, 4)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding()
+                DietEmptyState(
+                    systemImage: "exclamationmark.triangle",
+                    title: "Couldn't load chats",
+                    message: message,
+                    actionLabel: "Retry",
+                    action: { model.refresh() })
             case .loaded:
-                let visible = ChatListFormat.filter(model.chats, query: searchText)
-                if visible.isEmpty, !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    VStack(spacing: 8) {
-                        Image(systemName: "magnifyingglass")
-                            .font(.largeTitle).foregroundStyle(.secondary)
-                        Text("No matches").font(.headline)
-                        Text("No chats match \"\(searchText)\".")
-                            .font(.callout).foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    List(selection: $model.selectedChatID) {
-                        ForEach(visible) { chat in
-                            ChatRow(
-                                chat: chat,
-                                peerAvailability: chat.is_group ? nil : .some(presence.availabilityForChat(chat.id))
-                            ).tag(chat.id)
-                        }
-                    }
-                    .listStyle(.sidebar)
-                }
+                loadedList
             }
         }
         .navigationTitle("Chats")
-        .searchable(text: $searchText, prompt: "Filter chats")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                Button { model.refresh() } label: {
-                    Image(systemName: "arrow.clockwise")
+                DietIconButton("Refresh chat list", systemImage: "arrow.clockwise") {
+                    model.refresh()
                 }
-                .help("Refresh chat list")
                 .disabled(model.state == .loading)
+            }
+        }
+    }
+
+    private var loadedList: some View {
+        let visible = ChatListFormat.filter(model.chats, query: searchText)
+        return VStack(spacing: 0) {
+            DietSearchField("Filter chats", text: $searchText)
+                .padding(.horizontal, DietSpace.sm)
+                .padding(.vertical, DietSpace.sm)
+            DietSeamH()
+            if visible.isEmpty, !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                DietEmptyState(
+                    systemImage: "magnifyingglass",
+                    title: "No matches",
+                    message: "No chats match \"\(searchText)\".",
+                    actionLabel: "Clear search",
+                    action: { searchText = "" })
+            } else {
+                List(selection: $model.selectedChatID) {
+                    ForEach(visible) { chat in
+                        ChatRow(
+                            chat: chat,
+                            peerAvailability: chat.is_group ? nil : .some(presence.availabilityForChat(chat.id))
+                        ).tag(chat.id)
+                    }
+                }
+                .listStyle(.sidebar)
             }
         }
     }
@@ -87,33 +89,37 @@ public struct ChatListSidebar: View {
 struct ChatRow: View {
     let chat: ChatItem
     /// Chatmate availability for 1:1 chats. Outer nil = group (no dot);
-    /// inner nil = unknown (hollow dot).
+    /// inner nil = unknown (no dot, fail closed).
     var peerAvailability: String?? = nil
 
+    private var dietPresence: DietPresence? {
+        guard let outer = peerAvailability else { return nil }
+        return DietPresence(teamsAvailability: outer)
+    }
+
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            ZStack(alignment: .bottomTrailing) {
-                Image(systemName: chat.is_group ? "person.3.fill" : "person.circle.fill")
-                    .foregroundStyle(.secondary)
-                    .padding(.top, 2)
-                if let avail = peerAvailability {
-                    PresenceDot(availability: avail)
-                }
-            }
-            VStack(alignment: .leading, spacing: 2) {
+        HStack(alignment: .center, spacing: DietSpace.sm) {
+            DietAvatar(
+                chat.name, presence: dietPresence,
+                size: DietSize.avatarMD)
+            VStack(alignment: .leading, spacing: DietSpace.xxs) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text(chat.name).font(.headline).lineLimit(1)
+                    Text(chat.name)
+                        .font(DietType.headline)
+                        .foregroundStyle(DietColor.textPrimaryColor)
+                        .lineLimit(1)
                     Spacer()
                     Text(ChatListFormat.previewTime(chat.last_message_time))
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(DietType.captionMono)
+                        .foregroundStyle(DietColor.textTertiaryColor)
                 }
                 Text(previewText)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .font(DietType.subheadline)
+                    .foregroundStyle(DietColor.textSecondaryColor)
                     .lineLimit(1)
             }
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, DietSpace.xs)
     }
 
     private var previewText: String {

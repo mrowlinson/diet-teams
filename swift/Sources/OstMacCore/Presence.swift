@@ -12,6 +12,7 @@
 //   await store.refreshPeers(ids: [...]) // chatmate dots by user id
 //   await store.refreshChatPeerMri(chatID: "19:..", mri: "8:orgid:..") // dots by sender MRI
 // Tests inject mock fetchers (same seam as ChatListViewModel.Fetcher).
+import DietDesign
 import Foundation
 import SwiftUI
 
@@ -78,6 +79,21 @@ public enum PresenceFormat {
     public static func label(availability: String, activity: String) -> String {
         availability == activity || activity.isEmpty
             ? availability : "\(availability) · \(activity)"
+    }
+}
+
+public extension DietPresence {
+    /// Map a server availability to a system presence dot.
+    /// Unknown/future values + nil collapse to nil (no dot, fail closed).
+    public init?(teamsAvailability: String?) {
+        switch teamsAvailability {
+        case "Available": self = .available
+        case "Busy": self = .busy
+        case "DoNotDisturb": self = .dnd
+        case "Away", "BeRightBack": self = .away
+        case "Offline": self = .offline
+        default: return nil
+        }
     }
 }
 

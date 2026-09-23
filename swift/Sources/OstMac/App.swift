@@ -22,6 +22,8 @@
 // --show-reminders opens the sidebar on the Reminders browser (shot hook).
 // --show-notes opens the conversation on the Notes tab (shot hook).
 // --show-jump opens the Cmd+K jump palette at launch (shot hook).
+// --jump-query <q> / --filter-query <q> preseed the palette/sidebar
+// filters (shot hooks).
 // --show-gif opens the GIF picker popover at launch (shot hook).
 // --show-catchup stretches the demo thread past 20 messages and
 // auto-opens the catch-up sheet with a canned summary (shot hook,
@@ -62,6 +64,14 @@ struct OstMacAppMain: App {
     /// --jump-query value (shot hook: preseed the palette filter).
     static func jumpQuery(args: [String]) -> String {
         if let i = args.firstIndex(of: "--jump-query"), i + 1 < args.count {
+            return args[i + 1]
+        }
+        return ""
+    }
+
+    /// --filter-query value (shot hook: preseed the sidebar filter).
+    static func filterQuery(args: [String]) -> String {
+        if let i = args.firstIndex(of: "--filter-query"), i + 1 < args.count {
             return args[i + 1]
         }
         return ""
@@ -515,6 +525,7 @@ struct RootView: View {
                         presence: state.presence,
                         openChatID: state.openChatID,
                         initialSection: RootView.initialSection,
+                        initialFilter: OstMacAppMain.filterQuery(args: CommandLine.arguments),
                         onOpenChannel: { id, name in state.openChannel(channelID: id, channelName: name) }
                     )
                     .navigationSplitViewColumnWidth(min: 240, ideal: 300, max: 420)
@@ -574,13 +585,10 @@ struct RootView: View {
     }
 
     private var emptyDetail: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "bubble.left.and.bubble.right")
-                .font(.largeTitle).foregroundStyle(.secondary)
-            Text("Select a chat").font(.headline)
-            Text("⌘K to jump").font(.callout).foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        DietEmptyState(
+            systemImage: "bubble.left.and.bubble.right",
+            title: "Select a chat",
+            message: "Pick a conversation in the sidebar, or press ⌘K to jump.")
     }
 }
 

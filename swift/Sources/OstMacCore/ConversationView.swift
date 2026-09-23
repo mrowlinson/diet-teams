@@ -2,6 +2,7 @@
 // Rich bubbles (mentions, code spans, links), day separators, scroll-up
 // load-more paging, edited markers, failed-send retry, Shared files + Notes tabs,
 // GIF picker + thread catch-up.
+import DietDesign
 import SwiftUI
 
 public struct ConversationView: View {
@@ -20,6 +21,7 @@ public struct ConversationView: View {
     @AppStorage("tenorAPIKey") private var tenorAPIKey = ""
     @State private var showCatchUp: Bool
     @FocusState private var boxFocused: Bool
+    @State private var gifHovering = false
 
     /// - catchUpOpen: open the catch-up sheet at launch (the
     ///   --show-catchup shot hook only).
@@ -42,30 +44,37 @@ public struct ConversationView: View {
 
     public var body: some View {
         VStack(spacing: 0) {
-            header
-            Divider()
+            DietHeaderBar {
+                headerContent
+            }
+            if let err = store.error {
+                DietBanner(.error, message: err)
+                    .padding(.horizontal, DietSpace.md)
+                    .padding(.vertical, DietSpace.sm)
+            }
             Picker("View", selection: $tab) {
                 Text("Chat").tag(0)
                 Text("Shared").tag(1)
                 Text("Notes").tag(2)
             }
             .pickerStyle(.segmented)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
+            .padding(.horizontal, DietSpace.sm)
+            .padding(.vertical, DietSpace.sm)
             .onChange(of: tab) { syncShared() }
-            Divider()
+            DietSeamH()
             if tab == 0 {
                 ScrollViewReader { proxy in
                     ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 10) {
+                        LazyVStack(alignment: .leading, spacing: DietSpace.sm) {
                             loadMoreRow
                             if store.messages.isEmpty, !store.loading {
-                                Text("No messages yet.")
-                                    .foregroundStyle(.secondary)
-                                    .padding(.top, 24)
+                                DietEmptyState(
+                                    systemImage: "bubble.left.and.bubble.right",
+                                    title: "No messages yet",
+                                    message: "Start the conversation below — your message appears here.")
                             }
                             ForEach(sections, id: \.key) { section in
-                                DaySeparator(label: section.label)
+                                DietDaySeparator(section.label)
                                 ForEach(section.messages) { msg in
                                     MessageBubble(
                                         message: msg,
@@ -76,7 +85,7 @@ public struct ConversationView: View {
                                 }
                             }
                         }
-                        .padding()
+                        .padding(DietSpace.md)
                     }
                     .defaultScrollAnchor(.bottom)
                     .onChange(of: store.messages.count) {
@@ -88,7 +97,7 @@ public struct ConversationView: View {
                         lastSeenID = store.messages.last?.id
                     }
                 }
-                Divider()
+                DietSeamH()
                 sendBox
             } else if tab == 1 {
                 SharedFilesView(store: shared)
@@ -98,6 +107,7 @@ public struct ConversationView: View {
             }
         }
         .frame(minWidth: 380, minHeight: 480)
+        .background(DietColor.windowColor)
         .onChange(of: store.chatID) { syncShared() }
         .sheet(isPresented: $showCatchUp) {
             CatchUpView(
@@ -128,80 +138,82 @@ public struct ConversationView: View {
                 HStack { Spacer(); ProgressView().controlSize(.small); Spacer() }
             } else if store.canLoadMore {
                 Button("Load older messages") { store.loadMore() }
-                    .font(.caption)
+                    .buttonStyle(.dietSecondary)
                     .frame(maxWidth: .infinity)
                     .onAppear { store.loadMore() }
             }
         }
     }
 
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack {
-                if !isGroup, let id = store.chatID {
-                    PresenceDot(availability: presence.availabilityForChat(id))
-                }
-                Text(store.chatName ?? store.chatID ?? "Conversation")
-                    .font(.headline)
-                    .lineLimit(1)
-                if store.isDemo {
-                    Text("DEMO")
-                        .font(.caption2).bold()
-                        .padding(.horizontal, 6).padding(.vertical, 2)
-                        .background(.orange.opacity(0.2))
-                        .clipShape(Capsule())
-                }
-                Spacer()
-                if let id = store.chatID {
-                    Menu {
-                        Button("Call (signaling only)") { call.place(threadID: id) }
-                        Button("Call live (audio/video)") { call.placeLive(threadID: id) }
-                    } label: {
-                        Image(systemName: "phone")
-                    }
-                    .buttonStyle(.borderless)
-                    .disabled(call.busy || (call.call?.isActive ?? false))
-                    .help("Call this chat")
-                }
-                if CatchUp.shouldOffer(messageCount: store.messages.count) {
-                    Button("Catch up", systemImage: "sparkles") {
-                        catchUp.reset()
-                        showCatchUp = true
-                    }
-                    .buttonStyle(.borderless)
-                    .help("Summarize this thread: TL;DR, key points, action items")
-                }
-                if store.loading { ProgressView().controlSize(.small) }
-                Text("\(store.messages.count)")
-                    .font(.caption).monospaced()
-                    .foregroundStyle(.secondary)
+    private var headerContent: some View {
+        HStack(spacing: DietSpace.sm) {
+            if !isGroup, let id = store.chatID,
+               let dot = DietPresence(teamsAvailability: presence.availabilityForChat(id))
+            {
+                DietPresenceDot(dot)
             }
-            if let err = store.error {
-                Text(err)
-                    .font(.caption)
-                    .foregroundStyle(.red)
-                    .lineLimit(2)
-                    .textSelection(.enabled)
+            Text(store.chatName ?? store.chatID ?? "Conversation")
+                .font(DietType.headline)
+                .foregroundStyle(DietColor.textPrimaryColor)
+                .lineLimit(1)
+            if store.isDemo {
+                Text("DEMO")
+                    .font(DietType.caption2).bold()
+                    .foregroundStyle(DietColor.textPrimaryColor)
+                    .padding(.horizontal, DietSpace.xs)
+                    .padding(.vertical, DietSpace.xxs)
+                    .background(
+                        Color(nsColor: DietColor.warning).opacity(0.2),
+                        in: Capsule())
             }
+            Spacer(minLength: DietSpace.sm)
+            if let id = store.chatID {
+                Menu {
+                    Button("Call (signaling only)") { call.place(threadID: id) }
+                    Button("Call live (audio/video)") { call.placeLive(threadID: id) }
+                } label: {
+                    Image(systemName: "phone")
+                        .font(.system(size: DietSize.iconMD))
+                        .foregroundStyle(DietColor.textSecondaryColor)
+                }
+                .buttonStyle(.borderless)
+                .disabled(call.busy || (call.call?.isActive ?? false))
+                .help("Call this chat")
+            }
+            if CatchUp.shouldOffer(messageCount: store.messages.count) {
+                Button("Catch up", systemImage: "sparkles") {
+                    catchUp.reset()
+                    showCatchUp = true
+                }
+                .buttonStyle(.dietSecondary)
+                .help("Summarize this thread: TL;DR, key points, action items")
+            }
+            if store.loading { ProgressView().controlSize(.small) }
+            Text("\(store.messages.count)")
+                .font(DietType.captionMono)
+                .foregroundStyle(DietColor.textTertiaryColor)
         }
-        .padding(.horizontal)
-        .padding(.vertical, 8)
     }
 
     private var sendBox: some View {
-        HStack {
+        HStack(spacing: DietSpace.sm) {
             Button {
                 showGIFs = true
             } label: {
                 Text("GIF")
-                    .font(.caption).bold()
-                    .padding(.horizontal, 6).padding(.vertical, 3)
+                    .font(DietType.caption1).bold()
+                    .foregroundStyle(DietColor.textSecondaryColor)
+                    .padding(.horizontal, DietSpace.xs)
+                    .padding(.vertical, DietSpace.xxs)
+                    .background(
+                        gifHovering ? DietColor.wellColor : .clear,
+                        in: RoundedRectangle(cornerRadius: DietRadius.control))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(Color.secondary, lineWidth: 1))
+                        RoundedRectangle(cornerRadius: DietRadius.control)
+                            .stroke(DietColor.dividerColor, lineWidth: 1))
             }
             .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
+            .onHover { gifHovering = $0 }
             .help("Insert a GIF (Tenor)")
             .popover(isPresented: $showGIFs, arrowEdge: .top) {
                 TenorPickerView(apiKey: tenorAPIKey) { url in
@@ -210,14 +222,27 @@ public struct ConversationView: View {
                 }
             }
             TextField("Message", text: $draft)
-                .textFieldStyle(.roundedBorder)
+                .textFieldStyle(.plain)
+                .font(DietType.body)
+                .foregroundStyle(DietColor.textPrimaryColor)
                 .focused($boxFocused)
+                .padding(.horizontal, DietSpace.sm)
+                .frame(minHeight: DietSize.controlHeight)
+                .background(DietColor.wellColor)
+                .clipShape(RoundedRectangle(cornerRadius: DietRadius.control))
+                .overlay(
+                    RoundedRectangle(cornerRadius: DietRadius.control)
+                        .stroke(
+                            boxFocused ? Color.accentColor : DietColor.dividerColor,
+                            lineWidth: boxFocused ? 2 : 1)
+                )
                 .onSubmit { submit() }
-            Button("Send") { submit() }
+            Button("Send", systemImage: "paperplane.fill") { submit() }
+                .buttonStyle(.dietPrimary)
                 .keyboardShortcut(.return, modifiers: .command)
                 .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
-        .padding()
+        .padding(DietSpace.md)
         .onAppear {
             boxFocused = true
             // Shot hook: --show-gif opens the picker at launch.
@@ -264,57 +289,38 @@ public struct ConversationView: View {
     }
 }
 
-struct DaySeparator: View {
-    let label: String
-
-    var body: some View {
-        HStack {
-            Spacer()
-            Text(label)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 3)
-                .background(Color.gray.opacity(0.12))
-                .clipShape(Capsule())
-            Spacer()
-        }
-        .padding(.top, 4)
-    }
-}
-
 struct MessageBubble: View {
     let message: ChatMessage
     var failed: Bool = false
     var onRetry: () -> Void = {}
 
     var body: some View {
-        HStack {
-            if message.isOwn { Spacer(minLength: 48) }
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 4) {
+        HStack(spacing: DietSpace.xs) {
+            if message.isOwn { Spacer(minLength: DietSpace.xxl) }
+            VStack(alignment: .leading, spacing: DietSpace.xxs) {
+                HStack(spacing: DietSpace.xs) {
                     Text("\(message.sender) · \(message.displayTime)")
-                        .font(.caption)
-                        .foregroundStyle(message.isOwn ? .white.opacity(0.85) : .secondary)
+                        .font(DietType.caption1)
+                        .foregroundStyle(DietColor.textSecondaryColor)
                     if message.edited {
                         Text("(edited)")
-                            .font(.caption2)
+                            .font(DietType.caption2)
                             .italic()
-                            .foregroundStyle(message.isOwn ? .white.opacity(0.7) : .secondary)
+                            .foregroundStyle(DietColor.textTertiaryColor)
                     }
                 }
                 let rendered = MessageRender.renderText(for: message)
                 let images = MessageRender.images(fromRaw: message.raw)
                 if !rendered.isEmpty {
                     Text(MessageRender.attributedBody(for: message))
-                        .font(.body)
-                        .tint(message.isOwn ? .white : .accentColor)
+                        .font(DietType.body)
+                        .tint(.accentColor)
                         .textSelection(.enabled)
                 }
                 let emoticons = images.filter(\.isEmoticon)
                 let photos = images.filter { !$0.isEmoticon }
                 if !emoticons.isEmpty {
-                    HStack(spacing: 4) {
+                    HStack(spacing: DietSpace.xs) {
                         ForEach(Array(emoticons.enumerated()), id: \.offset) { _, img in
                             RemoteEmoticon(url: img.url, messageID: message.id, alt: img.alt)
                         }
@@ -324,22 +330,31 @@ struct MessageBubble: View {
                     RemoteImage(url: img.url, messageID: message.id, alt: img.alt)
                 }
                 if failed {
-                    HStack(spacing: 6) {
+                    HStack(spacing: DietSpace.xs) {
+                        Image(systemName: "exclamationmark.circle.fill")
+                            .font(.system(size: DietSize.iconMD))
+                            .foregroundStyle(Color(nsColor: DietColor.danger))
+                            .accessibilityLabel("Send failed")
                         Text("Not delivered")
-                            .font(.caption)
-                            .foregroundStyle(message.isOwn ? .white : .red)
+                            .font(DietType.caption1)
+                            .foregroundStyle(Color(nsColor: DietColor.danger))
                         Button("Retry", action: onRetry)
-                            .font(.caption)
+                            .font(DietType.caption1)
                             .buttonStyle(.link)
+                            .tint(Color(nsColor: DietColor.danger))
                     }
                 }
             }
-            .padding(10)
-            .background(message.isOwn ? Color.blue : Color.gray.opacity(0.15))
-            .foregroundStyle(message.isOwn ? .white : .primary)
-            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .padding(DietSpace.sm + DietSpace.xs)
+            .background(
+                message.isOwn ? DietColor.bubbleOutColor : DietColor.bubbleInColor,
+                in: RoundedRectangle(cornerRadius: DietRadius.bubble))
+            .overlay(
+                failed ? RoundedRectangle(cornerRadius: DietRadius.bubble)
+                    .stroke(Color(nsColor: DietColor.danger), lineWidth: 1) : nil)
+            .foregroundStyle(DietColor.textPrimaryColor)
             .opacity(failed ? 0.85 : 1)
-            if !message.isOwn { Spacer(minLength: 48) }
+            if !message.isOwn { Spacer(minLength: DietSpace.xxl) }
         }
     }
 }
