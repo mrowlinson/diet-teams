@@ -1,101 +1,131 @@
 // TeamsBrowser.swift — SwiftUI browser: teams + channels, opens conversations.
+import DietDesign
 import OstMacCore
 import SwiftUI
 
 /// Teams/channels browser. Tapping a channel calls `onOpen` with the
 /// channel id + display name; the host opens it as a conversation through
 /// the same path as chats (channel ids are conversation ids).
+///
+/// om-reskin-teams: DietDesign filter + states + rows. The filter is a
+/// `DietSearchField` above a `DietSeamH` (same header rhythm as the chats
+/// list); loading/empty/error/no-matches are `DietEmptyState`.
 public struct TeamsBrowser: View {
     @ObservedObject private var model: TeamsViewModel
     private let openChatID: String?
     private let onOpen: (String, String) -> Void
     @State private var searchText = ""
 
-    public init(model: TeamsViewModel, openChatID: String? = nil, onOpen: @escaping (String, String) -> Void) {
+    public init(
+        model: TeamsViewModel, openChatID: String? = nil,
+        initialFilter: String = "",
+        onOpen: @escaping (String, String) -> Void
+    ) {
         self.model = model
         self.openChatID = openChatID
+        _searchText = State(initialValue: initialFilter)
         self.onOpen = onOpen
+    }
+
+    /// "Team > #channel" display name for an opened channel.
+    /// Pure helper so tests pin the format (DemoData.name must match).
+    public static func channelDisplayName(team: String, channel: String) -> String {
+        "\(team) > #\(channel)"
     }
 
     public var body: some View {
         Group {
             switch model.state {
             case .loading:
-                VStack(spacing: 8) {
+                VStack(spacing: DietSpace.sm) {
                     ProgressView()
-                    Text("Loading teams…").font(.callout)
-                        .foregroundStyle(.secondary)
+                    Text("Loading teams…")
+                        .font(DietType.callout)
+                        .foregroundStyle(DietColor.textSecondaryColor)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             case .empty:
-                VStack(spacing: 8) {
-                    Image(systemName: "person.3")
-                        .font(.largeTitle).foregroundStyle(.secondary)
-                    Text("No teams").font(.headline)
-                    Text("Teams you join will appear here.")
-                        .font(.callout).foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                DietEmptyState(
+                    systemImage: "person.3",
+                    title: "No teams",
+                    message: "Teams you join will appear here.")
             case .error(let message):
-                VStack(spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle")
-                        .font(.largeTitle).foregroundStyle(.secondary)
-                    Text("Couldn't load teams").font(.headline)
-                    Text(message).font(.callout)
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                    Button("Retry") { model.refresh() }
-                        .padding(.top, 4)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding()
+                DietEmptyState(
+                    systemImage: "exclamationmark.triangle",
+                    title: "Couldn't load teams",
+                    message: message,
+                    actionLabel: "Retry",
+                    action: { model.refresh() })
             case .loaded:
-                let visible = TeamsViewModel.filtered(model.teams, query: searchText)
-                if visible.isEmpty {
-                    VStack(spacing: 8) {
-                        Image(systemName: "magnifyingglass")
-                            .font(.largeTitle).foregroundStyle(.secondary)
-                        Text("No matches").font(.headline)
-                        Text("No teams or channels match \"\(searchText)\".")
-                            .font(.callout).foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    List {
-                        ForEach(visible) { team in
-                            Section {
-                                if team.channels.isEmpty {
-                                    Text("No channels")
-                                        .font(.callout).foregroundStyle(.secondary)
-                                } else {
-                                    ForEach(team.channels) { channel in
-                                        ChannelRow(
-                                            channel: channel,
-                                            teamName: team.name,
-                                            isOpen: channel.id == openChatID,
-                                            onOpen: onOpen)
-                                    }
-                                }
-                            } header: {
-                                Label(team.name, systemImage: "person.3.fill")
-                            }
-                        }
-                    }
-                    .listStyle(.sidebar)
-                }
+                loadedList
             }
         }
         .navigationTitle("Teams")
-        .searchable(text: $searchText, prompt: "Filter teams")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                Button { model.refresh() } label: {
-                    Image(systemName: "arrow.clockwise")
+                DietIconButton("Refresh teams list", systemImage: "arrow.clockwise") {
+                    model.refresh()
                 }
-                .help("Refresh teams list")
                 .disabled(model.state == .loading)
             }
         }
+    }
+
+    private var loadedList: some View {
+        let visible = TeamsViewModel.filtered(model.teams, query: searchText)
+        return VStack(spacing: 0) {
+            DietSearchField("Filter teams", text: $searchText)
+                .padding(.horizontal, DietSpace.sm)
+                .padding(.vertical, DietSpace.sm)
+            DietSeamH()
+            if visible.isEmpty {
+                DietEmptyState(
+                    systemImage: "magnifyingglass",
+                    title: "No matches",
+                    message: "No teams or channels match \"\(searchText)\".",
+                    actionLabel: "Clear search",
+                    action: { searchText = "" })
+            } else {
+                List {
+                    ForEach(visible) { team in
+                        Section {
+                            if team.channels.isEmpty {
+                                Text("No channels")
+                                    .font(DietType.callout)
+                                    .foregroundStyle(DietColor.textSecondaryColor)
+                            } else {
+                                ForEach(team.channels) { channel in
+                                    ChannelRow(
+                                        channel: channel,
+                                        teamName: team.name,
+                                        isOpen: channel.id == openChatID,
+                                        onOpen: onOpen)
+                                }
+                            }
+                        } header: {
+                            TeamHeader(name: team.name)
+                        }
+                    }
+                }
+                .listStyle(.sidebar)
+            }
+        }
+    }
+}
+
+/// Team section header: team avatar + name on Diet type/color.
+struct TeamHeader: View {
+    let name: String
+
+    var body: some View {
+        HStack(spacing: DietSpace.xs) {
+            DietAvatar(name, size: DietSize.avatarSM)
+            Text(name)
+                .font(DietType.headline)
+                .foregroundStyle(DietColor.textPrimaryColor)
+                .lineLimit(1)
+        }
+        .padding(.vertical, DietSpace.xs)
     }
 }
 
@@ -107,19 +137,25 @@ struct ChannelRow: View {
 
     var body: some View {
         Button {
-            onOpen(channel.id, "\(teamName) > #\(channel.name)")
+            onOpen(channel.id, TeamsBrowser.channelDisplayName(team: teamName, channel: channel.name))
         } label: {
-            HStack(spacing: 8) {
+            HStack(spacing: DietSpace.sm) {
                 Image(systemName: "number")
-                    .foregroundStyle(.secondary)
-                Text(channel.name).lineLimit(1)
+                    .font(.system(size: DietSize.iconMD))
+                    .foregroundStyle(DietColor.textSecondaryColor)
+                Text(channel.name)
+                    .font(DietType.body)
+                    .foregroundStyle(DietColor.textPrimaryColor)
+                    .lineLimit(1)
                 Spacer()
                 if isOpen {
                     Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(.tint)
+                        .font(.system(size: DietSize.iconMD))
+                        .foregroundStyle(Color.accentColor)
+                        .accessibilityLabel("Open")
                 }
             }
-            .padding(.vertical, 2)
+            .padding(.vertical, DietSpace.xs)
         }
         .buttonStyle(.plain)
     }
