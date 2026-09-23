@@ -94,7 +94,9 @@ public struct NotesView: View {
     // MARK: - States
 
     private var idleHint: some View {
-        hint(systemImage: "note.text", title: "Notes", body: "Notebook list is loading.")
+        hint(
+            systemImage: "note.text", title: "Notes",
+            body: "Select a conversation to browse its notebooks.")
     }
 
     private var loadingHint: some View {
@@ -132,20 +134,45 @@ public struct NotesView: View {
 
     // MARK: - Content
 
+    @ViewBuilder
     private var content: some View {
-        HStack(spacing: 0) {
-            pageList
-            Divider()
-            pageDetail
+        switch Self.contentState(
+            notebooksEmpty: store.notebooks.isEmpty,
+            sectionsEmpty: store.sections.isEmpty,
+            loading: store.state == .loading
+        ) {
+        case .noNotebooks:
+            hint(
+                systemImage: "note.text", title: "No notebooks",
+                body: Self.noNotebooksBody(groupID: store.groupID))
+        case .loadingSections:
+            VStack(spacing: 10) {
+                ProgressView().controlSize(.small)
+                Text("Loading sections…").foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        case .noSections:
+            hint(
+                systemImage: "tray", title: "No sections",
+                body: "This notebook has no sections yet.")
+        case .browse:
+            HStack(spacing: 0) {
+                pageList
+                Divider()
+                pageDetail
+            }
         }
     }
 
     private var pageList: some View {
         Group {
             if store.pages.isEmpty {
-                Text("No pages.")
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                Text(
+                    store.selectedSectionID == nil
+                        ? "Select a section." : "No pages in this section."
+                )
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List(store.pages, selection: pageBinding) { page in
                     VStack(alignment: .leading, spacing: 2) {
@@ -187,12 +214,10 @@ public struct NotesView: View {
                     }
                     .padding()
                 }
-            } else if store.pages.isEmpty {
-                Text("Select a notebook to browse its pages.")
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                Text("Select a page.")
+                Text(Self.detailHint(
+                    sectionSelected: store.selectedSectionID != nil,
+                    pagesEmpty: store.pages.isEmpty))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -233,6 +258,41 @@ public struct NotesView: View {
         guard !body.isEmpty else { return }
         draft = ""
         store.append(text: body)
+    }
+
+    // MARK: - Content state (pure, testable)
+
+    /// Loaded-view bucket: empty levels get their own honest state instead
+    /// of the browse prompts ("Select a notebook…" with zero notebooks).
+    public enum NotesContent: Equatable, Sendable {
+        case noNotebooks
+        case loadingSections
+        case noSections
+        case browse
+    }
+
+    public nonisolated static func contentState(
+        notebooksEmpty: Bool, sectionsEmpty: Bool, loading: Bool
+    ) -> NotesContent {
+        if notebooksEmpty { return .noNotebooks }
+        if sectionsEmpty { return loading ? .loadingSections : .noSections }
+        return .browse
+    }
+
+    /// Scope-aware empty body: team channels read the team notebook, plain
+    /// chats read the user's own OneNote.
+    public nonisolated static func noNotebooksBody(groupID: String?) -> String {
+        groupID == nil
+            ? "You have no OneNote notebooks yet."
+            : "This team has no OneNote notebooks yet."
+    }
+
+    /// Detail prompt when no page is loaded: only "Select a page." when
+    /// pages exist to select.
+    public nonisolated static func detailHint(sectionSelected: Bool, pagesEmpty: Bool) -> String {
+        if !sectionSelected { return "Select a section to browse its pages." }
+        if pagesEmpty { return "This section has no pages." }
+        return "Select a page."
     }
 
     // MARK: - HTML render
