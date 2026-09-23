@@ -113,6 +113,28 @@ public enum RustCore {
         }
     }
 
+    /// Post one quote reply to a chat message. `parentSender`/`parentText`
+    /// attribute the quote block (core truncates the snippet + falls back
+    /// on blanks). Blocking FFI (network): call off the main thread.
+    public static func reply(
+        chatID: String, parentID: String,
+        parentSender: String, parentText: String, text: String
+    ) throws -> SendResponse {
+        try chatID.withCString { idPtr in
+            try parentID.withCString { parentPtr in
+                try parentSender.withCString { senderPtr in
+                    try parentText.withCString { snippetPtr in
+                        try text.withCString { textPtr in
+                            try call(
+                                ostmac_reply(idPtr, parentPtr, senderPtr, snippetPtr, textPtr),
+                                as: SendResponse.self)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// One fetched inline image: decoded bytes + content type, if any.
     /// Blocking FFI (network): call off the main thread.
     public static func mediaFetch(url: String) throws -> (data: Data, contentType: String?) {

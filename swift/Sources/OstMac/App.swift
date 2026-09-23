@@ -33,6 +33,8 @@
 // --show-catchup stretches the demo thread past 20 messages and
 // auto-opens the catch-up sheet with a canned summary (shot hook,
 // offline, throwaway defaults — never the real ones).
+// --show-reply opens the demo replies thread with the compose-reply
+// chip armed on Tom's question (shot hook, offline).
 // --auth-state <name> opens the Auth window with a canned state, never
 // touching core/network (names: signed-out, starting, code, polling,
 // browser, browser-working, signed-in, expired, refreshing,
@@ -191,6 +193,8 @@ final class AppState: ObservableObject {
     let showForward: Bool
     /// Bubble being forwarded (om-msgactions): set sheets the palette.
     @Published var forwardMessage: ChatMessage?
+    /// --show-reply: demo replies thread + armed compose-reply chip.
+    let showReply: Bool
     @Published var openChatID: String?
     @Published var signedIn: Bool?
     @Published var coreVersion = "?"
@@ -225,6 +229,7 @@ final class AppState: ObservableObject {
         call = CallStore(demo: isDemo)
         showCatchUp = args.contains("--show-catchup")
         showForward = args.contains("--show-forward")
+        showReply = args.contains("--show-reply")
         if showCatchUp {
             // Shot hook only: throwaway defaults (never the real ones),
             // canned summary, no network.
@@ -244,6 +249,8 @@ final class AppState: ObservableObject {
         }
         if let i = args.firstIndex(of: "--chat"), i + 1 < args.count {
             preselectID = args[i + 1]
+        } else if args.contains("--show-reply") {
+            preselectID = DemoData.repliesID
         } else if args.contains("--demo-rich") {
             preselectID = DemoData.richID
         } else if args.contains("--demo-reactions") {
@@ -446,6 +453,12 @@ final class AppState: ObservableObject {
             if showForward, forwardMessage == nil {
                 let pick = msgs.count > 1 ? msgs[1] : msgs.first
                 if let pick { forwardMessage = pick }
+            }
+            // Shot hook: arm the reply chip on Tom's question (or the
+            // first bubble when another chat was forced via --chat).
+            if showReply {
+                let target = msgs.first(where: { $0.id == "rep-2" }) ?? msgs.first
+                if let target { conv.beginReply(to: target) }
             }
             notes.showDemo()
         } else {

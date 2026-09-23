@@ -1,7 +1,8 @@
-// ConversationView.swift — om-conv/om-convrich/om-shared/om-notes/om-cmdk/om-catchup/om-reactions/om-msgactions: SwiftUI chat window.
+// ConversationView.swift — om-conv/om-convrich/om-shared/om-notes/om-cmdk/om-catchup/om-reactions/om-msgactions/om-replies: SwiftUI chat window.
 // Rich bubbles (mentions, code spans, links), day separators, scroll-up
 // load-more paging, edited markers, failed-send retry, Shared files + Notes tabs,
-// GIF picker + thread catch-up + reaction picker/counts + copy/forward/save bubble menu.
+// GIF picker + thread catch-up + reaction picker/counts + copy/forward/save bubble menu,
+// quote replies (bubble quote + compose chip).
 import AppKit
 import DietDesign
 import SwiftUI
@@ -87,9 +88,11 @@ public struct ConversationView: View {
                                     MessageBubble(
                                         message: msg,
                                         failed: store.failedIDs.contains(msg.id),
+                                        quoted: store.quotedParent(for: msg),
                                         onRetry: { _ = store.retry(id: msg.id) },
                                         onReact: { store.toggleReaction(messageID: msg.id, emoji: $0) },
-                                        onForward: { onForward(msg) }
+                                        onForward: { onForward(msg) },
+                                        onReply: { store.beginReply(to: msg) }
                                     )
                                     .id(msg.id)
                                 }
@@ -205,11 +208,52 @@ public struct ConversationView: View {
         }
     }
 
+    /// Armed-reply chip: parent sender + preview with a ✕ disarm.
+    private var replyChip: some View {
+        Group {
+            if let target = store.replyTarget {
+                VStack(spacing: 0) {
+                    HStack(spacing: DietSpace.xs) {
+                        Image(systemName: "arrowshape.turn.up.left.fill")
+                            .font(.system(size: DietSize.iconMD))
+                            .foregroundStyle(DietColor.textSecondaryColor)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Replying to \(target.sender)")
+                                .font(DietType.caption1).bold()
+                                .foregroundStyle(DietColor.textPrimaryColor)
+                                .lineLimit(1)
+                            Text(ConversationStore.quotePreview(target.content))
+                                .font(DietType.caption1)
+                                .foregroundStyle(DietColor.textSecondaryColor)
+                                .lineLimit(1)
+                        }
+                        Spacer(minLength: DietSpace.sm)
+                        Button {
+                            store.cancelReply()
+                            boxFocused = true
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: DietSize.iconMD))
+                                .foregroundStyle(DietColor.textTertiaryColor)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Cancel reply")
+                    }
+                    .padding(.horizontal, DietSpace.md)
+                    .padding(.vertical, DietSpace.xs)
+                    DietSeamH()
+                }
+            }
+        }
+    }
+
     private var sendBox: some View {
-        HStack(spacing: DietSpace.sm) {
-            Button {
-                showGIFs = true
-            } label: {
+        VStack(spacing: 0) {
+            replyChip
+            HStack(spacing: DietSpace.sm) {
+                Button {
+                    showGIFs = true
+                } label: {
                 Text("GIF")
                     .font(DietType.caption1).bold()
                     .foregroundStyle(DietColor.textSecondaryColor)
@@ -247,12 +291,13 @@ public struct ConversationView: View {
                             lineWidth: boxFocused ? 2 : 1)
                 )
                 .onSubmit { submit() }
-            Button("Send", systemImage: "paperplane.fill") { submit() }
-                .buttonStyle(.dietPrimary)
-                .keyboardShortcut(.return, modifiers: .command)
-                .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Button("Send", systemImage: "paperplane.fill") { submit() }
+                    .buttonStyle(.dietPrimary)
+                    .keyboardShortcut(.return, modifiers: .command)
+                    .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            .padding(DietSpace.md)
         }
-        .padding(DietSpace.md)
         .onAppear {
             boxFocused = true
             // Shot hook: --show-gif opens the picker at launch.
@@ -302,11 +347,15 @@ public struct ConversationView: View {
 struct MessageBubble: View {
     let message: ChatMessage
     var failed: Bool = false
+    /// Resolved quote parent (om-replies); nil for plain bubbles and
+    /// evicted parents (the fallback line covers the latter).
+    var quoted: ChatMessage?
     var onRetry: () -> Void = {}
     /// Picker tap (om-reactions): the host toggles this emoji on the bubble.
     var onReact: (String) -> Void = { _ in }
     /// Forward tap (om-msgactions): the host sheets the jump palette.
     var onForward: () -> Void = {}
+    var onReply: () -> Void = {}
 
     var body: some View {
         HStack(spacing: DietSpace.xs) {
@@ -327,6 +376,7 @@ struct MessageBubble: View {
                                 .foregroundStyle(DietColor.textTertiaryColor)
                         }
                     }
+                    quoteBlock
                     let rendered = MessageRender.renderText(for: message)
                     let images = MessageRender.images(fromRaw: message.raw)
                     if !rendered.isEmpty {
@@ -378,15 +428,16 @@ struct MessageBubble: View {
             .foregroundStyle(DietColor.textPrimaryColor)
             .opacity(failed ? 0.85 : 1)
             // Right-click menu via AppKit bridge: ONE menu (inline emoji
-            // row + Copy / Forward / Save, all top-level, no submenu —
-            // see ReactionMenuBridge). A covering overlay is deliberately
-            // NOT used: the monitor approach leaves links and badge taps
-            // untouched.
+            // row + Reply / Copy / Forward / Save, all top-level, no
+            // submenu — see ReactionMenuBridge). A covering overlay is
+            // deliberately NOT used: the monitor approach leaves links
+            // and badge taps untouched.
             .background(
                 ReactionMenuBridge(
                     message: message, onReact: onReact, failed: failed,
                     onCopy: { copyBody() }, onForward: onForward,
-                    onSave: { saveBody() }, onRetry: onRetry))
+                    onSave: { saveBody() }, onRetry: onRetry,
+                    onReply: onReply))
             if !message.reactions.isEmpty {
                 ReactionTapbacks(reactions: message.reactions, onTap: onReact)
                     .offset(x: message.isOwn ? DietSpace.sm : -DietSpace.sm, y: -DietSpace.md)
@@ -424,6 +475,36 @@ struct MessageBubble: View {
         guard panel.runModal() == .OK, let url = panel.url else { return }
         try? MessageActions.saveBody(for: message).write(
             to: url, atomically: true, encoding: .utf8)
+    }
+
+    /// Quoted parent strip above the body. Resolved parents show sender
+    /// + preview with an accent bar; an evicted parent shows a muted
+    /// fallback so the reply link is never silently dropped.
+    @ViewBuilder
+    private var quoteBlock: some View {
+        if let parent = quoted {
+            HStack(spacing: DietSpace.xs) {
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(Color.accentColor)
+                    .frame(width: 3)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(parent.sender)
+                        .font(DietType.caption1).bold()
+                        .foregroundStyle(DietColor.textPrimaryColor)
+                        .lineLimit(1)
+                    Text(ConversationStore.quotePreview(parent.content))
+                        .font(DietType.caption1)
+                        .foregroundStyle(DietColor.textSecondaryColor)
+                        .lineLimit(2)
+                }
+            }
+            .padding(.vertical, DietSpace.xxs)
+        } else if message.reply_to != nil {
+            Text("↩ Original message not in history")
+                .font(DietType.caption2)
+                .italic()
+                .foregroundStyle(DietColor.textTertiaryColor)
+        }
     }
 }
 

@@ -12,6 +12,7 @@ public enum DemoData {
     public static let richID = "demo-rich"
     public static let mediaID = "demo-media"
     public static let reactionsID = "demo-react"
+    public static let repliesID = "demo-replies"
 
     /// Sidebar rows. [0] is "demo" (matches ConversationStore.demo()).
     /// The rich row derives from the rich thread's last message, so its
@@ -35,6 +36,7 @@ public enum DemoData {
         richChat(),
         mediaChat(),
         reactionsChat(),
+        repliesChat(),
     ]
 
     /// Rich sidebar row: preview/sender/time from the rich thread's tail.
@@ -65,6 +67,17 @@ public enum DemoData {
         let last = msgs.last
         return ChatItem(
             chatId: reactionsID, name: "Demo — Reactions", is_group: true,
+            last_message_time: last?.timestamp,
+            last_message_sender: last?.sender,
+            last_message_preview: last?.content)
+    }
+
+    /// Replies sidebar row: preview/sender/time from the replies thread's tail.
+    public static func repliesChat(now: Date = Date()) -> ChatItem {
+        let msgs = repliesMessages(now: now)
+        let last = msgs.last
+        return ChatItem(
+            chatId: repliesID, name: "Demo — Threaded Replies", is_group: true,
             last_message_time: last?.timestamp,
             last_message_sender: last?.sender,
             last_message_preview: last?.content)
@@ -147,6 +160,7 @@ public enum DemoData {
         case richID: return ConversationStore.richDemoMessages()
         case mediaID: return mediaMessages()
         case reactionsID: return reactionsMessages()
+        case repliesID: return repliesMessages()
         default: break
         }
         if chatID.hasPrefix("demo-chan-") { return channelMessages }
@@ -296,6 +310,58 @@ public enum DemoData {
                 timestamp: iso(at(h: 10, m: 6)),
                 content: "Glad it landed. Right-click any bubble to try the picker — counts update live.",
                 isOwn: true),
+        ]
+    }
+
+    /// Replies thread (om-replies): a question answered inline, a nested
+    /// reply-to-reply, one own reply, and one reply whose parent aged out
+    /// of history (evicted-parent fallback). Fully offline. Timestamps
+    /// float off now (Today). `raw` mirrors the core quote-block format.
+    public static func repliesMessages(now: Date = Date()) -> [ChatMessage] {
+        func iso(_ d: Date) -> String {
+            let f = ISO8601DateFormatter()
+            f.formatOptions = [.withInternetDateTime]
+            return f.string(from: d)
+        }
+        func at(h: Int, m: Int) -> Date {
+            var cal = Calendar.current
+            cal.timeZone = TimeZone.current
+            return cal.date(bySettingHour: h, minute: m, second: 0, of: now) ?? now
+        }
+        return [
+            ChatMessage(
+                id: "rep-1", sender: "Priya Nair",
+                timestamp: iso(at(h: 9, m: 2)),
+                content: "Review thread is open — drop questions on the onboarding mock here and I'll answer inline."),
+            ChatMessage(
+                id: "rep-2", sender: "Tom Becker",
+                timestamp: iso(at(h: 9, m: 5)),
+                content: "First one: is the empty-state illustration final, or still placeholder?",
+                raw: #"<quote author="Priya Nair" guid="rep-1">Review thread is open — drop questions on the onboarding mock here and I'll answer inline.</quote><p>First one: is the empty-state illustration final, or still placeholder?</p>"#,
+                reply_to: "rep-1"),
+            ChatMessage(
+                id: "rep-3", sender: "Priya Nair",
+                timestamp: iso(at(h: 9, m: 8)),
+                content: "Final — approved in yesterday's crit. The copy around it is still TBD though, so flag anything that reads odd.",
+                raw: #"<quote author="Tom Becker" guid="rep-2">First one: is the empty-state illustration final, or still placeholder?</quote><p>Final — approved in yesterday's crit. The copy around it is still TBD though, so flag anything that reads odd.</p>"#,
+                reply_to: "rep-2"),
+            ChatMessage(
+                id: "rep-4", sender: "Me",
+                timestamp: iso(at(h: 9, m: 11)),
+                content: "I'll take the copy pass — replying inline as I go.",
+                isOwn: true),
+            ChatMessage(
+                id: "rep-5", sender: "Me",
+                timestamp: iso(at(h: 9, m: 13)),
+                content: "One more: do we keep the progress dots on step 1?",
+                isOwn: true,
+                raw: #"<quote author="Priya Nair" guid="rep-1">Review thread is open — drop questions on the onboarding mock here and I'll answer inline.</quote><p>One more: do we keep the progress dots on step 1?</p>"#,
+                reply_to: "rep-1"),
+            ChatMessage(
+                id: "rep-6", sender: "Tom Becker",
+                timestamp: iso(at(h: 9, m: 15)),
+                content: "Following up on last week's thread — build is green now.",
+                reply_to: "rep-0-evicted"),
         ]
     }
 

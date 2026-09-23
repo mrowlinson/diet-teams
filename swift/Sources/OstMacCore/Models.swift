@@ -318,16 +318,21 @@ public struct ChatMessage: Decodable, Sendable, Identifiable, Equatable {
     /// Grouped reaction counts (om-reactions). Empty on old payloads,
     /// realtime ingests without counts, and local echoes.
     public var reactions: [ReactionCount]
+    /// Parent message id for quote replies (om-replies): mined by core
+    /// from the `<quote guid>` block; absent on old payloads and
+    /// non-reply bubbles.
+    public var reply_to: String?
 
     enum CodingKeys: String, CodingKey {
-        case id, sender, timestamp, content, raw, reactions
+        case id, sender, timestamp, content, raw, reactions, reply_to
     }
 
     public init(
         id: String, sender: String, timestamp: String,
         content: String, isOwn: Bool = false,
         raw: String? = nil, edited: Bool = false,
-        reactions: [ReactionCount] = []
+        reactions: [ReactionCount] = [],
+        reply_to: String? = nil
     ) {
         self.id = id
         self.sender = sender
@@ -337,6 +342,7 @@ public struct ChatMessage: Decodable, Sendable, Identifiable, Equatable {
         self.raw = raw
         self.edited = edited
         self.reactions = reactions
+        self.reply_to = reply_to
     }
 
     public init(from decoder: Decoder) throws {
@@ -347,6 +353,7 @@ public struct ChatMessage: Decodable, Sendable, Identifiable, Equatable {
         content = try c.decode(String.self, forKey: .content)
         raw = try c.decodeIfPresent(String.self, forKey: .raw)
         reactions = try c.decodeIfPresent([ReactionCount].self, forKey: .reactions) ?? []
+        reply_to = try c.decodeIfPresent(String.self, forKey: .reply_to)
         isOwn = false
         edited = false
     }

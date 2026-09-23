@@ -164,7 +164,13 @@ pub async fn read_messages(chat_id: &str, limit: usize) -> Result<()> {
     }
 
     for msg in &msgs {
-        println!("[{}] {}: {}", msg.timestamp, msg.sender, msg.content);
+        match &msg.reply_to {
+            Some(parent) => println!(
+                "[{}] {}: {} (reply to {})",
+                msg.timestamp, msg.sender, msg.content, parent
+            ),
+            None => println!("[{}] {}: {}", msg.timestamp, msg.sender, msg.content),
+        }
     }
 
     Ok(())
@@ -175,6 +181,35 @@ pub async fn send_message(chat_id: &str, message: &str) -> Result<()> {
     let client = TeamsClient::new().await?;
     send_message_with_client(&client, chat_id, message).await?;
     println!("Message sent.");
+    Ok(())
+}
+
+/// Reply to one message in a chat thread (quote reply).
+///
+/// Resolves the parent from the newest history page for quote attribution;
+/// errors clearly when the parent id is not in recent history.
+pub async fn reply_message(chat_id: &str, parent_id: &str, message: &str) -> Result<()> {
+    let client = TeamsClient::new().await?;
+    let msgs = read_messages_data(&client, chat_id, 50).await?;
+    let parent = msgs
+        .iter()
+        .find(|m| m.id == parent_id)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "parent message {} not found in recent history",
+                parent_id
+            )
+        })?;
+    reply_message_with_client(
+        &client,
+        chat_id,
+        &parent.id,
+        &parent.sender,
+        &parent.content,
+        message,
+    )
+    .await?;
+    println!("Reply sent.");
     Ok(())
 }
 
@@ -204,6 +239,104 @@ pub async fn send_message_with_client(
     });
 
     tracing::debug!("Sending message to {}", url);
+    client.chat_post(&url, &body).await?;
+    Ok(())
+}
+
+/// Max quoted chars carried in a reply `<quote>` block.
+pub const REPLY_SNIPPET_MAX: usize = 140;
+
+/// Collapse whitespace and truncate to a one-line quote snippet.
+/// Over-long text is cut at a char boundary with a trailing `…`.
+pub fn reply_snippet(text: &str) -> String {
+    let one_line: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if one_line.chars().count() <= REPLY_SNIPPET_MAX {
+        return one_line;
+    }
+    let end = one_line
+        .char_indices()
+        .nth(REPLY_SNIPPET_MAX)
+        .map(|(i, _)| i)
+        .unwrap_or(one_line.len());
+    format!("{}…", &one_line[..end])
+}
+
+/// Build reply HTML: a Skype-style `<quote author guid>` block carrying the
+/// parent id, then the `<p>` body. Official clients render the quote;
+/// [`split_reply_quote`] recovers the parent id on read.
+pub fn build_reply_html(
+    parent_id: &str,
+    parent_sender: &str,
+    parent_text: &str,
+    text: &str,
+) -> String {
+    format!(
+        "<quote author=\"{}\" guid=\"{}\">{}</quote><p>{}</p>",
+        html_escape(parent_sender),
+        html_escape(parent_id),
+        html_escape(&reply_snippet(parent_text)),
+        html_escape(text),
+    )
+}
+
+/// Split the first `<quote … guid="…">…</quote>` block off raw content.
+/// Returns the parent id plus the remaining HTML. Missing or malformed
+/// quotes yield `(None, content)` unchanged.
+pub fn split_reply_quote(content: &str) -> (Option<String>, String) {
+    let Some(open) = content.find("<quote") else {
+        return (None, content.to_string());
+    };
+    let rest = &content[open..];
+    let Some(tag_end) = rest.find('>') else {
+        return (None, content.to_string());
+    };
+    let tag = &rest[..tag_end];
+    let id = parse_guid(tag).filter(|s| !s.is_empty());
+    let after_tag = &rest[tag_end + 1..];
+    let Some(close) = after_tag.find("</quote>") else {
+        return (None, content.to_string());
+    };
+    let mut out = String::with_capacity(content.len());
+    out.push_str(&content[..open]);
+    out.push_str(&after_tag[close + "</quote>".len()..]);
+    (id, out)
+}
+
+/// `guid="…"` (double or single quotes) from a `<quote …>` open tag.
+fn parse_guid(tag: &str) -> Option<String> {
+    for quote in ['"', '\''] {
+        let mark = format!("guid={}", quote);
+        if let Some(start) = tag.find(&mark) {
+            let val_start = start + mark.len();
+            if let Some(end) = tag[val_start..].find(quote) {
+                return Some(tag[val_start..val_start + end].to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Reply using an existing client (shared helper). The parent attribution
+/// comes from the caller (no extra history fetch); the quote block keeps
+/// the thread link readable in every client.
+pub async fn reply_message_with_client(
+    client: &TeamsClient,
+    chat_id: &str,
+    parent_id: &str,
+    parent_sender: &str,
+    parent_text: &str,
+    text: &str,
+) -> Result<()> {
+    let base = client.chat_service_url();
+    let url = format!("{}/v1/users/ME/conversations/{}/messages", base, chat_id);
+
+    let body = serde_json::json!({
+        "content": build_reply_html(parent_id, parent_sender, parent_text, text),
+        "messagetype": "RichText/Html",
+        "contenttype": "text"
+    });
+
+    tracing::debug!("Sending reply to {}", url);
     client.chat_post(&url, &body).await?;
     Ok(())
 }
@@ -348,6 +481,9 @@ pub struct MessageInfo {
     /// Grouped reaction counts (om-reactions). Empty when the server sent
     /// none; unknown reaction types are dropped, never fatal.
     pub reactions: Vec<ReactionCount>,
+    /// Parent message id for quote replies (om-replies: mined from the
+    /// `<quote guid>` block; `content` excludes the quoted text).
+    pub reply_to: Option<String>,
 }
 
 /// One grouped reaction count: picker emoji + number of reactors.
@@ -570,7 +706,10 @@ pub async fn read_messages_page(
             .unwrap_or("")
             .to_string();
         let content = msg.content.as_deref().unwrap_or("");
-        let text = strip_html(content);
+        // OstMac om-replies: split the quote block first so `content` is
+        // the reply body only; the parent id rides `reply_to`.
+        let (reply_to, body_html) = split_reply_quote(content);
+        let text = strip_html(&body_html);
 
         // OstMac om-richmedia: image-only bubbles strip to "" but are
         // real messages — keep them (the embedder mines `<img>` from raw).
@@ -589,6 +728,7 @@ pub async fn read_messages_page(
             content: text.trim().to_string(),
             raw: content.to_string(),
             reactions,
+            reply_to,
         });
     }
 
@@ -648,6 +788,49 @@ src="x">"#));
             "https://h/m?view=x&pageSize=50"
         );
         assert_eq!(with_page_size("https://h/m", 50), "https://h/m");
+    }
+
+    #[test]
+    fn reply_snippet_collapses_and_truncates() {
+        assert_eq!(reply_snippet("hi"), "hi");
+        assert_eq!(reply_snippet("a  b\n\tc"), "a b c");
+        assert_eq!(reply_snippet("  padded  "), "padded");
+        let long = "w".repeat(200);
+        let snip = reply_snippet(&long);
+        assert_eq!(snip.chars().count(), REPLY_SNIPPET_MAX + 1);
+        assert!(snip.ends_with('…'));
+        // Multibyte cut lands on a char boundary (no panic, exact width).
+        let uni = "é".repeat(200);
+        let usnip = reply_snippet(&uni);
+        assert_eq!(usnip.chars().count(), REPLY_SNIPPET_MAX + 1);
+    }
+
+    #[test]
+    fn reply_html_round_trips_through_split() {
+        let html = build_reply_html("m1", "Priya Nair", "Ship <it> & go", "On it!");
+        assert!(html.contains("<quote"), "{}", html);
+        assert!(html.contains("&lt;it&gt; &amp; go"), "{}", html);
+        let (parent, body) = split_reply_quote(&html);
+        assert_eq!(parent.as_deref(), Some("m1"));
+        assert_eq!(strip_html(&body).trim(), "On it!");
+    }
+
+    #[test]
+    fn split_quote_rejects_malformed() {
+        let (p, b) = split_reply_quote("<p>plain</p>");
+        assert_eq!(p, None);
+        assert_eq!(b, "<p>plain</p>");
+        // Unterminated quote: keep the whole content, no parent.
+        let (p, b) = split_reply_quote("<quote guid=\"m1\"><p>oops</p>");
+        assert_eq!(p, None);
+        assert_eq!(b, "<quote guid=\"m1\"><p>oops</p>");
+        // Quote without guid still strips (body-only bubble, unknown parent).
+        let (p, b) = split_reply_quote("<quote author=\"A\">old</quote><p>new</p>");
+        assert_eq!(p, None);
+        assert_eq!(strip_html(&b).trim(), "new");
+        // Single-quoted guid parses.
+        let (p, _) = split_reply_quote("<quote guid='m9'>x</quote><p>y</p>");
+        assert_eq!(p.as_deref(), Some("m9"));
     }
 
     #[test]
