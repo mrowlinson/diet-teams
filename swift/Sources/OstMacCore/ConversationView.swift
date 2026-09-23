@@ -16,6 +16,7 @@ public struct ConversationView: View {
     @ObservedObject public var shared: SharedFilesStore
     @ObservedObject public var notes: NotesStore
     @ObservedObject public var catchUp: CatchUpStore
+    @ObservedObject public var attachments: ComposeAttachmentsStore
     /// False for 1:1 chats (header shows the chatmate dot).
     private let isGroup: Bool
     @State private var draft = ""
@@ -27,6 +28,7 @@ public struct ConversationView: View {
     @FocusState private var boxFocused: Bool
     @State private var gifHovering = false
     @State private var mentionHovering = false
+    @State private var attachHovering = false
     /// Forward tap (om-msgactions): the host opens its jump-palette sheet
     /// (OstMac target owns JumpPaletteView; this module cannot import it).
     private let onForward: (ChatMessage) -> Void
@@ -49,6 +51,7 @@ public struct ConversationView: View {
         store: ConversationStore, presence: PresenceStore = PresenceStore(),
         call: CallStore = CallStore(), shared: SharedFilesStore = SharedFilesStore(),
         notes: NotesStore = NotesStore(), catchUp: CatchUpStore = CatchUpStore(),
+        attachments: ComposeAttachmentsStore = ComposeAttachmentsStore(),
         isGroup: Bool = true, initialTab: Int = 0, catchUpOpen: Bool = false,
         onForward: @escaping (ChatMessage) -> Void = { _ in },
         editOpen: Bool = false, deleteOpen: Bool = false
@@ -59,6 +62,7 @@ public struct ConversationView: View {
         self.shared = shared
         self.notes = notes
         self.catchUp = catchUp
+        self.attachments = attachments
         self.isGroup = isGroup
         self.onForward = onForward
         _tab = State(initialValue: initialTab)
@@ -325,7 +329,27 @@ public struct ConversationView: View {
     private var sendBox: some View {
         VStack(spacing: 0) {
             replyChip
+            attachmentStrip
             HStack(spacing: DietSpace.sm) {
+                Button {
+                    pickAttachments()
+                } label: {
+                    Image(systemName: "paperclip")
+                        .font(.system(size: DietSize.iconMD))
+                        .foregroundStyle(DietColor.textSecondaryColor)
+                        .padding(.horizontal, DietSpace.xs)
+                        .padding(.vertical, DietSpace.xxs)
+                        .background(
+                            attachHovering ? DietColor.wellColor : .clear,
+                            in: RoundedRectangle(cornerRadius: DietRadius.control))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: DietRadius.control)
+                                .stroke(DietColor.dividerColor, lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .onHover { attachHovering = $0 }
+                .help("Attach a file (<4 MB)")
+                .disabled(attachments.uploading)
                 Button {
                     showMentions = true
                 } label: {
@@ -396,7 +420,10 @@ public struct ConversationView: View {
                 Button("Send", systemImage: "paperplane.fill") { submit() }
                     .buttonStyle(.dietPrimary)
                     .keyboardShortcut(.return, modifiers: .command)
-                    .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(
+                        attachments.uploading
+                            || (draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                && !attachments.hasStaged))
             }
             .padding(DietSpace.md)
         }
@@ -409,9 +436,108 @@ public struct ConversationView: View {
 
     private func submit() {
         let body = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !body.isEmpty else { return }
+        let hasFiles = attachments.hasStaged
+        guard !body.isEmpty || hasFiles else { return }
+        guard !attachments.uploading else { return }
         draft = ""
-        store.send(text: body)
+        // Files upload first (existing files-upload path), then the text
+        // posts; failures stay in the composer for retry/remove while the
+        // text still sends. Demo mode fabricates the upload offline.
+        if hasFiles, let id = store.chatID {
+            let demo = store.isDemo
+            Task {
+                await attachments.uploadPending(chatID: id, isDemo: demo)
+                attachments.clearFinished()
+                if !body.isEmpty { store.send(text: body) }
+            }
+        } else if !body.isEmpty {
+            store.send(text: body)
+        }
+    }
+
+    /// Staged-file rows above the send row: name, size, per-file state
+    /// (cap gate / progress / sent / failed+retry), remove, and the upload
+    /// error banner. No counts (Diagnostics only) — just the rows.
+    private var attachmentStrip: some View {
+        Group {
+            if !attachments.attachments.isEmpty || attachments.error != nil {
+                VStack(alignment: .leading, spacing: DietSpace.xs) {
+                    ForEach(attachments.attachments) { file in
+                        attachmentRow(for: file)
+                    }
+                    if let err = attachments.error {
+                        DietBanner(.error, message: err) {
+                            attachments.clearError()
+                        }
+                    }
+                }
+                .padding(.horizontal, DietSpace.md)
+                .padding(.top, DietSpace.sm)
+            }
+        }
+    }
+
+    private func attachmentRow(for file: ComposeAttachment) -> some View {
+        HStack(spacing: DietSpace.xs) {
+            Image(systemName: SharedFile.iconName(mime: nil, filename: file.name))
+                .font(.system(size: DietSize.iconMD))
+                .foregroundStyle(DietColor.textSecondaryColor)
+            Text(file.name)
+                .font(DietType.caption1)
+                .foregroundStyle(DietColor.textPrimaryColor)
+                .lineLimit(1)
+            Text(SharedFile.sizeLabel(file.size))
+                .font(DietType.captionMono)
+                .foregroundStyle(DietColor.textTertiaryColor)
+            Spacer(minLength: DietSpace.sm)
+            switch file.state {
+            case .staged:
+                Text("Ready")
+                    .font(DietType.caption1)
+                    .foregroundStyle(DietColor.textSecondaryColor)
+            case let .tooLarge(actual):
+                Text(ComposeAttachments.capMessage(actual: actual))
+                    .font(DietType.caption1)
+                    .foregroundStyle(.red)
+                    .lineLimit(1)
+            case .uploading:
+                ProgressView().controlSize(.small)
+            case .uploaded:
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+            case let .failed(message):
+                Text(message)
+                    .font(DietType.caption1)
+                    .foregroundStyle(.red)
+                    .lineLimit(1)
+                Button("Retry") { attachments.retry(id: file.id) }
+                    .buttonStyle(.link)
+                    .font(DietType.caption1)
+            }
+            if file.state != .uploading {
+                Button {
+                    attachments.remove(id: file.id)
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: DietSize.iconMD))
+                        .foregroundStyle(DietColor.textTertiaryColor)
+                }
+                .buttonStyle(.plain)
+                .help("Remove attachment")
+            }
+        }
+    }
+
+    /// Native file picker (multi-select); the store probes sizes and gates
+    /// the 4 MB cap at stage time, before any upload.
+    private func pickAttachments() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = true
+        if panel.runModal() == .OK {
+            attachments.stage(urls: panel.urls)
+        }
     }
 
     /// Append a picked GIF URL to the draft (space-separated); the user
