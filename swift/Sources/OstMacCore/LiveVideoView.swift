@@ -1,4 +1,7 @@
 // LiveVideoView.swift — om-liveav: remote live-video frame + status.
+// om-reskin-call: DietDesign tile (control radius, divider ring,
+// caption scale, mono counts).
+import DietDesign
 import SwiftUI
 
 /// Remote video tile. Starts/stops the poll loop with visibility.
@@ -8,7 +11,7 @@ public struct LiveVideoView: View {
     public init() {}
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: DietSpace.xs) {
             ZStack {
                 Rectangle().fill(.black.opacity(0.85))
                 if let img = model.remoteImage {
@@ -17,18 +20,18 @@ public struct LiveVideoView: View {
                         .aspectRatio(contentMode: .fit)
                 } else {
                     Text(model.status)
-                        .font(.caption)
+                        .font(DietType.caption1)
                         .foregroundStyle(.white.opacity(0.7))
                 }
             }
             .frame(width: 320, height: 240)
-            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .clipShape(RoundedRectangle(cornerRadius: DietRadius.control))
             .overlay(
-                RoundedRectangle(cornerRadius: 6)
-                    .stroke(.secondary.opacity(0.5)))
+                RoundedRectangle(cornerRadius: DietRadius.control)
+                    .stroke(DietColor.dividerColor))
             Text("remote · \(model.status) · \(model.frames) frames")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(DietType.captionMono)
+                .foregroundStyle(DietColor.textSecondaryColor)
         }
         .task { model.start() }
         .onDisappear { model.stop() }

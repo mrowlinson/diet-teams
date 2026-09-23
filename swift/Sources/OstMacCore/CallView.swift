@@ -5,6 +5,9 @@
 // call; ConversationView's header gets a phone button bound to the open
 // chat. No audio/video: accept/place wire signaling only, and the
 // banner says so.
+// om-reskin-call: DietDesign banner (tokens + button styles;
+// error row is a DietBanner).
+import DietDesign
 import SwiftUI
 
 public final class CallStore: ObservableObject {
@@ -192,23 +195,29 @@ public struct CallBanner: View {
 
     public var body: some View {
         if let c = store.call, c.isActive {
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: DietSpace.xxs) {
+                HStack(spacing: DietSpace.sm) {
                     Image(systemName: icon(for: c))
-                        .foregroundStyle(.green)
+                        .font(.system(size: DietSize.iconMD))
+                        .foregroundStyle(Color(nsColor: DietColor.success))
                     if c.liveMedia == true {
                         Text("LIVE")
-                            .font(.caption2).bold()
-                            .padding(.horizontal, 6).padding(.vertical, 2)
-                            .background(.red.opacity(0.85))
+                            .font(DietType.caption2).bold()
+                            .padding(.horizontal, DietSpace.sm)
+                            .padding(.vertical, DietSpace.xxs)
+                            .background(
+                                Color(nsColor: DietColor.danger).opacity(0.85))
                             .foregroundStyle(.white)
                             .clipShape(Capsule())
                             .accessibilityLabel("Live media active")
                     }
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(title(for: c)).font(.subheadline).bold()
+                    VStack(alignment: .leading, spacing: DietSpace.xxs) {
+                        Text(title(for: c)).font(DietType.subheadline).bold()
+                            .foregroundStyle(DietColor.textPrimaryColor)
                         Text(subtitle(for: c))
-                            .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            .font(DietType.caption1)
+                            .foregroundStyle(DietColor.textSecondaryColor)
+                            .lineLimit(1)
                     }
                     Spacer()
                     if store.busy { ProgressView().controlSize(.small) }
@@ -216,25 +225,20 @@ public struct CallBanner: View {
                 }
                 if c.liveMedia == true, let m = store.media {
                     Text(mediaLine(m))
-                        .font(.caption).monospaced()
-                        .foregroundStyle(.secondary).lineLimit(1)
+                        .font(DietType.captionMono)
+                        .foregroundStyle(DietColor.textSecondaryColor)
+                        .lineLimit(1)
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(.green.opacity(0.12))
-            Divider()
+            .padding(.horizontal, DietSpace.edgeCompact)
+            .padding(.vertical, DietSpace.sm)
+            .background(Color(nsColor: DietColor.success).opacity(0.12))
+            DietDividerH()
         } else if let err = store.error {
-            HStack {
-                Image(systemName: "phone.down.fill").foregroundStyle(.red)
-                Text(err).font(.caption).foregroundStyle(.red).lineLimit(2)
-                Spacer()
-                Button("Dismiss") { store.dismissError() }.font(.caption)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(.red.opacity(0.08))
-            Divider()
+            DietBanner(.error, message: err) { store.dismissError() }
+                .padding(.horizontal, DietSpace.edgeCompact)
+                .padding(.vertical, DietSpace.xs)
+            DietDividerH()
         }
     }
 
@@ -276,26 +280,25 @@ public struct CallBanner: View {
     private func buttons(for c: CallInfo) -> some View {
         if c.dir == "in", c.state == "ringing" {
             Button("Accept live") { store.acceptLive() }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.dietPrimary)
                 .disabled(store.busy)
                 .help("Accept with live audio/video")
             Button("Accept") { store.accept() }
-                .buttonStyle(.bordered)
+                .buttonStyle(.dietSecondary)
                 .disabled(store.busy)
                 .help("Accept signaling only")
             Button("Decline") { store.end() }
-                .buttonStyle(.bordered)
+                .buttonStyle(.dietDestructive)
                 .disabled(store.busy)
         } else {
             if c.state == "connected", c.dir == "out" {
                 Button("● Rec") { store.injectRecorder() }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.dietSecondary)
                     .disabled(store.busy)
                     .help("Inject the recorder bot (signaling only)")
             }
             Button("End") { store.end() }
-                .buttonStyle(.borderedProminent)
-                .tint(.red)
+                .buttonStyle(.dietDestructive)
                 .disabled(store.busy)
         }
     }
