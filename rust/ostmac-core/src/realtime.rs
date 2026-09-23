@@ -21,6 +21,11 @@
 //! present, or the event `type`/`name` mentions an edit. `id` stays the event
 //! message id; `edited_id` carries the original message id when known.
 //!
+//! Reactions (om-reactions): `reactions` / `properties.reactions` arrays
+//! (Graph-like `[{reactionType}]`) group into per-emoji counts in picker
+//! order. Reaction-only events (no content) yield empty text so the host
+//! patches counts onto the known bubble.
+//!
 //! `message_loss` behavior: the server sends `trouter.message_loss` when it
 //! dropped queued indicators (backpressure / reconnect gap / stale etag). It
 //! means "push is not a complete log — some events were never delivered".
@@ -53,6 +58,19 @@ pub struct RealtimeMessage {
     pub edited_id: Option<String>,
     /// Unstripped server HTML (om-richmedia: streaming `<img>` mining).
     pub raw: String,
+    /// Grouped reaction counts (om-reactions). Omitted when empty so old
+    /// hosts see the pre-reactions envelope; the host patches counts onto
+    /// the known bubble and never appends for reaction-only events.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub reactions: Vec<ReactionCount>,
+}
+
+/// One grouped reaction count: picker emoji + number of reactors.
+/// Mirrors `ost::api::ReactionCount` on the typed poll envelope.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ReactionCount {
+    pub emoji: String,
+    pub count: usize,
 }
 
 /// Result of parsing one batch of raw events.
@@ -182,11 +200,18 @@ fn first_str(map: &serde_json::Map<String, Value>, keys: &[&str]) -> Option<Stri
 }
 
 /// Build a typed message from a flat resource object. None = not a message.
+/// Reaction-only events (no content, but a `reactions` array) still
+/// produce a message with empty text so the host can patch counts.
 fn message_from_object(
     map: &serde_json::Map<String, Value>,
     edit_hint: bool,
 ) -> Option<RealtimeMessage> {
-    let content = first_str(map, &["content", "text"])?;
+    let reactions = reactions_from(map);
+    let content = match first_str(map, &["content", "text"]) {
+        Some(c) => c,
+        None if !reactions.is_empty() => String::new(),
+        None => return None,
+    };
     let msgtype = first_str(map, &["messagetype", "messageType"]).unwrap_or_default();
     // Must look like a message: has content plus some message-ish marker.
     let from = first_str(
@@ -244,7 +269,49 @@ fn message_from_object(
         is_edit,
         edited_id,
         raw: content,
+        reactions,
     })
+}
+
+/// Grouped reaction counts from `reactions` or `properties.reactions`
+/// (Graph-like `[{reactionType}]` entries). Unknown/missing types are
+/// dropped; canonical picker order. Empty when the event carries none.
+fn reactions_from(map: &serde_json::Map<String, Value>) -> Vec<ReactionCount> {
+    let list = get_ci(map, "reactions")
+        .and_then(|v| v.as_array())
+        .or_else(|| {
+            get_ci(map, "properties")
+                .and_then(|p| p.as_object())
+                .and_then(|o| o.get("reactions"))
+                .and_then(|v| v.as_array())
+        });
+    let Some(entries) = list else {
+        return Vec::new();
+    };
+    let mut counts = vec![0usize; ost::api::REACTION_EMOJI.len()];
+    for e in entries {
+        let t = e
+            .as_object()
+            .and_then(|o| o.get("reactionType").or_else(|| o.get("reactiontype")))
+            .and_then(|v| v.as_str());
+        if let Some(t) = t {
+            if let Some(i) = ost::api::REACTION_EMOJI
+                .iter()
+                .position(|(_, known)| known.eq_ignore_ascii_case(t))
+            {
+                counts[i] += 1;
+            }
+        }
+    }
+    ost::api::REACTION_EMOJI
+        .iter()
+        .zip(counts)
+        .filter(|(_, c)| *c > 0)
+        .map(|((emoji, _), count)| ReactionCount {
+            emoji: emoji.to_string(),
+            count,
+        })
+        .collect()
 }
 
 /// Chat id from conversation/resource links or explicit fields.
@@ -312,4 +379,91 @@ fn strip_html(html: &str) -> String {
         .replace("&quot;", "\"")
         .replace("&#39;", "'")
         .replace("&nbsp;", " ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn batch_of(v: Value) -> ParsedBatch {
+        parse_batch(std::slice::from_ref(&v))
+    }
+
+    #[test]
+    fn reactions_group_on_message_events() {
+        let batch = batch_of(json!({
+            "content": "<p>hi</p>",
+            "messagetype": "RichText/Html",
+            "imdisplayname": "A",
+            "id": "m1",
+            "threadid": "19:x",
+            "reactions": [
+                {"reactionType": "laugh"},
+                {"reactionType": "like"},
+                {"reactionType": "like"},
+                {"reactionType": "party"},
+            ],
+        }));
+        assert_eq!(batch.messages.len(), 1);
+        let m = &batch.messages[0];
+        assert_eq!(m.text, "hi");
+        assert_eq!(
+            m.reactions,
+            vec![
+                ReactionCount {
+                    emoji: "👍".to_string(),
+                    count: 2
+                },
+                ReactionCount {
+                    emoji: "😂".to_string(),
+                    count: 1
+                },
+            ]
+        );
+        // Envelope carries counts; empty counts are omitted.
+        let env = serde_json::to_value(m).unwrap();
+        assert_eq!(env["reactions"][0]["emoji"], "👍");
+        let bare = batch_of(json!({
+            "content": "<p>hi</p>",
+            "messagetype": "RichText/Html",
+            "imdisplayname": "A",
+            "id": "m2",
+            "threadid": "19:x",
+        }));
+        assert!(bare.messages[0].reactions.is_empty());
+        assert!(serde_json::to_value(&bare.messages[0]).unwrap()
+            .get("reactions")
+            .is_none());
+    }
+
+    #[test]
+    fn reaction_only_event_yields_empty_text() {
+        let batch = batch_of(json!({
+            "messagetype": "RichText/Html",
+            "imdisplayname": "A",
+            "id": "m1",
+            "threadid": "19:x",
+            "properties": {"reactions": [{"reactionType": "heart"}]},
+        }));
+        assert_eq!(batch.messages.len(), 1);
+        let m = &batch.messages[0];
+        assert_eq!(m.text, "");
+        assert_eq!(
+            m.reactions,
+            vec![ReactionCount {
+                emoji: "❤️".to_string(),
+                count: 1
+            }]
+        );
+        // No content and no reactions is still not a message.
+        let skipped = batch_of(json!({
+            "messagetype": "RichText/Html",
+            "imdisplayname": "A",
+            "id": "m9",
+            "threadid": "19:x",
+        }));
+        assert!(skipped.messages.is_empty());
+        assert_eq!(skipped.skipped, 1);
+    }
 }

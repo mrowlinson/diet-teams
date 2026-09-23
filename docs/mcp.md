@@ -39,6 +39,7 @@ environment are needed.
 | `list-chats` | `limit?` (1–100, default 20) | Recent chats (1:1 + group) |
 | `list-messages` | `chat_id`, `limit?` (default 50), `page_token?` | History for a chat or channel; `page_token` pages back |
 | `send-message` | `chat_id`, `text` | Post one text message |
+| `react-message` | `chat_id`, `message_id`, `emoji` (👍❤️😂😮😢😠), `remove?` | Add/remove one emoji reaction |
 | `list-teams` | — | Joined teams with channels |
 | `list-channels` | `team_id?` | Channels (all, or one team); ids work in `list-messages` / `send-message` |
 

@@ -11,6 +11,7 @@ public enum DemoData {
     public static let standupID = "demo-3"
     public static let richID = "demo-rich"
     public static let mediaID = "demo-media"
+    public static let reactionsID = "demo-react"
 
     /// Sidebar rows. [0] is "demo" (matches ConversationStore.demo()).
     /// The rich row derives from the rich thread's last message, so its
@@ -33,6 +34,7 @@ public enum DemoData {
             last_message_preview: "Build is green, packaging lane is next."),
         richChat(),
         mediaChat(),
+        reactionsChat(),
     ]
 
     /// Rich sidebar row: preview/sender/time from the rich thread's tail.
@@ -52,6 +54,17 @@ public enum DemoData {
         let last = msgs.last
         return ChatItem(
             chatId: mediaID, name: "Demo — Photos & Emoji", is_group: true,
+            last_message_time: last?.timestamp,
+            last_message_sender: last?.sender,
+            last_message_preview: last?.content)
+    }
+
+    /// Reactions sidebar row: preview/sender/time from the reacted tail.
+    public static func reactionsChat(now: Date = Date()) -> ChatItem {
+        let msgs = reactionsMessages(now: now)
+        let last = msgs.last
+        return ChatItem(
+            chatId: reactionsID, name: "Demo — Reactions", is_group: true,
             last_message_time: last?.timestamp,
             last_message_sender: last?.sender,
             last_message_preview: last?.content)
@@ -133,6 +146,7 @@ public enum DemoData {
         case standupID: return standupMessages
         case richID: return ConversationStore.richDemoMessages()
         case mediaID: return mediaMessages()
+        case reactionsID: return reactionsMessages()
         default: break
         }
         if chatID.hasPrefix("demo-chan-") { return channelMessages }
@@ -246,6 +260,42 @@ public enum DemoData {
                 content: "Resending the vibe instead",
                 isOwn: true,
                 raw: #"<p>Resending the vibe instead <img src="demo://photo-1" width="20" height="20" alt="(smile)"></p>"#),
+        ]
+    }
+
+    /// Reactions thread (om-reactions): reacted bubbles (single + multi
+    /// counts), one bare bubble for the picker shot. Fully offline.
+    /// Timestamps float off now (Today).
+    public static func reactionsMessages(now: Date = Date()) -> [ChatMessage] {
+        func iso(_ d: Date) -> String {
+            let f = ISO8601DateFormatter()
+            f.formatOptions = [.withInternetDateTime]
+            return f.string(from: d)
+        }
+        func at(h: Int, m: Int) -> Date {
+            var cal = Calendar.current
+            cal.timeZone = TimeZone.current
+            return cal.date(bySettingHour: h, minute: m, second: 0, of: now) ?? now
+        }
+        return [
+            ChatMessage(
+                id: "react-1", sender: "Priya Nair",
+                timestamp: iso(at(h: 10, m: 2)),
+                content: "Review deck is ready — link in the channel. Thumbs up when you've seen it?",
+                reactions: [
+                    ReactionCount(emoji: "👍", count: 3),
+                    ReactionCount(emoji: "❤️", count: 1),
+                ]),
+            ChatMessage(
+                id: "react-2", sender: "Tom Becker",
+                timestamp: iso(at(h: 10, m: 4)),
+                content: "Seen — the empty-states slide made me laugh out loud.",
+                reactions: [ReactionCount(emoji: "😂", count: 2)]),
+            ChatMessage(
+                id: "react-3", sender: "Me",
+                timestamp: iso(at(h: 10, m: 6)),
+                content: "Glad it landed. Right-click any bubble to try the picker — counts update live.",
+                isOwn: true),
         ]
     }
 

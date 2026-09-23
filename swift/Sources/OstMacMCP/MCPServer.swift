@@ -55,7 +55,7 @@ public struct MCPServer {
     public static let serverName = "diet-teams"
     public static let defaultProtocolVersion = "2025-06-18"
     public static let toolNames = [
-        "list-chats", "list-messages", "send-message", "list-teams", "list-channels",
+        "list-chats", "list-messages", "send-message", "react-message", "list-teams", "list-channels",
     ]
 
     public init() {}
@@ -139,6 +139,8 @@ public struct MCPServer {
                 text = try listMessages(args: args, client: client)
             case "send-message":
                 text = try sendMessage(args: args, client: client)
+            case "react-message":
+                text = try reactMessage(args: args, client: client)
             case "list-teams":
                 text = try listTeams(client: client)
             case "list-channels":
@@ -194,7 +196,8 @@ public struct MCPServer {
         var o: [String: Any] = [
             "chat_id": resp.chat_id ?? chatID,
             "messages": resp.messages.map { m in
-                ["id": m.id, "sender": m.sender, "timestamp": m.timestamp, "content": m.content]
+                ["id": m.id, "sender": m.sender, "timestamp": m.timestamp, "content": m.content,
+                 "reactions": m.reactions.map { ["emoji": $0.emoji, "count": $0.count] }] as [String: Any]
             },
         ]
         if let t = resp.page_token { o["page_token"] = t }
@@ -206,6 +209,21 @@ public struct MCPServer {
         let text = try stringArg(args, "text")
         let resp = try client.send(chatID: chatID, text: text)
         return encode(["ok": resp.ok, "chat_id": resp.chat_id ?? chatID] as [String: Any])
+    }
+
+    private static func reactMessage(args: [String: Any], client: TeamsClient) throws -> String {
+        let chatID = try stringArg(args, "chat_id")
+        let messageID = try stringArg(args, "message_id")
+        let emoji = try stringArg(args, "emoji")
+        guard ConversationStore.reactionEmojis.contains(emoji) else {
+            throw ToolError.invalidParams("emoji must be one of \(ConversationStore.reactionEmojis.joined())")
+        }
+        let remove = (args["remove"] as? NSNumber)?.boolValue ?? false
+        let resp = try client.react(chatID: chatID, messageID: messageID, emoji: emoji, remove: remove)
+        return encode([
+            "ok": resp.ok, "chat_id": resp.chat_id ?? chatID,
+            "message_id": messageID, "emoji": emoji, "removed": remove,
+        ] as [String: Any])
     }
 
     private static func listTeams(client: TeamsClient) throws -> String {
@@ -295,6 +313,20 @@ public struct MCPServer {
                     "text": ["type": "string"],
                 ],
                 "required": ["chat_id", "text"],
+            ],
+        ],
+        [
+            "name": "react-message",
+            "description": "Add (or with remove:true, remove) one emoji reaction on a message. Emoji is one of 👍 ❤️ 😂 😮 😢 😠.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "chat_id": ["type": "string"],
+                    "message_id": ["type": "string", "description": "Server message id from list-messages"],
+                    "emoji": ["type": "string", "description": "One of 👍 ❤️ 😂 😮 😢 😠"],
+                    "remove": ["type": "boolean", "description": "Remove instead of add", "default": false],
+                ],
+                "required": ["chat_id", "message_id", "emoji"],
             ],
         ],
         [

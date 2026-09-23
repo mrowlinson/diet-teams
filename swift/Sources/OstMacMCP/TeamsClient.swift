@@ -10,6 +10,8 @@ public protocol TeamsClient: Sendable {
     func messages(chatID: String, limit: Int32, pageToken: String?) throws -> MessagesResponse
     func send(chatID: String, text: String) throws -> SendResponse
     func teams() throws -> TeamsResponse
+    /// Add (`remove: false`) or remove one emoji reaction on a message.
+    func react(chatID: String, messageID: String, emoji: String, remove: Bool) throws -> SendResponse
 }
 
 public struct LiveTeamsClient: TeamsClient {
@@ -28,6 +30,13 @@ public struct LiveTeamsClient: TeamsClient {
 
     public func send(chatID: String, text: String) throws -> SendResponse {
         try RustCore.send(chatID: chatID, text: text)
+    }
+
+    public func react(chatID: String, messageID: String, emoji: String, remove: Bool) throws -> SendResponse {
+        if remove {
+            return try RustCore.removeReaction(chatID: chatID, messageID: messageID, emoji: emoji)
+        }
+        return try RustCore.react(chatID: chatID, messageID: messageID, emoji: emoji)
     }
 
     public func teams() throws -> TeamsResponse {
@@ -87,6 +96,14 @@ public final class MockTeamsClient: TeamsClient, @unchecked Sendable {
     public func send(chatID: String, text: String) throws -> SendResponse {
         if let f = failure { throw f }
         sent.append((chatID: chatID, text: text))
+        return SendResponse(ok: true, chat_id: chatID)
+    }
+
+    public private(set) var reacted: [(chatID: String, messageID: String, emoji: String, remove: Bool)] = []
+
+    public func react(chatID: String, messageID: String, emoji: String, remove: Bool) throws -> SendResponse {
+        if let f = failure { throw f }
+        reacted.append((chatID: chatID, messageID: messageID, emoji: emoji, remove: remove))
         return SendResponse(ok: true, chat_id: chatID)
     }
 

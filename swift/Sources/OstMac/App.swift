@@ -6,13 +6,15 @@
 // --demo bypasses the gate fully offline.
 //
 // Usage:
-//   Diet Teams [--demo | --demo-rich] [--chat <id> [--name <n>]] [--say <text>]
+//   Diet Teams [--demo | --demo-rich | --demo-reactions] [--chat <id> [--name <n>]] [--say <text>]
 //          [--show-about] [--show-settings] [--auth-state <name>]
 //          [--show-call incoming|active|live] [--show-av]
 // --show-call seeds the call banner offline (demo state, no core calls).
 // --demo runs fully offline (canned chats/messages, local send echo).
 // --demo-rich is --demo preselected on the rich thread (mentions, code,
 // edited + failed bubbles, Yesterday/Today separators).
+// --demo-reactions is --demo preselected on the reacted thread
+// (counts on bubbles, picker via right-click — shot hook).
 // --chat preselects (or opens directly when absent from the list).
 // --say auto-sends once into the open chat. In live mode that is a REAL
 // send via core — never use it on shared chats for testing.
@@ -203,6 +205,7 @@ final class AppState: ObservableObject {
 
     init(args: [String]) {
         isDemo = args.contains("--demo") || args.contains("--demo-rich")
+            || args.contains("--demo-reactions")
         showNotes = args.contains("--show-notes")
         showJump = args.contains("--show-jump") // shot hook: palette open at launch
         call = CallStore(demo: isDemo)
@@ -228,6 +231,8 @@ final class AppState: ObservableObject {
             preselectID = args[i + 1]
         } else if args.contains("--demo-rich") {
             preselectID = DemoData.richID
+        } else if args.contains("--demo-reactions") {
+            preselectID = DemoData.reactionsID
         } else {
             preselectID = nil
         }

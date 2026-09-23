@@ -292,6 +292,18 @@ public struct ReminderTaskResult: Decodable, Sendable {
 /// `isOwn` is host-side only (core never sends it; defaults false) and
 /// drives bubble alignment. The realtime lane feeds this same model into
 /// `ConversationStore.ingest(_:)`; matching `id` => in-place edit update.
+/// One grouped reaction count: picker emoji + number of reactors.
+/// Wire format from core: `{"emoji","count"}`. Absent on old payloads.
+public struct ReactionCount: Decodable, Sendable, Equatable {
+    public let emoji: String
+    public let count: Int
+
+    public init(emoji: String, count: Int) {
+        self.emoji = emoji
+        self.count = count
+    }
+}
+
 public struct ChatMessage: Decodable, Sendable, Identifiable, Equatable {
     public let id: String
     public let sender: String
@@ -303,15 +315,19 @@ public struct ChatMessage: Decodable, Sendable, Identifiable, Equatable {
     public var raw: String?
     /// Host-side: set when a realtime edit rewrites `content`.
     public var edited: Bool
+    /// Grouped reaction counts (om-reactions). Empty on old payloads,
+    /// realtime ingests without counts, and local echoes.
+    public var reactions: [ReactionCount]
 
     enum CodingKeys: String, CodingKey {
-        case id, sender, timestamp, content, raw
+        case id, sender, timestamp, content, raw, reactions
     }
 
     public init(
         id: String, sender: String, timestamp: String,
         content: String, isOwn: Bool = false,
-        raw: String? = nil, edited: Bool = false
+        raw: String? = nil, edited: Bool = false,
+        reactions: [ReactionCount] = []
     ) {
         self.id = id
         self.sender = sender
@@ -320,6 +336,7 @@ public struct ChatMessage: Decodable, Sendable, Identifiable, Equatable {
         self.isOwn = isOwn
         self.raw = raw
         self.edited = edited
+        self.reactions = reactions
     }
 
     public init(from decoder: Decoder) throws {
@@ -329,6 +346,7 @@ public struct ChatMessage: Decodable, Sendable, Identifiable, Equatable {
         timestamp = try c.decode(String.self, forKey: .timestamp)
         content = try c.decode(String.self, forKey: .content)
         raw = try c.decodeIfPresent(String.self, forKey: .raw)
+        reactions = try c.decodeIfPresent([ReactionCount].self, forKey: .reactions) ?? []
         isOwn = false
         edited = false
     }

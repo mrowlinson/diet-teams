@@ -89,6 +89,30 @@ public enum RustCore {
         }
     }
 
+    /// Add one emoji reaction to a message (om-reactions).
+    /// Blocking FFI (network): call off the main thread.
+    public static func react(chatID: String, messageID: String, emoji: String) throws -> SendResponse {
+        try chatID.withCString { idPtr in
+            try messageID.withCString { midPtr in
+                try emoji.withCString { ePtr in
+                    try call(ostmac_react(idPtr, midPtr, ePtr), as: SendResponse.self)
+                }
+            }
+        }
+    }
+
+    /// Remove one emoji reaction from a message (om-reactions).
+    /// Blocking FFI (network): call off the main thread.
+    public static func removeReaction(chatID: String, messageID: String, emoji: String) throws -> SendResponse {
+        try chatID.withCString { idPtr in
+            try messageID.withCString { midPtr in
+                try emoji.withCString { ePtr in
+                    try call(ostmac_react_remove(idPtr, midPtr, ePtr), as: SendResponse.self)
+                }
+            }
+        }
+    }
+
     /// One fetched inline image: decoded bytes + content type, if any.
     /// Blocking FFI (network): call off the main thread.
     public static func mediaFetch(url: String) throws -> (data: Data, contentType: String?) {

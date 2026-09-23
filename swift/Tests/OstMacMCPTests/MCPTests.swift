@@ -95,7 +95,7 @@ final class MCPTests: XCTestCase {
         let tools = result(resp)["tools"] as! [[String: Any]]
         let names = tools.compactMap { $0["name"] as? String }.sorted()
         XCTAssertEqual(names, [
-            "list-channels", "list-chats", "list-messages", "list-teams", "send-message",
+            "list-channels", "list-chats", "list-messages", "list-teams", "react-message", "send-message",
         ])
         for t in tools {
             let schema = t["inputSchema"] as! [String: Any]
@@ -206,6 +206,85 @@ final class MCPTests: XCTestCase {
                 "args: \(args)")
         }
         XCTAssertTrue(MockTeamsClient().sent.isEmpty)
+    }
+
+    // MARK: - react-message
+
+    func testReactMessage() {
+        let client = MockTeamsClient()
+        let resp = MCPServer.handle(
+            line: toolCall("react-message", args: [
+                "chat_id": "demo", "message_id": "m1", "emoji": "👍",
+            ]),
+            client: client)!
+        XCTAssertFalse(isError(resp))
+        let payload = json(toolText(resp))
+        XCTAssertEqual(payload["ok"] as? Bool, true)
+        XCTAssertEqual(payload["message_id"] as? String, "m1")
+        XCTAssertEqual(payload["removed"] as? Bool, false)
+        XCTAssertEqual(client.reacted.count, 1)
+        XCTAssertEqual(client.reacted[0].messageID, "m1")
+        XCTAssertEqual(client.reacted[0].emoji, "👍")
+        XCTAssertFalse(client.reacted[0].remove)
+    }
+
+    func testReactMessageRemove() {
+        let client = MockTeamsClient()
+        let resp = MCPServer.handle(
+            line: toolCall("react-message", args: [
+                "chat_id": "demo", "message_id": "m1", "emoji": "❤️", "remove": true,
+            ]),
+            client: client)!
+        XCTAssertFalse(isError(resp))
+        XCTAssertEqual(json(toolText(resp))["removed"] as? Bool, true)
+        XCTAssertTrue(client.reacted[0].remove)
+    }
+
+    func testReactMessageRejectsBadArgs() {
+        for args in ([
+            ["chat_id": "demo", "message_id": "m1"],
+            ["chat_id": "demo", "message_id": "m1", "emoji": ""],
+            ["chat_id": "demo", "message_id": "m1", "emoji": "  "],
+            ["chat_id": "demo", "message_id": "m1", "emoji": "🎉"],
+            ["chat_id": "demo", "emoji": "👍"],
+        ] as [[String: Any]]) {
+            let resp = MCPServer.handle(
+                line: toolCall("react-message", args: args),
+                client: MockTeamsClient())!
+            XCTAssertEqual(
+                (rpcError(resp)["code"] as? NSNumber)?.intValue, -32602,
+                "args: \(args)")
+        }
+        XCTAssertTrue(MockTeamsClient().reacted.isEmpty)
+    }
+
+    func testReactMessageFailureIsErrorResult() {
+        struct Boom: Error {}
+        let client = MockTeamsClient()
+        client.failure = Boom()
+        let resp = MCPServer.handle(
+            line: toolCall("react-message", args: [
+                "chat_id": "demo", "message_id": "m1", "emoji": "👍",
+            ]),
+            client: client)!
+        XCTAssertTrue(isError(resp))
+    }
+
+    func testListMessagesCarriesReactions() {
+        let client = MockTeamsClient(messagesByChat: ["demo": MessagesResponse(
+            ok: true, chat_id: "demo",
+            messages: [ChatMessage(
+                id: "m1", sender: "A", timestamp: "t", content: "hi",
+                reactions: [ReactionCount(emoji: "👍", count: 2)])],
+            page_token: nil)])
+        let text = toolText(MCPServer.handle(
+            line: toolCall("list-messages", args: ["chat_id": "demo"]),
+            client: client)!)
+        let msgs = json(text)["messages"] as! [[String: Any]]
+        let r = msgs[0]["reactions"] as! [[String: Any]]
+        XCTAssertEqual(r.count, 1)
+        XCTAssertEqual(r[0]["emoji"] as? String, "👍")
+        XCTAssertEqual((r[0]["count"] as? NSNumber)?.intValue, 2)
     }
 
     // MARK: - list-teams / list-channels
@@ -320,5 +399,19 @@ final class MCPTests: XCTestCase {
         let t = MockTransport([])
         MCPServer().run(transport: t, client: MockTeamsClient())
         XCTAssertTrue(t.output.isEmpty)
+    }
+
+    func testRunLoopReactMessageRoundTrip() {
+        let client = MockTeamsClient()
+        let t = MockTransport([
+            toolCall("react-message", args: [
+                "chat_id": "demo", "message_id": "m1", "emoji": "😂",
+            ], id: 11),
+        ])
+        MCPServer().run(transport: t, client: client)
+        XCTAssertEqual(t.output.count, 1)
+        XCTAssertFalse(isError(t.output[0]))
+        XCTAssertEqual(client.reacted.count, 1)
+        XCTAssertEqual(client.reacted[0].emoji, "😂")
     }
 }
