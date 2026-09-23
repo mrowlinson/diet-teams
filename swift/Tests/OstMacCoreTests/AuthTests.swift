@@ -145,7 +145,9 @@ final class AuthTests: XCTestCase {
 
     func testSignInBlockedWhilePolling() async {
         let d = Self.start()
-        let vm = AuthViewModel(start: { d })
+        let vm = AuthViewModel(
+            start: { d },
+            openURL: { _ in false })
         vm.pollIntervalOverride = 3600
         await vm.signIn()
         vm.openBrowser() // code -> polling
