@@ -29,6 +29,14 @@ public final class ConversationStore: ObservableObject {
     @Published public private(set) var replyTarget: ChatMessage?
     public private(set) var chatID: String?
     public private(set) var chatName: String?
+    /// Header title: the resolved chat name, else the generic label —
+    /// never the raw chat id (om-chatnames).
+    public var headerTitle: String {
+        if let n = chatName?.trimmingCharacters(in: .whitespacesAndNewlines), !n.isEmpty {
+            return n
+        }
+        return "Conversation"
+    }
     public private(set) var isDemo = false
     /// Own sender name (whoami display_name); nil until resolved or in demo.
     /// Stamps `isOwn` on history, pages, and realtime ingests.

@@ -50,4 +50,17 @@ final class ConversationTests: XCTestCase {
         XCTAssertThrowsError(try RustCore.messages(chatID: ""))
         XCTAssertThrowsError(try RustCore.send(chatID: "19:x", text: "  "))
     }
+
+    /// Header title (om-chatnames): resolved name, else the generic
+    /// label — never the raw chat id.
+    func testHeaderTitleNeverRawID() {
+        let fresh = ConversationStore()
+        XCTAssertEqual(fresh.headerTitle, "Conversation")
+        let named = ConversationStore()
+        named.showDemo(chatID: "19:abc@thread.v2", chatName: "Ship it", messages: [])
+        XCTAssertEqual(named.headerTitle, "Ship it")
+        let blank = ConversationStore()
+        blank.showDemo(chatID: "19:abc@thread.v2", chatName: "  ", messages: [])
+        XCTAssertEqual(blank.headerTitle, "Conversation")
+    }
 }

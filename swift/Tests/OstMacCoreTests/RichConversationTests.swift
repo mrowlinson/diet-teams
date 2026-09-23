@@ -38,6 +38,16 @@ final class RichConversationTests: XCTestCase {
         XCTAssertEqual(MessageRender.decodeEntities("a &amp; b &lt;x&gt;"), "a & b <x>")
     }
 
+    // MARK: - Tag stripping (om-chatnames: block-boundary spacing)
+
+    func testStripTagsBlockBoundaries() {
+        XCTAssertEqual(MessageRender.stripTags("<p>hi</p>"), "hi")
+        XCTAssertEqual(MessageRender.stripTags("<p>Hello</p><p>World</p>"), "Hello World")
+        XCTAssertEqual(MessageRender.stripTags("a<br>b"), "a b")
+        XCTAssertEqual(MessageRender.stripTags("a<b>x</b>b"), "axb")
+        XCTAssertEqual(MessageRender.stripTags("<P>a</P><p>b</p>"), "a b")
+    }
+
     // MARK: - Attributed body styling
 
     /// Bold range lands exactly on the mined mention name.

@@ -53,16 +53,49 @@ public enum MessageRender {
         return out
     }
 
+    /// Block tags whose boundaries separate words (mirrors ost
+    /// strip_html; keep the lists in sync).
+    private static let blockTags: Set<String> = [
+        "p", "div", "br", "section", "article", "header", "footer",
+        "h1", "h2", "h3", "h4", "h5", "h6",
+        "ul", "ol", "li", "dl", "dt", "dd",
+        "table", "tr", "td", "th",
+        "blockquote", "pre", "hr",
+    ]
+
     /// Tag stripper mirroring ost strip_html (no entity decoding).
+    /// Spacing-aware (om-chatnames): block boundaries become one space
+    /// so `</p><p>` never glues words; inline tags vanish silently.
     public static func stripTags(_ s: String) -> String {
         var out = ""
         out.reserveCapacity(s.count)
+        var tag = ""
         var inTag = false
+        var pendingSpace = false
         for ch in s {
-            switch ch {
-            case "<": inTag = true
-            case ">": inTag = false
-            default: if !inTag { out.append(ch) }
+            if inTag {
+                if ch == ">" {
+                    inTag = false
+                    var body = tag
+                    if body.hasPrefix("/") { body.removeFirst() }
+                    let name = body.prefix(while: { !$0.isWhitespace && $0 != "/" }).lowercased()
+                    if blockTags.contains(name) { pendingSpace = true }
+                    tag = ""
+                } else {
+                    tag.append(ch)
+                }
+            } else if ch == "<" {
+                inTag = true
+            } else {
+                if pendingSpace {
+                    pendingSpace = false
+                    if !out.isEmpty, let last = out.last,
+                       !last.isWhitespace, !ch.isWhitespace
+                    {
+                        out.append(" ")
+                    }
+                }
+                out.append(ch)
             }
         }
         return out

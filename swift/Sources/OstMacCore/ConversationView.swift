@@ -165,7 +165,7 @@ public struct ConversationView: View {
             {
                 DietPresenceDot(dot)
             }
-            Text(store.chatName ?? store.chatID ?? "Conversation")
+            Text(store.headerTitle)
                 .font(DietType.headline)
                 .foregroundStyle(DietColor.textPrimaryColor)
                 .lineLimit(1)

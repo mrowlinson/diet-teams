@@ -130,6 +130,25 @@ needing maintainer buy-in. Minor PRs stand alone; majors are separate PRs.
     --reply-to <id>`; `read` marks replies `(reply to <id>)`. Unit tests:
     snippet collapse/truncate (incl. multibyte boundary), build→split
     round-trip with escaping, malformed-quote cases.
+19. [minor] `src/api/chat.rs` — **chat names: mate resolve, system
+    labels, spacing-aware strip (om-chatnames lane)**. `conversation_name`
+    fallback is now topic → resolved 1:1 mate → last sender → system
+    label, never the raw thread id (`48:notifications` → `Notifications`,
+    else `[Direct message]`/`[Group chat]`/`[Meeting chat]`/`[Chat]`).
+    1:1 mate names resolve via MRI: thread roster (`GET
+    /v1/threads/{id}/members`, read-only) minus self (whoami OID suffix
+    match) leaves the mate, attributed to the newest message carrying
+    that MRI (`MessageInfo` gains `sender_mri`, parsed from the `from`
+    user link). Best-effort: roster/history/whoami failures keep the
+    sender/label fallback, never fail the list. `strip_html` is
+    spacing-aware: block-tag boundaries yield one space (`</p><p>`
+    no longer glues words), inline tags vanish silently, no
+    leading/trailing space. Dup-name threads are real: live fetch shows
+    distinct server threads sharing a display name (e.g. two 1:1s with
+    one mate), not a client duplication — no dedup applied. Unit tests:
+    strip boundaries, name fallback chain, MRI parse/match, roster
+    shape. Live-verified 2026-09-23 (`chats`: labels applied, 1:1s
+    mate-named).
 
 ## Upstream PRs (2026-09-22, base 0892144; main red on sdp E0308 until #5)
 
