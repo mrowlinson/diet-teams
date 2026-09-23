@@ -82,11 +82,44 @@ public struct CatchUpView: View {
                 .font(.body)
                 .foregroundStyle(.red)
                 .textSelection(.enabled)
+            if catchUp.lastError == .cliMissing {
+                CatchUpInstallPrompt()
+            }
             Button("Retry") {
                 Task { await catchUp.summarize(messages: messages) }
             }
             .buttonStyle(.link)
         }
+    }
+}
+
+/// Missing-CLI install prompt: what to run + where to get it. Shown
+/// in the sheet's failed state and in Settings when the CLI provider
+/// is selected but the binary is missing.
+public struct CatchUpInstallPrompt: View {
+    public init() {}
+
+    public var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("To use the OpenCode CLI provider:")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text("1. Install: \(CatchUpCLI.installCommand)")
+                .font(.caption)
+                .monospaced()
+                .textSelection(.enabled)
+            Text("2. Sign in: \(CatchUpCLI.loginCommand)")
+                .font(.caption)
+                .monospaced()
+                .textSelection(.enabled)
+            if let url = URL(string: CatchUpCLI.installSite) {
+                Link("Install opencode CLI", destination: url)
+                    .font(.caption)
+            }
+        }
+        .padding(8)
+        .background(.secondary.opacity(0.12))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 }
 
@@ -110,6 +143,25 @@ public struct CatchUpSettingsSection: View {
             .onChange(of: catchUp.config.provider) { _, provider in
                 catchUp.selectProvider(provider)
             }
+            if catchUp.config.provider == .openCodeCLI {
+                HStack {
+                    Text("opencode CLI")
+                    Spacer()
+                    Text(catchUp.cliAvailable ? "Found" : "Missing")
+                        .foregroundStyle(catchUp.cliAvailable ? .green : .red)
+                    Button("Check again") {
+                        catchUp.refreshCLIStatus()
+                    }
+                    .buttonStyle(.link)
+                }
+                .font(.caption)
+                .onAppear {
+                    catchUp.refreshCLIStatus()
+                }
+                if !catchUp.cliAvailable {
+                    CatchUpInstallPrompt()
+                }
+            }
             TextField("Base URL", text: $catchUp.config.baseURL)
                 .textSelection(.enabled)
             TextField("Model", text: $catchUp.config.model)
@@ -117,8 +169,12 @@ public struct CatchUpSettingsSection: View {
             Text("The key is kept in your Mac keychain, never on disk.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            if catchUp.config.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                Text("No key — the OpenCode CLI provider uses your `opencode auth login` (free tier).")
+            if catchUp.config.provider == .openCodeCLI {
+                Text("CLI-only: shells out to opencode (your `opencode auth login`, free tier) and never uses HTTPS. A saved key applies to the direct providers.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else if catchUp.config.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Text("Direct providers need an API key.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {

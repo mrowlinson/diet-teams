@@ -1,7 +1,7 @@
 // CatchUpCLITests.swift — om-catchup-cli lane: opencode-CLI provider
 // path. Mock CLI runner seam (never spawns); one test per mode:
 // success/parse, CLI missing, auth expiry, timeout, bad output,
-// plus provider select (CLI default, direct HTTPS when key set).
+// plus provider select (CLI default, CLI-only even with a key set).
 import XCTest
 
 @testable import OstMacCore
@@ -76,16 +76,19 @@ final class CatchUpCLITests: XCTestCase {
         XCTAssertEqual(store.state, .loaded("TL;DR: cli works."))
     }
 
-    func testKeyConfiguredUsesDirectHTTPS() async {
-        let direct = CatchUpCannedTransport(stub: "TL;DR: direct works.")
+    func testKeyConfiguredStillUsesCLIOnly() async {
+        // om-catchup-fallback: CLI-selected => CLI ONLY. A configured
+        // key no longer reroutes to HTTPS; it is only used when a
+        // direct provider is selected.
+        let direct = CatchUpCannedTransport(stub: "SHOULD NOT APPEAR")
         let runner = CatchUpMockCLIRunner(result: CatchUpCLIResult(
-            stdout: #"{"content":"SHOULD NOT APPEAR"}"#, stderr: "", exitCode: 0))
+            stdout: #"{"content":"TL;DR: cli works."}"#, stderr: "", exitCode: 0))
         let store = cliStore(direct: direct, runner: runner)
         store.adopt(CatchUpConfig(provider: .openCodeCLI, enabled: true, apiKey: "k"))
         await store.summarize(messages: thread(25))
-        XCTAssertTrue(runner.calls.isEmpty)
-        XCTAssertEqual(direct.prompts.count, 1)
-        XCTAssertEqual(store.state, .loaded("TL;DR: direct works."))
+        XCTAssertTrue(direct.prompts.isEmpty)
+        XCTAssertEqual(runner.calls.count, 1)
+        XCTAssertEqual(store.state, .loaded("TL;DR: cli works."))
     }
 
     func testCLIMissingSurfacesFailed() async {
