@@ -29,6 +29,11 @@ let package = Package(
         .target(name: "OstMacCore", dependencies: ["COstMac"]),
         .target(name: "OstMacChatList", dependencies: ["OstMacCore"]),
         .target(name: "OstMacMCP", dependencies: ["OstMacCore"]),
+        .target(name: "DietDesign"),
+        .executableTarget(
+            name: "DietShowcase",
+            dependencies: ["DietDesign"]
+        ),
         .executableTarget(
             name: "OstMac",
             dependencies: ["OstMacCore", "OstMacChatList", "COstMac"],
@@ -48,6 +53,10 @@ let package = Package(
             name: "OstMacMCPTests",
             dependencies: ["OstMacMCP", "OstMacCore", "COstMac"],
             linkerSettings: rustLink
+        ),
+        .testTarget(
+            name: "DietDesignTests",
+            dependencies: ["DietDesign"]
         ),
     ]
 )
