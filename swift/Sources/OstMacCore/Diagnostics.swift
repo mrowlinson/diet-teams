@@ -43,4 +43,10 @@ public enum DiagnosticsFormat {
         case .stopped: "Realtime off"
         }
     }
+
+    /// Typing counters (om-typing): session events + live indicators.
+    /// Diagnostics window only — typing never shows a count elsewhere.
+    public static func typingLine(events: Int, active: Int) -> String {
+        "\(events) events · \(active) active"
+    }
 }

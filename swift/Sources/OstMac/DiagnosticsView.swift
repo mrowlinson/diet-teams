@@ -43,6 +43,7 @@ struct DiagnosticsView: View {
                         state: state.feedState, events: state.feedEvents,
                         polls: state.feedPolls, resyncs: state.feedResyncs))
                     .textSelection(.enabled)
+                TypingDiagRow(store: state.typing, events: state.feedTyping)
                 if let err = state.feedError {
                     LabeledContent("Last error") {
                         Text(err)
@@ -91,5 +92,20 @@ struct DiagnosticsView: View {
             LabeledContent("Active", value: "no call")
                 .foregroundStyle(DietColor.textSecondaryColor)
         }
+    }
+}
+
+/// Typing counters row (om-typing): observes the store so the live
+/// count ticks as indicators arrive and expire.
+struct TypingDiagRow: View {
+    @ObservedObject var store: TypingStore
+    let events: Int
+
+    var body: some View {
+        LabeledContent(
+            "Typing",
+            value: DiagnosticsFormat.typingLine(
+                events: events, active: store.activeCount))
+            .textSelection(.enabled)
     }
 }

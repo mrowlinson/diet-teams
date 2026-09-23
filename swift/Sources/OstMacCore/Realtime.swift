@@ -113,21 +113,54 @@ public struct RealtimeMessage: Decodable, Sendable, Identifiable {
     }
 }
 
+/// One typing indicator from the live feed (om-typing). Decodes the Rust
+/// core's typed poll envelope (`Control/Typing` frames, never bubbles).
+public struct TypingEvent: Decodable, Sendable, Equatable {
+    public let chatID: String
+    public let sender: String
+    /// Raw sender MRI (`8:orgid:…`) when the event carried one; nil on
+    /// old core builds and non-MRI senders.
+    public let senderID: String?
+    public let time: String
+
+    enum CodingKeys: String, CodingKey {
+        case chatID = "chat_id"
+        case sender, senderID = "sender_id", time
+    }
+
+    /// Host-side construction (tests, mock feeds).
+    public init(chatID: String, sender: String, senderID: String? = nil, time: String = "") {
+        self.chatID = chatID
+        self.sender = sender
+        self.senderID = senderID
+        self.time = time
+    }
+
+    /// True when this event belongs to the given open chat.
+    /// Nil (nothing open) never matches.
+    public func isFor(chatID id: String?) -> Bool {
+        id.map { $0 == chatID } ?? false
+    }
+}
+
 /// Typed poll envelope from ostmac_trouter_poll_typed.
 /// `calls` is nil on old core builds (pre om-signal) — treat as no events.
+/// `typing` is nil on old core builds (pre om-typing) — same rule.
 public struct RealtimePoll: Decodable, Sendable {
     public let ok: Bool
     public let messages: [RealtimeMessage]
     public let resync: Bool
     public let skipped: Int
     public let calls: [CallEvent]?
+    public let typing: [TypingEvent]?
 
-    public init(ok: Bool, messages: [RealtimeMessage], resync: Bool, skipped: Int, calls: [CallEvent]? = nil) {
+    public init(ok: Bool, messages: [RealtimeMessage], resync: Bool, skipped: Int, calls: [CallEvent]? = nil, typing: [TypingEvent]? = nil) {
         self.ok = ok
         self.messages = messages
         self.resync = resync
         self.skipped = skipped
         self.calls = calls
+        self.typing = typing
     }
 }
 
@@ -163,6 +196,7 @@ public final class RealtimeFeed: @unchecked Sendable {
     private var subs: [UUID: @Sendable (RealtimeMessage) -> Void] = [:]
     private var resyncSubs: [UUID: @Sendable () -> Void] = [:]
     private var callSubs: [UUID: @Sendable (CallEvent) -> Void] = [:]
+    private var typingSubs: [UUID: @Sendable (TypingEvent) -> Void] = [:]
     private var attempt = 0
     private var pollCountValue = 0
     private var lastErrorValue: String?
@@ -229,6 +263,16 @@ public final class RealtimeFeed: @unchecked Sendable {
     public func onCall(_ h: @escaping @Sendable (CallEvent) -> Void) -> UUID {
         let t = UUID()
         lock.lock(); callSubs[t] = h; lock.unlock()
+        return t
+    }
+
+    /// Subscribe to typing indicators. Every event refreshes that
+    /// sender's per-thread timeout (no dedupe — repeats are the
+    /// keepalive); the TypingStore owns expiry.
+    @discardableResult
+    public func onTyping(_ h: @escaping @Sendable (TypingEvent) -> Void) -> UUID {
+        let t = UUID()
+        lock.lock(); typingSubs[t] = h; lock.unlock()
         return t
     }
 
@@ -323,11 +367,14 @@ public final class RealtimeFeed: @unchecked Sendable {
         let rsHandlers = p.resync ? Array(resyncSubs.values) : []
         let callHandlers = Array(callSubs.values)
         let callEvents = p.calls ?? []
+        let typingHandlers = Array(typingSubs.values)
+        let typingEvents = p.typing ?? []
         lock.unlock()
         if notify {
             for m in fresh { for h in msgHandlers { h(m) } }
             for h in rsHandlers { h() }
             for e in callEvents { for h in callHandlers { h(e) } }
+            for e in typingEvents { for h in typingHandlers { h(e) } }
         }
         return (fresh.count, p.resync)
     }

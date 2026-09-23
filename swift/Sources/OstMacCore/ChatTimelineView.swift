@@ -12,6 +12,8 @@ import SwiftUI
 
 struct ChatTimelineView: View {
     @ObservedObject var store: ConversationStore
+    /// Live typing indicators (om-typing): the tail row reads this.
+    @ObservedObject var typing: TypingStore = TypingStore()
     var onForward: (ChatMessage) -> Void = { _ in }
     var onEdit: (ChatMessage) -> Void = { _ in }
     var onDelete: (ChatMessage) -> Void = { _ in }
@@ -86,6 +88,13 @@ struct ChatTimelineView: View {
                             .onDisappear {
                                 scroll.noteLeftBottom()
                             }
+                        // Typing row (om-typing): who is typing in the
+                        // open thread, only while indicators are live.
+                        if let line = typing.line(chatID: store.chatID) {
+                            TypingIndicatorView(line: line)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.top, DietSpace.xs)
+                        }
                     }
                     .padding(DietSpace.md)
                 }

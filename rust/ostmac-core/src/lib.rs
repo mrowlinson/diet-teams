@@ -1566,11 +1566,13 @@ pub fn trouter_poll_json() -> String {
 ///
 /// `{ok:true, messages:[{chat_id,id,sender,sender_id?,text,time,
 /// is_edit,edited_id?,message_type,reactions?,raw}], resync:bool, skipped:n,
-/// calls:[{kind,call_id,peer,peer_name,detail?}]}`.
+/// calls:[{kind,call_id,peer,peer_name,detail?}],
+/// typing:[{chat_id,sender,sender_id?,time}]}`.
 /// `resync` is true when a `trouter.message_loss` frame was seen: the UI
 /// must re-fetch visible conversations (push had a gap). `skipped` counts
 /// non-message frames (handshake, presence…). `calls` carries incoming
-/// invitations / remote ends (also recorded in the call slot).
+/// invitations / remote ends (also recorded in the call slot). `typing`
+/// carries typing indicators (held per thread with a timeout, never bubbles).
 /// NOTE: drains the same queue as [`trouter_poll_json`] — use one consumer.
 pub fn trouter_poll_typed_json() -> String {
     let events = ost::event_hub::drain(64);
@@ -1591,6 +1593,7 @@ pub fn trouter_poll_typed_json() -> String {
         "resync": batch.resync,
         "skipped": batch.skipped,
         "calls": call_events,
+        "typing": batch.typing,
     })
     .to_string()
 }
@@ -2725,6 +2728,29 @@ mod tests {
             serde_json::from_str(&trouter_poll_typed_json()).unwrap();
         assert_eq!(v2["messages"].as_array().unwrap().len(), 0);
         assert_eq!(v2["resync"], false);
+    }
+
+    #[test]
+    fn typed_poll_carries_typing_events() {
+        let _ = ost::event_hub::drain(1024);
+        ost::event_hub::publish(
+            r#"{"name":"notify","args":[{
+                "conversationLink":"https://amer.ng.msg.teams.microsoft.com/v1/users/ME/conversations/19:abc@thread.v2/messages/1",
+                "from":"8:orgid:aaa",
+                "imdisplayname":"Doe, Jane",
+                "messagetype":"Control/Typing",
+                "originalarrivaltime":"2026-09-22T14:25:45.000Z"}]}"#
+                .to_string(),
+        );
+        let v: serde_json::Value =
+            serde_json::from_str(&trouter_poll_typed_json()).unwrap();
+        assert_eq!(v["ok"], true);
+        assert_eq!(v["messages"].as_array().unwrap().len(), 0);
+        let typing = v["typing"].as_array().unwrap();
+        assert_eq!(typing.len(), 1);
+        assert_eq!(typing[0]["chat_id"], "19:abc@thread.v2");
+        assert_eq!(typing[0]["sender"], "Doe, Jane");
+        assert_eq!(typing[0]["sender_id"], "8:orgid:aaa");
     }
 
     #[test]
