@@ -1,31 +1,39 @@
 // AboutView.swift — om-package lane: About Diet Teams window content.
+//
+// om-reskin-chrome: Diet tokens only.
 import AppKit
+import DietDesign
 import OstMacCore
 import SwiftUI
 
 struct AboutView: View {
 
     public var body: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: DietSpace.sm) {
             if let icon = NSApp.applicationIconImage {
                 Image(nsImage: icon)
                     .resizable()
-                    .frame(width: 64, height: 64)
+                    .frame(width: DietSize.avatarLG + DietSpace.md, height: DietSize.avatarLG + DietSpace.md)
+                    .padding(.bottom, DietSpace.xs)
             }
             Text(AppIdentity.name)
-                .font(.title).bold()
+                .font(DietType.title1).bold()
+                .foregroundStyle(DietColor.textPrimaryColor)
             Text("Version \(AppIdentity.version)")
-                .foregroundStyle(.secondary)
+                .font(DietType.body)
+                .foregroundStyle(DietColor.textSecondaryColor)
             Text(AppIdentity.bundleID)
-                .font(.caption).monospaced()
-                .foregroundStyle(.secondary)
+                .font(DietType.captionMono)
+                .foregroundStyle(DietColor.textSecondaryColor)
                 .textSelection(.enabled)
             Text("\(AppIdentity.tagline) — chat list, conversation, live updates.")
-                .font(.callout)
+                .font(DietType.callout)
                 .multilineTextAlignment(.center)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DietColor.textSecondaryColor)
+                .padding(.top, DietSpace.xs)
         }
-        .padding(24)
+        .padding(DietSpace.lg)
         .frame(width: 340)
+        .background(DietColor.windowColor)
     }
 }

@@ -10,6 +10,7 @@
 //
 // No Playwright/Chromium helper: native capture covers MFA/SSO/conditional
 // access (full interactive login), with far less to ship and sign.
+import DietDesign
 import SwiftUI
 import WebKit
 
@@ -113,12 +114,13 @@ public struct BrowserSignInView: View {
     }
 
     public var body: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: DietSpace.sm) {
             Text("Browser sign-in")
-                .font(.title2).bold()
+                .font(DietType.title2).bold()
+                .foregroundStyle(DietColor.textPrimaryColor)
             Text("Sign in with your work account — supports MFA and SSO. Session cookies persist for faster repeat sign-ins.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
+                .font(DietType.callout)
+                .foregroundStyle(DietColor.textSecondaryColor)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
             BrowserAuthWebView(
@@ -126,13 +128,12 @@ public struct BrowserSignInView: View {
                 redirectURI: info.redirectURI,
                 onRedirect: onRedirect)
                 .frame(minWidth: 420, minHeight: 380)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .clipShape(RoundedRectangle(cornerRadius: DietRadius.control))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(.quaternary, lineWidth: 1))
+                    RoundedRectangle(cornerRadius: DietRadius.control)
+                        .stroke(DietColor.dividerColor, lineWidth: 1))
             Button("Cancel") { onCancel() }
-                .buttonStyle(.link)
-                .foregroundStyle(.secondary)
+                .buttonStyle(.dietSecondary)
         }
     }
 }
@@ -149,33 +150,36 @@ public struct BrowserSignInDemoView: View {
     }
 
     public var body: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: DietSpace.sm) {
             Text("Browser sign-in")
-                .font(.title2).bold()
+                .font(DietType.title2).bold()
+                .foregroundStyle(DietColor.textPrimaryColor)
             Text("Sign in with your work account — supports MFA and SSO. Session cookies persist for faster repeat sign-ins.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
+                .font(DietType.callout)
+                .foregroundStyle(DietColor.textSecondaryColor)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
-            VStack(spacing: 8) {
+            VStack(spacing: DietSpace.sm) {
                 Image(systemName: "lock.shield.fill")
-                    .font(.system(size: 40))
-                    .foregroundStyle(.blue)
+                    .font(.system(size: DietSize.iconXL + DietSpace.sm))
+                    .foregroundStyle(Color(nsColor: DietColor.info))
                 Text("Microsoft sign-in page loads here")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+                    .font(DietType.callout)
+                    .foregroundStyle(DietColor.textSecondaryColor)
                 Text(info.authorizeURL)
-                    .font(.caption).monospaced()
-                    .foregroundStyle(.tertiary)
+                    .font(DietType.captionMono)
+                    .foregroundStyle(DietColor.textTertiaryColor)
                     .lineLimit(2)
                     .textSelection(.enabled)
             }
             .frame(minWidth: 420, minHeight: 380)
-            .background(.quaternary.opacity(0.3))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .background(DietColor.wellColor)
+            .clipShape(RoundedRectangle(cornerRadius: DietRadius.control))
+            .overlay(
+                RoundedRectangle(cornerRadius: DietRadius.control)
+                    .stroke(DietColor.dividerColor, lineWidth: 1))
             Button("Cancel") { onCancel() }
-                .buttonStyle(.link)
-                .foregroundStyle(.secondary)
+                .buttonStyle(.dietSecondary)
         }
     }
 }
