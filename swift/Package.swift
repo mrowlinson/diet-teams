@@ -26,7 +26,7 @@ let package = Package(
     ],
     targets: [
         .target(name: "COstMac", publicHeadersPath: "include"),
-        .target(name: "OstMacCore", dependencies: ["COstMac"]),
+        .target(name: "OstMacCore", dependencies: ["COstMac", "DietDesign"]),
         .target(name: "OstMacChatList", dependencies: ["OstMacCore"]),
         .target(name: "OstMacMCP", dependencies: ["OstMacCore"]),
         .target(name: "DietDesign"),
