@@ -117,6 +117,15 @@ public struct CatchUpSettingsSection: View {
             Text("The key is kept in your Mac keychain, never on disk.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            if catchUp.config.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Text("No key — the OpenCode CLI provider uses your `opencode auth login` (free tier).")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("Key set — uses direct HTTPS.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             Text(CatchUp.privacyNote)
                 .font(.caption)
                 .foregroundStyle(.secondary)
