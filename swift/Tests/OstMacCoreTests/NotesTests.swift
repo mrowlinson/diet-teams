@@ -275,4 +275,57 @@ final class NotesTests: XCTestCase {
         XCTAssertFalse(plain.contains("<p>"))
         XCTAssertTrue(plain.contains("oops"))
     }
+
+    // MARK: - Honest empty states (om-sharednotes)
+
+    func testContentStateBuckets() {
+        XCTAssertEqual(
+            NotesView.contentState(
+                notebooksEmpty: true, sectionsEmpty: true, loading: false),
+            .noNotebooks)
+        XCTAssertEqual(
+            NotesView.contentState(
+                notebooksEmpty: false, sectionsEmpty: true, loading: true),
+            .loadingSections)
+        XCTAssertEqual(
+            NotesView.contentState(
+                notebooksEmpty: false, sectionsEmpty: true, loading: false),
+            .noSections)
+        XCTAssertEqual(
+            NotesView.contentState(
+                notebooksEmpty: false, sectionsEmpty: false, loading: false),
+            .browse)
+    }
+
+    func testNoNotebooksBodyNamesScope() {
+        XCTAssertTrue(
+            NotesView.noNotebooksBody(groupID: nil).contains("You have no"))
+        XCTAssertTrue(
+            NotesView.noNotebooksBody(groupID: "team-9").contains("This team"))
+    }
+
+    func testDetailHintOnlyPromptsWhenSelectable() {
+        XCTAssertTrue(
+            NotesView.detailHint(sectionSelected: false, pagesEmpty: true)
+                .contains("Select a section"))
+        XCTAssertTrue(
+            NotesView.detailHint(sectionSelected: true, pagesEmpty: true)
+                .contains("no pages"))
+        XCTAssertEqual(
+            NotesView.detailHint(sectionSelected: true, pagesEmpty: false),
+            "Select a page.")
+    }
+
+    func testOpenEmptyNotebooksStaysHonest() async throws {
+        let store = NotesStore(fetchers: NotesStore.Fetchers(
+            notebooks: { _ in NotebooksResponse(ok: true, notebooks: []) },
+            sections: { _, _ in Self.sectionsJSON() },
+            page: { _, _ in Self.pageJSON() },
+            append: { id, _, _ in NoteAppendResponse(ok: true, id: id) }
+        ))
+        store.open(groupID: "team-9")
+        try await waitFor("loaded", store.state == .loaded)
+        XCTAssertTrue(store.notebooks.isEmpty) // view shows No notebooks
+        XCTAssertNil(store.selectedNotebookID)
+    }
 }

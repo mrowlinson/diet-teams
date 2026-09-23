@@ -234,7 +234,7 @@ public struct SharedFilesView: View {
                     .font(.largeTitle).foregroundStyle(.secondary)
                 Text("No shared files yet.")
                     .font(.headline)
-                Text("Files shared in this chat appear here.")
+                Text("Files shared in this conversation appear here.")
                     .font(.callout).foregroundStyle(.secondary)
                 Spacer()
             }

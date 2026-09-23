@@ -181,23 +181,41 @@ fn sender_of(msg: &GraphChatMessage) -> Option<String> {
         .and_then(|u| u.display_name.clone())
 }
 
+/// True when `id` is channel-shaped (`19:...@thread.tacv2`). Chat ids
+/// share the `19:` prefix but end `@thread.v2`, so the suffix is the
+/// scope discriminator: channels list/upload via the team filesFolder,
+/// chats via messages/attachments + the sender's OneDrive chat folder.
+/// Unknown shapes return false (chat path first, channel fallback).
+pub fn is_channel_id(id: &str) -> bool {
+    id.trim().ends_with("@thread.tacv2")
+}
+
 // -- List --
 
 /// List shared files for a chat id or a channel id.
 ///
-/// Tries the chat-messages/attachments path first (Graph
-/// `/me/chats/{id}/messages` + shares resolution), then falls back to the
-/// channel filesFolder path (team scan + `/drives/.../children`). Folders
-/// are skipped; only file driveItems are returned. Deduplicated by item id.
+/// Scope-aware order: channel-shaped ids try the channel filesFolder path
+/// first (team scan + `/drives/.../children`), chat-shaped ids the
+/// chat-messages/attachments path first (Graph `/me/chats/{id}/messages`
+/// + shares resolution); each falls back to the other path when its own
+/// fails (unknown id shapes still resolve). Folders are skipped; only
+/// file driveItems are returned. Deduplicated by item id.
 pub async fn list_chat_files_data(
     client: &TeamsClient,
     chat_id: &str,
     limit: usize,
 ) -> Result<Vec<SharedFile>> {
-    if let Ok(files) = list_via_chat_messages(client, chat_id, limit).await {
-        return Ok(files);
+    if is_channel_id(chat_id) {
+        if let Ok(files) = list_via_channel_folder(client, chat_id, limit).await {
+            return Ok(files);
+        }
+        list_via_chat_messages(client, chat_id, limit).await
+    } else {
+        if let Ok(files) = list_via_chat_messages(client, chat_id, limit).await {
+            return Ok(files);
+        }
+        list_via_channel_folder(client, chat_id, limit).await
     }
-    list_via_channel_folder(client, chat_id, limit).await
 }
 
 async fn list_via_chat_messages(
@@ -377,9 +395,11 @@ pub async fn upload_file_data(
         .filter(|s| !s.is_empty())
         .context("Local path has no file name")?;
 
-    // Channel ids upload to the channel folder; everything else to the
-    // sender's OneDrive chat-files folder.
-    if let Ok(team_id) = find_team_for_channel(client, chat_id).await {
+    // Channel-shaped ids upload to the channel folder; chat-shaped ids go
+    // straight to the sender's OneDrive chat-files folder with no team scan
+    // (the scan costs joinedTeams + one channels call per team).
+    if is_channel_id(chat_id) {
+        let team_id = find_team_for_channel(client, chat_id).await?;
         upload_to_channel(client, &team_id, chat_id, filename, bytes).await
     } else {
         upload_to_chat(client, chat_id, filename, bytes).await
@@ -594,5 +614,16 @@ mod tests {
     fn reference_attachment_requires_guid() {
         let item: DriveItem = serde_json::from_str(r#"{"id":"i1","eTag":"nope"}"#).unwrap();
         assert!(reference_attachment(&item, "f").is_err());
+    }
+
+    #[test]
+    fn channel_scope_is_tacv2_suffix() {
+        assert!(is_channel_id("19:general@thread.tacv2"));
+        assert!(is_channel_id("  19:abc@thread.tacv2  "));
+        assert!(!is_channel_id("19:abc@thread.v2"));
+        assert!(!is_channel_id("19:meeting_xyz@thread.v2"));
+        assert!(!is_channel_id(""));
+        assert!(!is_channel_id("19:general@thread.tacv2.evil"));
+        assert!(!is_channel_id("general"));
     }
 }

@@ -130,6 +130,15 @@ needing maintainer buy-in. Minor PRs stand alone; majors are separate PRs.
     --reply-to <id>`; `read` marks replies `(reply to <id>)`. Unit tests:
     snippet collapse/truncate (incl. multibyte boundary), build→split
     round-trip with escaping, malformed-quote cases.
+19. [minor] `src/api/files.rs` — **scope-aware chat/channel routing
+    (om-sharednotes lane)**. New `is_channel_id` (`@thread.tacv2` suffix;
+    chats share the `19:` prefix but end `@thread.v2`): list tries the
+    channel filesFolder path first for channel-shaped ids and the
+    chat-messages path first otherwise, each keeping the other as fallback.
+    Upload routes the same way, so chat uploads skip the team scan
+    (joinedTeams + one channels call per team) and channel uploads fail fast
+    with "no joined team contains channel" instead of mis-posting to the
+    OneDrive chat folder. Unit test: tacv2 suffix cases.
 
 ## Upstream PRs (2026-09-22, base 0892144; main red on sdp E0308 until #5)
 
