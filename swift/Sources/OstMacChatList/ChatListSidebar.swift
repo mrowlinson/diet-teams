@@ -37,11 +37,13 @@ public struct ChatListSidebar: View {
                         .foregroundStyle(DietColor.textSecondaryColor)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .transition(.opacity)
             case .empty:
                 DietEmptyState(
                     systemImage: "bubble.left.and.bubble.right",
                     title: "No chats",
                     message: "Your Teams conversations will appear here.")
+                    .transition(.opacity)
             case .error(let message):
                 DietEmptyState(
                     systemImage: "exclamationmark.triangle",
@@ -49,10 +51,15 @@ public struct ChatListSidebar: View {
                     message: message,
                     actionLabel: "Retry",
                     action: { model.refresh() })
+                    .transition(.opacity)
             case .loaded:
                 loadedList
+                    .transition(.opacity)
             }
         }
+        // System-default crossfade between content states (the loaded
+        // list lands softly instead of popping). Standard SwiftUI only.
+        .animation(.default, value: model.state)
     }
 
     private var loadedList: some View {
@@ -99,6 +106,11 @@ public struct ChatListSidebar: View {
                     }
                 }
                 .listStyle(.sidebar)
+                // System-default row animation for bubble-to-top moves,
+                // inserts, deletes, and filter changes. Keyed on row ids
+                // only, so in-place preview refreshes never shimmer the
+                // list. Standard SwiftUI only (no custom drivers).
+                .animation(.default, value: visible.map(\.id))
             }
         }
     }
