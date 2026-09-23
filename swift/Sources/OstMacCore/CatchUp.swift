@@ -5,17 +5,24 @@
 //
 // Contract:
 //   - OFF by default; nothing leaves the machine until the user enables
-//     it, enters their own key, and taps Summarize.
-//   - BYO key + provider picker (OpenAI-compatible | OpenCode) +
-//     configurable base URL + model.
+//     it and taps Summarize.
+//   - Provider picker (OpenCode CLI | OpenAI-compatible | OpenCode) +
+//     configurable base URL + model. OpenCode CLI is the default: with
+//     no key it shells out to `opencode run` (CLI auth covers the
+//     free-tier Spark model); with a key configured it uses direct
+//     HTTPS instead. Direct providers still require a key.
 //   - The key lives in the macOS keychain (service
 //     "dev.ostmac.OstMac.catchup", account "catchup-api-key"), never
 //     in UserDefaults/plist. The Settings key field writes keychain.
+//     The key is only used by the direct-HTTPS path.
 //   - The privacy note (thread text leaves the machine) shows in both
 //     Settings and the sheet, every time.
 //   - Tests inject a mock transport (same seam style as PresenceStore's
-//     fetchers) + a memory key store; live traffic goes through
-//     URLSessionCatchUpTransport.
+//     fetchers) + a memory key store; live direct traffic goes through
+//     URLSessionCatchUpTransport, live CLI traffic through
+//     OpenCodeCLICatchUpTransport + an injected CatchUpCLIRunner.
+//   - Every failure surfaces in the UI as .failed(detail); nothing
+//     fails silently.
 //
 // OpenCode discovery (opencode.ai, 2026-09-22):
 //   - Config file: opencode.json — {"$schema":
@@ -107,6 +114,7 @@ public enum CatchUp {
 public enum CatchUpProvider: String, Sendable, Equatable, CaseIterable, Identifiable {
     case openAICompatible = "openai-compatible"
     case openCode = "opencode"
+    case openCodeCLI = "opencode-cli"
 
     public var id: String { rawValue }
 
@@ -114,6 +122,7 @@ public enum CatchUpProvider: String, Sendable, Equatable, CaseIterable, Identifi
         switch self {
         case .openAICompatible: "OpenAI-compatible"
         case .openCode: "OpenCode"
+        case .openCodeCLI: "OpenCode CLI"
         }
     }
 
@@ -121,6 +130,7 @@ public enum CatchUpProvider: String, Sendable, Equatable, CaseIterable, Identifi
         switch self {
         case .openAICompatible: "https://api.openai.com/v1"
         case .openCode: "https://opencode.ai/zen/v1"
+        case .openCodeCLI: "https://opencode.ai/zen/v1"
         }
     }
 
@@ -128,6 +138,7 @@ public enum CatchUpProvider: String, Sendable, Equatable, CaseIterable, Identifi
         switch self {
         case .openAICompatible: "gpt-4o-mini"
         case .openCode: "muse-spark-1.3-contributor-free"
+        case .openCodeCLI: "muse-spark-1.3-contributor-free"
         }
     }
 }
@@ -143,10 +154,10 @@ public struct CatchUpConfig: Sendable, Equatable {
     public var apiKey: String
 
     public init(
-        provider: CatchUpProvider = .openAICompatible,
+        provider: CatchUpProvider = .openCodeCLI,
         enabled: Bool = false,
-        baseURL: String = "https://api.openai.com/v1",
-        model: String = "gpt-4o-mini",
+        baseURL: String = "https://opencode.ai/zen/v1",
+        model: String = "muse-spark-1.3-contributor-free",
         apiKey: String = ""
     ) {
         self.provider = provider
@@ -174,6 +185,10 @@ public enum CatchUpError: Error, Sendable, Equatable {
     case badURL
     case empty
     case server(String)
+    case cliMissing
+    case cliAuthExpired
+    case cliTimeout
+    case cliBadOutput
 
     public var message: String {
         switch self {
@@ -182,6 +197,10 @@ public enum CatchUpError: Error, Sendable, Equatable {
         case .badURL: "Bad base URL. Check it in Settings."
         case .empty: "The endpoint returned an empty summary."
         case let .server(detail): "Catch-up failed: \(detail)"
+        case .cliMissing: "opencode CLI not found. Install it from opencode.ai and retry (or add an API key for direct HTTPS)."
+        case .cliAuthExpired: "OpenCode CLI login expired. Run `opencode auth login` and retry."
+        case .cliTimeout: "OpenCode CLI timed out. Retry."
+        case .cliBadOutput: "OpenCode CLI returned unreadable output. Retry."
         }
     }
 }
@@ -332,6 +351,242 @@ public final class CatchUpCannedTransport: CatchUpTransport, @unchecked Sendable
     }
 }
 
+// MARK: - OpenCode CLI path
+
+/// Pure CLI helpers: argv shape, auth-failure sniffing, JSON output
+/// parsing. `opencode run --format json` emits JSON (one object per
+/// line for streaming events); the summary is the last assistant
+/// message payload we can find.
+public enum CatchUpCLI {
+    public static let executable = "opencode"
+    public static let defaultTimeoutSeconds: Double = 60
+
+    public static func arguments(model: String, prompt: String) -> [String] {
+        ["run", "--format", "json", "--model", model, prompt]
+    }
+
+    /// True when a nonzero-exit blob looks like expired/missing CLI
+    /// auth rather than a generic failure. Only called on failure
+    /// output, never on a successful summary.
+    public static func isAuthFailure(stderr: String, stdout: String) -> Bool {
+        let blob = (stderr + "\n" + stdout).lowercased()
+        return blob.contains("unauthorized")
+            || blob.contains("unauthenticated")
+            || blob.contains("auth")
+            || blob.contains("login")
+            || blob.contains("expired")
+            || blob.contains("invalid key")
+            || blob.contains("invalid api key")
+            || blob.contains("forbidden")
+            || blob.contains(" 401")
+            || blob.contains(" 403")
+    }
+
+    /// Extract the summary text from `opencode run --format json`
+    /// stdout. Accepts a single JSON object or JSON lines; picks the
+    /// last non-empty assistant payload. Throws .cliBadOutput when
+    /// nothing parses or nothing usable is found.
+    public static func parseOutput(_ stdout: String) throws -> String {
+        let trimmed = stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw CatchUpError.cliBadOutput }
+        var candidates: [String] = []
+        // Whole-blob first (single JSON object), then line by line
+        // (streaming JSONL events).
+        var blobs = [trimmed]
+        blobs.append(contentsOf: trimmed.components(separatedBy: "\n"))
+        for blob in blobs {
+            let line = blob.trimmingCharacters(in: .whitespaces)
+            guard line.hasPrefix("{"), let data = line.data(using: .utf8),
+                  let json = try? JSONSerialization.jsonObject(with: data)
+            else { continue }
+            if let found = extractText(from: json), !found.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                candidates.append(found)
+            }
+        }
+        guard let last = candidates.last else { throw CatchUpError.cliBadOutput }
+        return last
+    }
+
+    private static func extractText(from json: Any) -> String? {
+        guard let obj = json as? [String: Any] else { return nil }
+        // Streaming event: {"type":"message","role":"assistant","content":...}
+        if let type = obj["type"] as? String, type == "message" {
+            if let role = obj["role"] as? String, role != "assistant" { return nil }
+            return stringOrBlockText(obj["content"])
+        }
+        // Direct payload keys.
+        for key in ["content", "text", "result", "output", "summary"] {
+            if let s = stringOrBlockText(obj[key]), !s.isEmpty { return s }
+        }
+        // OpenAI-compatible shape.
+        if let choices = obj["choices"] as? [[String: Any]],
+           let message = choices.first?["message"] as? [String: Any],
+           let s = stringOrBlockText(message["content"]), !s.isEmpty
+        {
+            return s
+        }
+        // Message list: last assistant wins.
+        if let messages = obj["messages"] as? [[String: Any]] {
+            for message in messages.reversed() {
+                let role = message["role"] as? String
+                if role == nil || role == "assistant",
+                   let s = stringOrBlockText(message["content"]), !s.isEmpty
+                {
+                    return s
+                }
+            }
+        }
+        return nil
+    }
+
+    private static func stringOrBlockText(_ value: Any?) -> String? {
+        if let s = value as? String, !s.isEmpty { return s }
+        if let blocks = value as? [[String: Any]] {
+            let parts = blocks.compactMap { $0["text"] as? String }.filter { !$0.isEmpty }
+            if !parts.isEmpty { return parts.joined(separator: "\n") }
+        }
+        return nil
+    }
+}
+
+/// Captured CLI run: stdout + stderr + exit code.
+public struct CatchUpCLIResult: Sendable, Equatable {
+    public var stdout: String
+    public var stderr: String
+    public var exitCode: Int32
+
+    public init(stdout: String, stderr: String, exitCode: Int32) {
+        self.stdout = stdout
+        self.stderr = stderr
+        self.exitCode = exitCode
+    }
+}
+
+/// Shell-out seam. Live = Process; tests inject
+/// `CatchUpMockCLIRunner` and never spawn.
+public protocol CatchUpCLIRunner: Sendable {
+    func run(model: String, prompt: String, timeoutSeconds: Double) async throws -> CatchUpCLIResult
+}
+
+/// Live runner: resolves `opencode` on PATH (+ brew locations GUI
+/// apps miss), runs `opencode run --format json --model <m> <prompt>`
+/// with a timeout, captures stdout/stderr.
+public struct ProcessCatchUpCLIRunner: CatchUpCLIRunner {
+    public init() {}
+
+    public func run(model: String, prompt: String, timeoutSeconds: Double) async throws -> CatchUpCLIResult {
+        guard let executableURL = Self.resolveExecutable() else {
+            throw CatchUpError.cliMissing
+        }
+        let process = Process()
+        process.executableURL = executableURL
+        process.arguments = CatchUpCLI.arguments(model: model, prompt: prompt)
+        let outPipe = Pipe()
+        let errPipe = Pipe()
+        process.standardOutput = outPipe
+        process.standardError = errPipe
+        do {
+            try process.run()
+        } catch {
+            throw CatchUpError.cliMissing
+        }
+        let deadline = Date().addingTimeInterval(timeoutSeconds)
+        while process.isRunning {
+            if Date() > deadline {
+                process.terminate()
+                // Brief grace, then force.
+                try? await Task.sleep(nanoseconds: 200_000_000)
+                if process.isRunning { process.interrupt() }
+                throw CatchUpError.cliTimeout
+            }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
+        let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+        return CatchUpCLIResult(
+            stdout: String(data: outData, encoding: .utf8) ?? "",
+            stderr: String(data: errData, encoding: .utf8) ?? "",
+            exitCode: process.terminationStatus)
+    }
+
+    static func resolveExecutable() -> URL? {
+        let fm = FileManager.default
+        var dirs = (ProcessInfo.processInfo.environment["PATH"] ?? "")
+            .components(separatedBy: ":").filter { !$0.isEmpty }
+        for extra in ["/opt/homebrew/bin", "/usr/local/bin", "/opt/local/bin"] where !dirs.contains(extra) {
+            dirs.append(extra)
+        }
+        for dir in dirs {
+            let url = URL(fileURLWithPath: dir).appendingPathComponent(CatchUpCLI.executable)
+            if fm.isExecutableFile(atPath: url.path) { return url }
+        }
+        return nil
+    }
+}
+
+/// Mock CLI runner for tests. Records every (model, prompt) call;
+/// returns `result` or throws `failure`.
+public final class CatchUpMockCLIRunner: CatchUpCLIRunner, @unchecked Sendable {
+    public private(set) var calls: [(model: String, prompt: String)] = []
+    public var result: CatchUpCLIResult?
+    public var failure: Error?
+
+    public init(result: CatchUpCLIResult? = nil, failure: Error? = nil) {
+        self.result = result
+        self.failure = failure
+    }
+
+    public func run(model: String, prompt: String, timeoutSeconds _: Double) async throws -> CatchUpCLIResult {
+        calls.append((model: model, prompt: prompt))
+        if let failure { throw failure }
+        return result ?? CatchUpCLIResult(stdout: "", stderr: "", exitCode: 0)
+    }
+}
+
+/// CLI transport: shells out via the injected runner, maps the four
+/// CLI modes (missing / auth-expiry / timeout / bad output) to
+/// CatchUpError, surfaces everything — never silent.
+public struct OpenCodeCLICatchUpTransport: CatchUpTransport {
+    public let runner: any CatchUpCLIRunner
+    public let timeoutSeconds: Double
+
+    public init(
+        runner: (any CatchUpCLIRunner)? = nil,
+        timeoutSeconds: Double = CatchUpCLI.defaultTimeoutSeconds
+    ) {
+        self.runner = runner ?? ProcessCatchUpCLIRunner()
+        self.timeoutSeconds = timeoutSeconds
+    }
+
+    public func complete(baseURL _: String, apiKey _: String, model: String, prompt: String) async throws -> String {
+        let res: CatchUpCLIResult
+        do {
+            res = try await runner.run(model: model, prompt: prompt, timeoutSeconds: timeoutSeconds)
+        } catch let e as CatchUpError {
+            throw e
+        } catch {
+            throw CatchUpError.server(String(describing: error))
+        }
+        if res.exitCode != 0 {
+            if CatchUpCLI.isAuthFailure(stderr: res.stderr, stdout: res.stdout) {
+                throw CatchUpError.cliAuthExpired
+            }
+            if res.exitCode == 127
+                && (res.stderr + res.stdout).lowercased().contains(CatchUpCLI.executable)
+            {
+                throw CatchUpError.cliMissing
+            }
+            let detail = res.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+            throw CatchUpError.server("opencode CLI failed: \(detail.isEmpty ? "exit \(res.exitCode)" : String(detail.prefix(300)))")
+        }
+        let text = try CatchUpCLI.parseOutput(res.stdout)
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw CatchUpError.empty
+        }
+        return text
+    }
+}
+
 // MARK: - Store
 
 /// Catch-up state for the app. Non-secret config persists in
@@ -364,6 +619,7 @@ public final class CatchUpStore: ObservableObject {
     @Published public private(set) var state: State = .idle
 
     private let transport: any CatchUpTransport
+    private let cliTransport: any CatchUpTransport
     private let defaults: UserDefaults
     private let keys: any CatchUpKeyStore
 
@@ -371,10 +627,12 @@ public final class CatchUpStore: ObservableObject {
     /// their (nonisolated) inits; all members stay main-actor-isolated.
     public nonisolated init(
         transport: (any CatchUpTransport)? = nil,
+        cliTransport: (any CatchUpTransport)? = nil,
         defaults: UserDefaults = .standard,
         keyStore: (any CatchUpKeyStore)? = nil
     ) {
         self.transport = transport ?? URLSessionCatchUpTransport()
+        self.cliTransport = cliTransport ?? OpenCodeCLICatchUpTransport()
         self.defaults = defaults
         let keys = keyStore ?? CatchUpSystemKeychain()
         self.keys = keys
@@ -400,11 +658,15 @@ public final class CatchUpStore: ObservableObject {
         _state = Published(initialValue: .idle)
     }
 
-    /// Summarize the given messages. Disabled/empty-key/empty-thread all
-    /// fail WITHOUT touching the transport (no traffic while OFF).
+    /// Summarize the given messages. Disabled/empty-thread always fail
+    /// WITHOUT touching either transport. Provider select: the CLI
+    /// provider (default) shells out with no key and uses direct HTTPS
+    /// when a key is configured; direct providers require a key and
+    /// fail with missingKey WITHOUT touching the transport.
     public func summarize(messages: [ChatMessage]) async {
         guard config.enabled else { state = .failed(CatchUpError.off.message); return }
-        guard !config.apiKey.trimmingCharacters(in: .whitespaces).isEmpty else {
+        let hasKey = !config.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if config.provider != .openCodeCLI, !hasKey {
             state = .failed(CatchUpError.missingKey.message)
             return
         }
@@ -415,7 +677,10 @@ public final class CatchUpStore: ObservableObject {
         }
         state = .loading
         do {
-            let text = try await transport.complete(
+            // CLI default; direct HTTPS when a key is configured.
+            let useDirect = config.provider != .openCodeCLI || hasKey
+            let active: any CatchUpTransport = useDirect ? transport : cliTransport
+            let text = try await active.complete(
                 baseURL: config.baseURL, apiKey: config.apiKey,
                 model: config.model, prompt: CatchUp.prompt(transcript: transcript))
             state = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty

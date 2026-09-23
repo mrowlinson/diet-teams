@@ -34,44 +34,55 @@ final class CatchUpTests: XCTestCase {
 
     private func store(
         transport: (any CatchUpTransport)? = nil,
+        cliTransport: (any CatchUpTransport)? = nil,
         keys: CatchUpMemoryKeyStore? = nil
     ) -> (CatchUpStore, CatchUpMemoryKeyStore) {
         let k = keys ?? CatchUpMemoryKeyStore()
-        return (CatchUpStore(transport: transport, defaults: defaults, keyStore: k), k)
+        return (CatchUpStore(transport: transport, cliTransport: cliTransport, defaults: defaults, keyStore: k), k)
     }
 
     func testDefaultsOff() {
         let (store, _) = store()
         XCTAssertFalse(store.config.enabled)
-        XCTAssertEqual(store.config.provider, .openAICompatible)
+        XCTAssertEqual(store.config.provider, .openCodeCLI)
+        XCTAssertEqual(store.config.baseURL, "https://opencode.ai/zen/v1")
+        XCTAssertEqual(store.config.model, "muse-spark-1.3-contributor-free")
         XCTAssertEqual(store.config.apiKey, "")
         XCTAssertEqual(store.state, .idle)
     }
 
     func testDisabledNeverCallsTransport() async {
         let mock = CatchUpCannedTransport(stub: "SHOULD NOT APPEAR")
-        let (store, _) = store(transport: mock)
+        let cliMock = CatchUpCannedTransport(stub: "SHOULD NOT APPEAR")
+        let (store, _) = store(transport: mock, cliTransport: cliMock)
         store.adopt(CatchUpConfig(enabled: false, apiKey: "k"))
         await store.summarize(messages: thread(25))
         XCTAssertTrue(mock.prompts.isEmpty)
+        XCTAssertTrue(cliMock.prompts.isEmpty)
         XCTAssertEqual(store.state, .failed(CatchUpError.off.message))
     }
 
     func testMissingKeyFailsWithoutCalling() async {
         let mock = CatchUpCannedTransport(stub: "SHOULD NOT APPEAR")
-        let (store, _) = store(transport: mock)
-        store.adopt(CatchUpConfig(enabled: true, apiKey: "  "))
+        let cliMock = CatchUpCannedTransport(stub: "SHOULD NOT APPEAR")
+        let (store, _) = store(transport: mock, cliTransport: cliMock)
+        // Direct providers still require a key (CLI provider falls
+        // through to the shell-out instead — see CatchUpCLITests).
+        store.adopt(CatchUpConfig(provider: .openAICompatible, enabled: true, apiKey: "  "))
         await store.summarize(messages: thread(25))
         XCTAssertTrue(mock.prompts.isEmpty)
+        XCTAssertTrue(cliMock.prompts.isEmpty)
         XCTAssertEqual(store.state, .failed(CatchUpError.missingKey.message))
     }
 
     func testEmptyThreadFailsWithoutCalling() async {
         let mock = CatchUpCannedTransport(stub: "SHOULD NOT APPEAR")
-        let (store, _) = store(transport: mock)
+        let cliMock = CatchUpCannedTransport(stub: "SHOULD NOT APPEAR")
+        let (store, _) = store(transport: mock, cliTransport: cliMock)
         store.adopt(CatchUpConfig(enabled: true, apiKey: "k"))
         await store.summarize(messages: [])
         XCTAssertTrue(mock.prompts.isEmpty)
+        XCTAssertTrue(cliMock.prompts.isEmpty)
         if case .failed = store.state {} else {
             XCTFail("expected .failed, got \(store.state)")
         }
@@ -79,16 +90,19 @@ final class CatchUpTests: XCTestCase {
 
     func testMockSuccessLoadsText() async {
         let mock = CatchUpCannedTransport(stub: "TL;DR: standup happened.")
-        let (store, _) = store(transport: mock)
+        let cliMock = CatchUpCannedTransport(stub: "SHOULD NOT APPEAR")
+        let (store, _) = store(transport: mock, cliTransport: cliMock)
         store.adopt(CatchUpConfig(enabled: true, apiKey: "k"))
         await store.summarize(messages: thread(25))
         XCTAssertEqual(mock.prompts.count, 1)
+        XCTAssertTrue(cliMock.prompts.isEmpty)
         XCTAssertEqual(store.state, .loaded("TL;DR: standup happened."))
     }
 
     func testPromptCarriesTranscriptAndSections() async {
         let mock = CatchUpCannedTransport(stub: "ok")
-        let (store, _) = store(transport: mock)
+        let cliMock = CatchUpCannedTransport(stub: "SHOULD NOT APPEAR")
+        let (store, _) = store(transport: mock, cliTransport: cliMock)
         store.adopt(CatchUpConfig(enabled: true, apiKey: "k"))
         let msgs = [
             ChatMessage(id: "m1", sender: "Priya", timestamp: "t", content: "ship the picker"),
@@ -96,6 +110,7 @@ final class CatchUpTests: XCTestCase {
         ]
         await store.summarize(messages: msgs)
         XCTAssertEqual(mock.prompts.count, 1)
+        XCTAssertTrue(cliMock.prompts.isEmpty)
         let prompt = mock.prompts[0]
         XCTAssertTrue(prompt.contains("TL;DR"))
         XCTAssertTrue(prompt.contains("Key points"))
@@ -108,9 +123,11 @@ final class CatchUpTests: XCTestCase {
     func testTransportErrorSurfacesFailed() async {
         struct Boom: Error {}
         let mock = CatchUpCannedTransport(stub: "", failure: Boom())
-        let (store, _) = store(transport: mock)
+        let cliMock = CatchUpCannedTransport(stub: "SHOULD NOT APPEAR")
+        let (store, _) = store(transport: mock, cliTransport: cliMock)
         store.adopt(CatchUpConfig(enabled: true, apiKey: "k"))
         await store.summarize(messages: thread(25))
+        XCTAssertTrue(cliMock.prompts.isEmpty)
         if case .failed = store.state {} else {
             XCTFail("expected .failed, got \(store.state)")
         }
@@ -226,10 +243,12 @@ final class CatchUpTests: XCTestCase {
 
     func testNoKeyInStoreMeansMissingKey() async {
         let mock = CatchUpCannedTransport(stub: "SHOULD NOT APPEAR")
-        let (store, _) = store(transport: mock)
-        store.adopt(CatchUpConfig(enabled: true, apiKey: ""))
+        let cliMock = CatchUpCannedTransport(stub: "SHOULD NOT APPEAR")
+        let (store, _) = store(transport: mock, cliTransport: cliMock)
+        store.adopt(CatchUpConfig(provider: .openCode, enabled: true, apiKey: ""))
         await store.summarize(messages: thread(25))
         XCTAssertTrue(mock.prompts.isEmpty)
+        XCTAssertTrue(cliMock.prompts.isEmpty)
         XCTAssertEqual(store.state, .failed(CatchUpError.missingKey.message))
     }
 
