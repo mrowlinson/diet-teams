@@ -1,4 +1,4 @@
-// ConversationView.swift — om-conv/om-convrich/om-shared/om-notes/om-cmdk/om-catchup/om-reactions/om-msgactions/om-replies: SwiftUI chat window.
+// ConversationView.swift — om-conv/om-convrich/om-shared/om-notes/om-cmdk/om-catchup/om-reactions/om-msgactions/om-replies/om-react-polish: SwiftUI chat window.
 // Rich bubbles (mentions, code spans, links), day separators, scroll-up
 // load-more paging, edited markers, failed-send retry, Shared files + Notes tabs,
 // GIF picker + thread catch-up + reaction picker/counts + copy/forward/save bubble menu,
@@ -108,6 +108,13 @@ public struct ConversationView: View {
                         store.openIfNeeded()
                         scrollToBottom(proxy, animated: false)
                         lastSeenID = store.messages.last?.id
+                        // Shot hook: --show-picker pops the more-picker
+                        // on the first reacted bubble (or the first
+                        // bubble). Messages arrive after open, so the id
+                        // resolves at fire time with a few retries.
+                        if CommandLine.arguments.contains("--show-picker") {
+                            Self.postPickerShot(store: store, tries: 8)
+                        }
                     }
                 }
                 DietSeamH()
@@ -323,6 +330,21 @@ public struct ConversationView: View {
         draft.isEmpty ? url : "\(draft) \(url)"
     }
 
+    /// --show-picker driver: resolve the target bubble once messages
+    /// exist, then ask its anchor to open the more-picker.
+    private static func postPickerShot(store: ConversationStore, tries: Int) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            let id = store.messages.first(where: { !$0.reactions.isEmpty })?.id
+                ?? store.messages.first?.id
+            if let id {
+                NotificationCenter.default.post(
+                    name: ReactionMenuAnchorView.shotPickerNote, object: id)
+            } else if tries > 1 {
+                postPickerShot(store: store, tries: tries - 1)
+            }
+        }
+    }
+
     /// Auto-scroll only when the tail actually advanced (new message), never
     /// for top-prepended history pages (count grows but last id is stable).
     private func scrollOnNew(_ proxy: ScrollViewProxy) {
@@ -380,15 +402,16 @@ struct MessageBubble: View {
                     let rendered = MessageRender.renderText(for: message)
                     let images = MessageRender.images(fromRaw: message.raw)
                     if !rendered.isEmpty {
-                        // No .textSelection: selectable Text owns the
-                        // system menu and SwiftUI does not merge custom
-                        // items into it, so selection would hide the
-                        // picker on the words. Copy lives in the bubble
-                        // menu instead (full message; partial selection
-                        // awaits a TextKit-backed bubble).
+                        // Selectable AND custom-menu: the bridge's local
+                        // monitor swallows bubble right-clicks (popping
+                        // our menu), so selection never hides the picker;
+                        // left-drag selects, right-click reacts, Cmd+C
+                        // copies the selection, and the bubble menu's Copy
+                        // still takes the full message.
                         Text(MessageRender.attributedBody(for: message))
                             .font(DietType.body)
                             .tint(.accentColor)
+                            .textSelection(.enabled)
                     }
                     let emoticons = images.filter(\.isEmoticon)
                     let photos = images.filter { !$0.isEmoticon }
@@ -445,6 +468,10 @@ struct MessageBubble: View {
         }
         if !message.isOwn { Spacer(minLength: DietSpace.xxl) }
         }
+        // Badge clearance: reacted bubbles reserve the badges' overhang
+        // above (same constant the menu hit rect uses), so tapbacks never
+        // collide with the message above.
+        .padding(.top, message.reactions.isEmpty ? 0 : ReactionMenuAnchorView.badgeOverhang)
     }
 
     /// "Remove 👍" when the bubble already shows it, else "React 👍".

@@ -49,12 +49,16 @@ final class ReactionsTests: XCTestCase {
         XCTAssertTrue(store.messages[0].reactions.isEmpty)
     }
 
-    func testReactRejectsUnknownEmojiAndID() {
+    func testReactRejectsBadEmojiAndUnknownID() {
+        // CONTRACT CHANGE (om-react-polish): the more-picker accepts any
+        // single emoji (🎉 now reacts in demo — see ReactionPickerTests),
+        // so rejection pins empty/multi-char strings instead of 🎉.
         let store = ConversationStore.demo()
         let id = store.messages[0].id
-        store.react(messageID: id, emoji: "🎉")
-        XCTAssertTrue(store.messages[0].reactions.isEmpty)
-        store.toggleReaction(messageID: id, emoji: "🎉")
+        store.react(messageID: id, emoji: "")
+        store.toggleReaction(messageID: id, emoji: "")
+        store.toggleReaction(messageID: id, emoji: "ab")
+        store.toggleReaction(messageID: id, emoji: "👍👍")
         XCTAssertTrue(store.messages[0].reactions.isEmpty)
         store.toggleReaction(messageID: "nope", emoji: "👍")
         XCTAssertEqual(store.messages.count, ConversationStore.demoMessages.count)
