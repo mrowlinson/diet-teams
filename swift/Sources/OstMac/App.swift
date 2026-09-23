@@ -17,6 +17,7 @@
 // --say auto-sends once into the open chat. In live mode that is a REAL
 // send via core — never use it on shared chats for testing.
 // --show-about / --show-settings / --show-av open those windows at launch (shot hooks).
+// --av-mic-denied seeds the Call A/V panel's mic-denied hint (shot hook).
 // --show-teams opens the sidebar on the Teams browser (shot hook).
 // --show-shared opens the conversation on the Shared files tab (shot hook).
 // --show-reminders opens the sidebar on the Reminders browser (shot hook).

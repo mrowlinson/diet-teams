@@ -5,6 +5,10 @@
 // Blocking core calls run via Task.detached; state publishes on-main.
 // om-reskin-call: DietDesign cards (section cards, button styles,
 // type/space/color tokens; same model, same actions).
+// om-avfix: mic TCC gate (one .audio prompt on Test; probe/meter wait
+// for the grant; denial hint + Settings link), unknown_device
+// rescan+heal (empty-list wedge keeps the pick, true unplug heals to
+// the default).
 import DietDesign
 import SwiftUI
 
@@ -67,9 +71,55 @@ public enum AvSummary {
         return m
     }
 
+    /// True when a core error is a stale device pick (unknown_device).
+    public static func isUnknownDevice(_ e: Error) -> Bool {
+        guard case let CoreCallError.failed(m) = e else { return false }
+        return m.contains("unknown_device")
+    }
+
+    /// Mic TCC denial -> human line + where to fix it.
+    public static let micDenied =
+        "Microphone denied — allow Diet Teams in System Settings › Privacy & Security › Microphone"
+
+    /// True-unplug heal: the pick is gone, the panel switched to the default.
+    public static func healedMic(_ fallback: String?) -> String {
+        "Device unplugged — switched to \(fallback ?? "System Default")"
+    }
+
+    public static func healedSpeaker(_ fallback: String?) -> String {
+        "Device unplugged — switched to \(fallback ?? "System Default")"
+    }
+
+    /// Empty-list wedge: the rescan found nothing (HAL wedge, not a true
+    /// unplug) — the pick is kept, Rescan retries.
+    public static func wedgeKept(_ pick: String?) -> String {
+        "No devices found — kept \(pick ?? "selection") (Rescan to retry)"
+    }
+
+    /// The stale pick is back in the fresh list (transient error).
+    public static let deviceBack = "Device available again — retry the test"
+
+    /// Probe placeholder until the Test-owned mic grant lands.
+    public static let probePending = "pending mic access"
+
     private static func rest(after prefix: String, in s: String) -> String? {
         guard s.hasPrefix(prefix) else { return nil }
         return String(s.dropFirst(prefix.count))
+    }
+}
+
+/// Stale-pick heal decision after a rescan (unit-tested).
+public enum AvHeal {
+    public enum Action: Equatable, Sendable {
+        case valid // pick present in the fresh list (transient error)
+        case wedge // fresh list empty (HAL wedge) — keep the pick
+        case unplugged // fresh list non-empty, pick missing — heal to default
+    }
+
+    public static func action(pick: String?, devices: [String]) -> Action {
+        guard let pick, !pick.isEmpty else { return .valid }
+        if devices.contains(pick) { return .valid }
+        return devices.isEmpty ? .wedge : .unplugged
     }
 }
 
@@ -100,6 +150,14 @@ public final class AvPanelModel: ObservableObject {
     @Published public var level = 0.0
     @Published public var levelLive = false
 
+    // Mic TCC denial: the panel shows the fix-it hint until granted.
+    @Published public var micDenied = false
+    /// --av-mic-denied shot hook: seed + hold the denial state.
+    private let denyPreview: Bool
+    /// unknown_device follow-up: which pick the rescan must heal.
+    private enum HealKind { case mic, speaker }
+    private var pendingHeal: HealKind?
+
     // Diagnostics (collapsed by default; raw core output lives here).
     @Published public var diagExpanded = false
     @Published public var caps = "—"
@@ -117,6 +175,12 @@ public final class AvPanelModel: ObservableObject {
     public init() {
         micDevice = UserDefaults.standard.string(forKey: Self.micKey)
         speakerDevice = UserDefaults.standard.string(forKey: Self.speakerKey)
+        denyPreview = CommandLine.arguments.contains("--av-mic-denied")
+        if denyPreview {
+            micDenied = true
+            micPhase = .failed
+            micResult = AvSummary.micDenied
+        }
     }
 
     /// Off-main runner: `work` runs detached, `apply` publishes on-main.
@@ -145,9 +209,11 @@ public final class AvPanelModel: ObservableObject {
                 // Adopt the system default only when the user never picked.
                 if self.micDevice == nil { self.micDevice = d.default_input }
                 if self.speakerDevice == nil { self.speakerDevice = d.default_output }
+                self.drainHeal(devices: d)
             case .failure:
                 self.micDevices = []
                 self.speakerDevices = []
+                self.drainHeal(devices: nil)
             }
             self.devicesLoaded = true
             // Chained after enumeration so CoreAudio setup never contends
@@ -155,6 +221,37 @@ public final class AvPanelModel: ObservableObject {
             self.refreshProbe()
             self.startLevelPolling()
         }, work: { try RustCore.audioDevices() })
+    }
+
+    /// unknown_device follow-up: the rescan just landed — heal a true
+    /// unplug to the system default, keep the pick on a wedge/empty list.
+    private func drainHeal(devices d: AudioDevices?) {
+        guard let kind = pendingHeal else { return }
+        pendingHeal = nil
+        switch kind {
+        case .mic:
+            micPhase = .failed
+            switch AvHeal.action(pick: micDevice, devices: d?.inputs ?? []) {
+            case .valid:
+                micResult = AvSummary.deviceBack
+            case .wedge:
+                micResult = AvSummary.wedgeKept(micDevice)
+            case .unplugged:
+                micDevice = d?.default_input
+                micResult = AvSummary.healedMic(d?.default_input)
+            }
+        case .speaker:
+            speakerPhase = .failed
+            switch AvHeal.action(pick: speakerDevice, devices: d?.outputs ?? []) {
+            case .valid:
+                speakerResult = AvSummary.deviceBack
+            case .wedge:
+                speakerResult = AvSummary.wedgeKept(speakerDevice)
+            case .unplugged:
+                speakerDevice = d?.default_output
+                speakerResult = AvSummary.healedSpeaker(d?.default_output)
+            }
+        }
     }
 
     /// Unplug/replug recovery: stop the meter, rescan, restart it.
@@ -182,6 +279,20 @@ public final class AvPanelModel: ObservableObject {
         // Meter waits for the device scan, then yields to the mic test
         // (it owns the input stream while recording); resumes after.
         guard devicesLoaded, !levelSampling, micPhase != .running else { return }
+        // TCC gate (prompt-free): denial flats the meter + raises the panel
+        // hint; not-determined idles — the Test button owns the one prompt.
+        if MicAccess.denied {
+            micDenied = true
+            levelLive = false
+            level = 0
+            return
+        }
+        guard MicAccess.status() == .authorized else {
+            levelLive = false
+            level = 0
+            return
+        }
+        if !denyPreview { micDenied = false }
         levelSampling = true
         let input = micDevice
         run({ [weak self] (r: Result<MicLevel, Error>) in
@@ -203,20 +314,38 @@ public final class AvPanelModel: ObservableObject {
     public func runMicTest() {
         guard micPhase != .running else { return }
         micPhase = .running
-        micResult = "Recording 3s…"
-        let input = micDevice
-        let output = speakerDevice
-        run({ [weak self] (r: Result<MicTestResult, Error>) in
-            guard let self else { return }
-            switch r {
-            case let .success(v):
-                self.micPhase = .done
-                self.micResult = AvSummary.micTest(v)
-            case let .failure(e):
-                self.micPhase = .failed
-                self.micResult = AvSummary.friendlyError(e)
+        micResult = "Requesting microphone…"
+        // The one mic prompt (mirrors startCamera): denial lands in the
+        // panel with the Settings hint instead of a core no_input error.
+        Task {
+            guard await MicAccess.requestAccess() else {
+                micDenied = true
+                micPhase = .failed
+                micResult = AvSummary.micDenied
+                return
             }
-        }, work: { try RustCore.micTestOn(seconds: 3, input: input, output: output) })
+            micDenied = false
+            micResult = "Recording 3s…"
+            let input = micDevice
+            let output = speakerDevice
+            run({ [weak self] (r: Result<MicTestResult, Error>) in
+                guard let self else { return }
+                switch r {
+                case let .success(v):
+                    self.micPhase = .done
+                    self.micResult = AvSummary.micTest(v)
+                case let .failure(e):
+                    if AvSummary.isUnknownDevice(e), self.pendingHeal == nil {
+                        self.pendingHeal = .mic
+                        self.micResult = "Rescanning devices…"
+                        self.rescanDevices()
+                    } else {
+                        self.micPhase = .failed
+                        self.micResult = AvSummary.friendlyError(e)
+                    }
+                }
+            }, work: { try RustCore.micTestOn(seconds: 3, input: input, output: output) })
+        }
     }
 
     public func runTonePlay() {
@@ -231,8 +360,14 @@ public final class AvPanelModel: ObservableObject {
                 self.speakerPhase = .done
                 self.speakerResult = AvSummary.tone(frames: v.frames, msecs: 1000)
             case let .failure(e):
-                self.speakerPhase = .failed
-                self.speakerResult = AvSummary.friendlyError(e)
+                if AvSummary.isUnknownDevice(e), self.pendingHeal == nil {
+                    self.pendingHeal = .speaker
+                    self.speakerResult = "Rescanning devices…"
+                    self.rescanDevices()
+                } else {
+                    self.speakerPhase = .failed
+                    self.speakerResult = AvSummary.friendlyError(e)
+                }
             }
         }, work: { try RustCore.tonePlayOn(msecs: 1000, output: output) })
     }
@@ -252,6 +387,12 @@ public final class AvPanelModel: ObservableObject {
     }
 
     public func refreshProbe() {
+        // The probe opens the input stream (a TCC prompt on fresh
+        // machines), so it waits for the Test-owned grant like the meter.
+        guard MicAccess.status() == .authorized else {
+            probe = AvSummary.probePending
+            return
+        }
         run({ [weak self] (r: Result<MicProbe, Error>) in
             guard let self else { return }
             switch r {
@@ -445,6 +586,7 @@ public struct AvPanelView: View {
     @StateObject private var camera = CameraCapture()
     @StateObject private var call = CallStore()
     @State private var cameras = CameraCapture.videoDevices()
+    @Environment(\.openURL) private var openURL
 
     public init() {}
 
@@ -464,6 +606,27 @@ public struct AvPanelView: View {
                             .buttonStyle(.dietSecondary)
                             .disabled(model.micPhase.isRunning)
                             phaseStatus(model.micPhase, model.micResult)
+                        }
+                        if model.micDenied {
+                            VStack(
+                                alignment: .leading,
+                                spacing: DietSpace.xs
+                            ) {
+                                Text("Microphone access is off — the test and level meter need it.")
+                                    .font(DietType.callout).bold()
+                                    .foregroundStyle(DietColor.textPrimaryColor)
+                                Text("Allow Diet Teams in System Settings › Privacy & Security › Microphone.")
+                                    .font(DietType.caption1)
+                                    .foregroundStyle(
+                                        DietColor.textSecondaryColor)
+                                Button(
+                                    "Open Privacy Settings",
+                                    systemImage: "arrow.up.forward.app"
+                                ) {
+                                    openURL(MicAccess.privacyURL)
+                                }
+                                .buttonStyle(.dietSecondary)
+                            }
                         }
                         LabeledContent("Input level") {
                             LevelBar(

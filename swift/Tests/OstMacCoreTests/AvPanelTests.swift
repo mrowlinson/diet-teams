@@ -109,6 +109,57 @@ final class AvPanelTests: XCTestCase {
         XCTAssertFalse(TestPhase.failed.isRunning)
     }
 
+    // MARK: - Mic denial + stale-pick heal (om-avfix, pure)
+
+    func testMicDeniedPointsAtSettings() {
+        XCTAssertTrue(AvSummary.micDenied.contains("System Settings"))
+        XCTAssertTrue(AvSummary.micDenied.contains("Microphone"))
+    }
+
+    func testIsUnknownDevice() {
+        XCTAssertTrue(AvSummary.isUnknownDevice(
+            CoreCallError.failed("unknown_device: Unknown audio input device: X")))
+        XCTAssertFalse(AvSummary.isUnknownDevice(
+            CoreCallError.failed("no_input: No audio input device found")))
+        XCTAssertFalse(AvSummary.isUnknownDevice(
+            CoreCallError.failed("boom: details")))
+        XCTAssertFalse(AvSummary.isUnknownDevice(CoreCallError.badUTF8))
+    }
+
+    func testHealAction() {
+        // No stale pick (default path) is never healed.
+        XCTAssertEqual(AvHeal.action(pick: nil, devices: ["A"]), .valid)
+        XCTAssertEqual(AvHeal.action(pick: "", devices: ["A"]), .valid)
+        // Pick back in the fresh list: transient error, keep it.
+        XCTAssertEqual(AvHeal.action(pick: "A", devices: ["A", "B"]), .valid)
+        // Empty fresh list: HAL wedge, keep the pick.
+        XCTAssertEqual(AvHeal.action(pick: "A", devices: []), .wedge)
+        // Non-empty fresh list without the pick: true unplug, heal.
+        XCTAssertEqual(AvHeal.action(pick: "A", devices: ["B"]), .unplugged)
+    }
+
+    func testHealMessages() {
+        XCTAssertTrue(AvSummary.healedMic("B").contains("B"))
+        XCTAssertTrue(AvSummary.healedMic(nil).contains("System Default"))
+        XCTAssertTrue(AvSummary.healedSpeaker("S").contains("S"))
+        XCTAssertTrue(AvSummary.wedgeKept("A").contains("A"))
+        XCTAssertTrue(AvSummary.wedgeKept(nil).contains("selection"))
+        XCTAssertFalse(AvSummary.deviceBack.isEmpty)
+    }
+
+    func testProbePendingPlaceholder() {
+        XCTAssertEqual(AvSummary.probePending, "pending mic access")
+    }
+
+    func testMicAccessReadsNeverPrompt() {
+        // Status reads are prompt-free on any machine (incl. the sandbox).
+        let _ = MicAccess.status()
+        let _ = MicAccess.denied
+        XCTAssertEqual(
+            MicAccess.privacyURL.absoluteString,
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")
+    }
+
     // MARK: - FFI wiring (staticlib linked into the test bundle)
 
     func testAudioDevicesShape() throws {

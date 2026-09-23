@@ -12,9 +12,16 @@ cp .build/release/OstMac "$APP/Contents/MacOS/OstMac"
 cp OstMac-Info.plist "$APP/Contents/Info.plist"
 cp Resources/OstMac.icns "$APP/Contents/Resources/OstMac.icns"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
-if [ -n "${CODESIGN_IDENTITY:-}" ]; then
-    codesign --force --deep --sign "$CODESIGN_IDENTITY" "$APP"
-    echo "signed: $CODESIGN_IDENTITY"
+# TCC (mic/camera grants) sticks per signing identity: an unsigned demo
+# build re-prompts every rebuild. Prefer the stable Apple Development
+# identity (CODESIGN_IDENTITY wins); ad-hoc only as a loud fallback.
+IDENT="${CODESIGN_IDENTITY:-$(security find-identity -v -p codesigning | grep -m1 -o '"Apple Development[^"]*"' | tr -d '"' || true)}"
+if [ -z "${IDENT:-}" ]; then
+    echo "WARNING: no Apple Development identity found; signing ad-hoc (TCC will not stick)."
+    codesign --force --deep --sign - "$APP"
+else
+    codesign --force --deep --sign "$IDENT" "$APP"
+    echo "signed: $IDENT"
 fi
 echo "APP=$APP"
 du -sh "$APP"
