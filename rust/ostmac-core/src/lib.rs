@@ -6,7 +6,7 @@
 //! - chats: structured chat list (requires sign-in)
 //! - teams: joined teams with channels (requires sign-in)
 //! - messages: full history for one chat (requires sign-in)
-//! - send: post one message to a chat (requires sign-in)
+//! - send/edit/delete: post, edit, or delete a chat message (requires sign-in)
 //! - presence: own get/set + per-user get (Graph presence, requires sign-in)
 //! - resolve_mri: Teams `8:orgid:` MRI to Graph user (requires sign-in)
 //! - reminders: Microsoft To Do lists/tasks/add/complete (Graph, sign-in)
@@ -624,6 +624,63 @@ pub fn send_json(chat_id: &str, text: &str) -> String {
     match run() {
         Ok(s) => s,
         Err(e) => err_json("send", e),
+    }
+}
+
+/// Edit one own message. Returns `{ok:true, chat_id, message_id}` or `{ok:false}`.
+/// Empty args are rejected before any network.
+pub fn edit_json(chat_id: &str, message_id: &str, text: &str) -> String {
+    if chat_id.trim().is_empty() {
+        return err_json("arg", "empty chat_id");
+    }
+    if message_id.trim().is_empty() {
+        return err_json("arg", "empty message_id");
+    }
+    if text.trim().is_empty() {
+        return err_json("arg", "empty text");
+    }
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            ost::api::edit_message_with_client(&client, chat_id, message_id, text)
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            Ok(json!({"ok": true, "chat_id": chat_id, "message_id": message_id}).to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("edit", e),
+    }
+}
+
+/// Delete one own message. Returns `{ok:true, chat_id, message_id}` or `{ok:false}`.
+/// Empty args are rejected before any network.
+pub fn delete_json(chat_id: &str, message_id: &str) -> String {
+    if chat_id.trim().is_empty() {
+        return err_json("arg", "empty chat_id");
+    }
+    if message_id.trim().is_empty() {
+        return err_json("arg", "empty message_id");
+    }
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            ost::api::delete_message_with_client(&client, chat_id, message_id)
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            Ok(json!({"ok": true, "chat_id": chat_id, "message_id": message_id}).to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("delete", e),
     }
 }
 
@@ -1569,6 +1626,43 @@ pub extern "C" fn ostmac_send(chat_id: *const c_char, text: *const c_char) -> *m
     }
 }
 
+/// Edit one own message. See [`edit_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_edit(
+    chat_id: *const c_char,
+    message_id: *const c_char,
+    text: *const c_char,
+) -> *mut c_char {
+    let id = match cstr_to_string(chat_id) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    let mid = match cstr_to_string(message_id) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    match cstr_to_string(text) {
+        Ok(t) => string_to_c(edit_json(&id, &mid, &t)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
+/// Delete one own message. See [`delete_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_delete(
+    chat_id: *const c_char,
+    message_id: *const c_char,
+) -> *mut c_char {
+    let id = match cstr_to_string(chat_id) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    match cstr_to_string(message_id) {
+        Ok(m) => string_to_c(delete_json(&id, &m)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
 /// Fetch one inline-image URL. See [`media_fetch_json`]. Caller frees.
 #[no_mangle]
 pub extern "C" fn ostmac_media_fetch(url: *const c_char) -> *mut c_char {
@@ -2047,6 +2141,61 @@ mod tests {
             let v: serde_json::Value =
                 serde_json::from_str(&send_json(id, text)).unwrap();
             assert_eq!(v["ok"], false, "id={:?} text={:?}", id, text);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
+    fn edit_delete_empty_args_is_error() {
+        for (id, mid, text) in [
+            ("", "m1", "hi"),
+            ("19:x", "", "hi"),
+            ("19:x", "  ", "hi"),
+            ("19:x", "m1", ""),
+            ("19:x", "m1", "  "),
+        ] {
+            let v: serde_json::Value =
+                serde_json::from_str(&edit_json(id, mid, text)).unwrap();
+            assert_eq!(v["ok"], false, "id={:?} mid={:?} text={:?}", id, mid, text);
+            assert_eq!(v["error"], "arg");
+        }
+        for (id, mid) in [("", "m1"), ("19:x", ""), ("19:x", "  ")] {
+            let v: serde_json::Value =
+                serde_json::from_str(&delete_json(id, mid)).unwrap();
+            assert_eq!(v["ok"], false, "id={:?} mid={:?}", id, mid);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
+    fn ffi_edit_delete_null_is_arg_error() {
+        let id = CString::new("19:x").unwrap();
+        let mid = CString::new("m1").unwrap();
+        let tx = CString::new("hi").unwrap();
+        unsafe {
+            let p = ostmac_edit(id.as_ptr(), std::ptr::null(), tx.as_ptr());
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+
+            let p = ostmac_delete(id.as_ptr(), std::ptr::null());
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+
+            // Empty text over FFI also rejects before network.
+            let empty = CString::new("  ").unwrap();
+            let p = ostmac_edit(id.as_ptr(), mid.as_ptr(), empty.as_ptr());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
             assert_eq!(v["error"], "arg");
         }
     }

@@ -190,6 +190,70 @@ pub async fn send_message_with_client(
     Ok(())
 }
 
+/// Per-message URL for edits and deletes (pure so embedders/tests pin it).
+pub fn message_url(base: &str, chat_id: &str, message_id: &str) -> String {
+    format!(
+        "{}/v1/users/ME/conversations/{}/messages/{}",
+        base, chat_id, message_id
+    )
+}
+
+/// Edit body for the native chat API. `skypeeditedid` carries the original
+/// id so receivers (and our realtime parser) classify it as an edit.
+pub fn edit_message_body(message_id: &str, text: &str) -> serde_json::Value {
+    let escaped = html_escape(text);
+    serde_json::json!({
+        "content": format!("<p>{}</p>", escaped),
+        "messagetype": "RichText/Html",
+        "contenttype": "text",
+        "skypeeditedid": message_id,
+    })
+}
+
+/// Edit one own message's text via PUT (prints to stdout).
+pub async fn edit_message(chat_id: &str, message_id: &str, text: &str) -> Result<()> {
+    let client = TeamsClient::new().await?;
+    edit_message_with_client(&client, chat_id, message_id, text).await?;
+    println!("Message edited.");
+    Ok(())
+}
+
+/// Edit one own message using an existing client (shared helper).
+pub async fn edit_message_with_client(
+    client: &TeamsClient,
+    chat_id: &str,
+    message_id: &str,
+    text: &str,
+) -> Result<()> {
+    let base = client.chat_service_url();
+    let url = message_url(&base, chat_id, message_id);
+    let body = edit_message_body(message_id, text);
+    tracing::debug!("Editing message at {}", url);
+    client.chat_put(&url, &body).await?;
+    Ok(())
+}
+
+/// Delete one own message via DELETE (prints to stdout).
+pub async fn delete_message(chat_id: &str, message_id: &str) -> Result<()> {
+    let client = TeamsClient::new().await?;
+    delete_message_with_client(&client, chat_id, message_id).await?;
+    println!("Message deleted.");
+    Ok(())
+}
+
+/// Delete one own message using an existing client (shared helper).
+pub async fn delete_message_with_client(
+    client: &TeamsClient,
+    chat_id: &str,
+    message_id: &str,
+) -> Result<()> {
+    let base = client.chat_service_url();
+    let url = message_url(&base, chat_id, message_id);
+    tracing::debug!("Deleting message at {}", url);
+    client.chat_delete(&url).await?;
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Data-returning API functions for TUI integration
 // ---------------------------------------------------------------------------
@@ -444,6 +508,22 @@ fn with_page_size(url: &str, limit: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn edit_url_and_body_shape() {
+        assert_eq!(
+            message_url("https://h", "19:chat", "123"),
+            "https://h/v1/users/ME/conversations/19:chat/messages/123"
+        );
+        let b = edit_message_body("123", "a<b>&\"'");
+        assert_eq!(b["messagetype"], "RichText/Html");
+        assert_eq!(b["contenttype"], "text");
+        assert_eq!(b["skypeeditedid"], "123");
+        assert_eq!(
+            b["content"],
+            "<p>a&lt;b&gt;&amp;&quot;&#39;</p>"
+        );
+    }
 
     #[test]
     fn image_tag_detection() {

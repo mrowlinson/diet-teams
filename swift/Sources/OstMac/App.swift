@@ -28,6 +28,8 @@
 // --show-catchup stretches the demo thread past 20 messages and
 // auto-opens the catch-up sheet with a canned summary (shot hook,
 // offline, throwaway defaults — never the real ones).
+// --show-edit / --show-delete open the edit sheet / delete confirm for
+// the first own bubble at launch (om-editdel shot hooks, demo offline).
 // --auth-state <name> opens the Auth window with a canned state, never
 // touching core/network (names: signed-out, starting, code, polling,
 // browser, browser-working, signed-in, expired, refreshing,
@@ -540,7 +542,9 @@ struct RootView: View {
                             isGroup: state.chats.selectedChat?.is_group ?? true,
                             initialTab: CommandLine.arguments.contains("--show-shared") ? 1
                                 : (state.showNotes ? 2 : 0),
-                            catchUpOpen: state.showCatchUp)
+                            catchUpOpen: state.showCatchUp,
+                            editOpen: CommandLine.arguments.contains("--show-edit"),
+                            deleteOpen: CommandLine.arguments.contains("--show-delete"))
                     }
                 }
             } else {

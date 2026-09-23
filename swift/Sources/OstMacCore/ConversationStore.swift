@@ -7,6 +7,8 @@
 //                                  in place (edit). THE realtime feed point.
 //   store.ingestEdited(id:content:) — edit event carrying only new text
 //   store.send(text:)             — post via core, optimistic own-bubble
+//   store.edit(messageID:text:)   — edit own bubble via core (optimistic)
+//   store.deleteMessage(id:)      — delete own bubble via core (optimistic)
 // Shared model: ChatMessage (Models.swift) — history, send-echo, and
 // realtime all use it; `id` is the match key for edits.
 import Foundation
@@ -219,6 +221,78 @@ public final class ConversationStore: ObservableObject {
         failedIDs.remove(id)
         send(text: msg.content)
         return msg.content
+    }
+
+    /// Edit an own bubble via core; optimistic in-place update, rollback on
+    /// failure. Demo mode edits locally. Unknown id / empty text are no-ops.
+    public func edit(messageID: String, text: String) {
+        let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !body.isEmpty else { return }
+        guard let i = messages.firstIndex(where: { $0.id == messageID }) else { return }
+        guard messages[i].content != body else { return }
+        if isDemo {
+            messages = Self.applyingEdit(id: messageID, content: body, to: messages)
+            return
+        }
+        guard let id = chatID else { return }
+        let old = messages[i].content
+        let wasEdited = messages[i].edited
+        messages = Self.applyingEdit(id: messageID, content: body, to: messages)
+        Task {
+            do {
+                _ = try await Task.detached {
+                    try RustCore.edit(chatID: id, messageID: messageID, text: body)
+                }.value
+            } catch {
+                // Roll back to the pre-edit text.
+                if let j = self.messages.firstIndex(where: { $0.id == messageID }) {
+                    self.messages[j].content = old
+                    self.messages[j].edited = wasEdited
+                }
+                self.error = "edit failed: \(error)"
+            }
+        }
+    }
+
+    /// Delete an own bubble via core; optimistic removal, restore on failure.
+    /// Demo mode deletes locally. Unknown id is a no-op.
+    public func deleteMessage(id: String) {
+        guard let i = messages.firstIndex(where: { $0.id == id }) else { return }
+        if isDemo {
+            messages = Self.removing(id: id, from: messages)
+            return
+        }
+        guard let chat = chatID else { return }
+        let removed = messages[i]
+        messages = Self.removing(id: id, from: messages)
+        failedIDs.remove(id)
+        Task {
+            do {
+                _ = try await Task.detached {
+                    try RustCore.deleteMessage(chatID: chat, messageID: id)
+                }.value
+            } catch {
+                // Restore at the original index (clamped to the tail).
+                var cur = self.messages
+                cur.insert(removed, at: min(i, cur.count))
+                self.messages = cur
+                self.error = "delete failed: \(error)"
+            }
+        }
+    }
+
+    /// Pure edit: rewrite content in place + mark edited; unknown id unchanged.
+    public static func applyingEdit(id: String, content: String, to list: [ChatMessage]) -> [ChatMessage] {
+        var out = list
+        guard let i = out.firstIndex(where: { $0.id == id }) else { return out }
+        out[i].content = content
+        out[i].edited = true
+        return out
+    }
+
+    /// Pure delete: drop the bubble; unknown id unchanged.
+    public static func removing(id: String, from list: [ChatMessage]) -> [ChatMessage] {
+        list.filter { $0.id != id }
     }
 
     /// Pure upsert: new id appends; known id rewrites content in place and

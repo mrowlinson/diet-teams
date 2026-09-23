@@ -339,6 +339,45 @@ impl TeamsClient {
 
         check_response(resp, url).await
     }
+
+    /// PUT using `Authentication: skypetoken=...` header (native chat API).
+    /// OstMac (om-editdel): message edits PUT new content to the per-message URL.
+    pub async fn chat_put(
+        &self,
+        url: &str,
+        body: &serde_json::Value,
+    ) -> Result<reqwest::Response> {
+        let token = self.skype_token()?;
+        tracing::debug!("Chat PUT {}", url);
+
+        let resp = self
+            .http
+            .put(url)
+            .header("Authentication", format!("skypetoken={}", token))
+            .json(body)
+            .send()
+            .await
+            .with_context(|| format!("Chat PUT {} failed", url))?;
+
+        check_response(resp, url).await
+    }
+
+    /// DELETE using `Authentication: skypetoken=...` header (native chat API).
+    /// OstMac (om-editdel): message deletes hit the per-message URL with no body.
+    pub async fn chat_delete(&self, url: &str) -> Result<reqwest::Response> {
+        let token = self.skype_token()?;
+        tracing::debug!("Chat DELETE {}", url);
+
+        let resp = self
+            .http
+            .delete(url)
+            .header("Authentication", format!("skypetoken={}", token))
+            .send()
+            .await
+            .with_context(|| format!("Chat DELETE {} failed", url))?;
+
+        check_response(resp, url).await
+    }
 }
 
 /// Check HTTP response status code and return a clear error on failure.

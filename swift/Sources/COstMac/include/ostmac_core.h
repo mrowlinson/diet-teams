@@ -56,6 +56,12 @@ char *ostmac_messages_page(const char *chat_id, const char *page_token, int limi
 // Post one message to a chat. Caller frees.
 char *ostmac_send(const char *chat_id, const char *text);
 
+// Edit one own message: {ok, chat_id, message_id}. Caller frees.
+char *ostmac_edit(const char *chat_id, const char *message_id, const char *text);
+
+// Delete one own message: {ok, chat_id, message_id}. Caller frees.
+char *ostmac_delete(const char *chat_id, const char *message_id);
+
 // Fetch one inline-image URL: {ok, data_base64, content_type?}.
 // Microsoft media hosts attach the Skype token; public hosts fetch
 // without auth. https only. Requires sign-in for auth'd hosts.

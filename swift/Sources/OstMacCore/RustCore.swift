@@ -89,6 +89,26 @@ public enum RustCore {
         }
     }
 
+    /// Edit one own message via core (blocking FFI: call off main thread).
+    public static func edit(chatID: String, messageID: String, text: String) throws -> EditResponse {
+        try chatID.withCString { idPtr in
+            try messageID.withCString { midPtr in
+                try text.withCString { textPtr in
+                    try call(ostmac_edit(idPtr, midPtr, textPtr), as: EditResponse.self)
+                }
+            }
+        }
+    }
+
+    /// Delete one own message via core (blocking FFI: call off main thread).
+    public static func deleteMessage(chatID: String, messageID: String) throws -> DeleteResponse {
+        try chatID.withCString { idPtr in
+            try messageID.withCString { midPtr in
+                try call(ostmac_delete(idPtr, midPtr), as: DeleteResponse.self)
+            }
+        }
+    }
+
     /// One fetched inline image: decoded bytes + content type, if any.
     /// Blocking FFI (network): call off the main thread.
     public static func mediaFetch(url: String) throws -> (data: Data, contentType: String?) {

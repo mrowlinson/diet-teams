@@ -1,7 +1,8 @@
-// ConversationView.swift — om-conv/om-convrich/om-shared/om-notes/om-cmdk/om-catchup: SwiftUI chat window.
+// ConversationView.swift — om-conv/om-convrich/om-shared/om-notes/om-cmdk/om-catchup/om-editdel: SwiftUI chat window.
 // Rich bubbles (mentions, code spans, links), day separators, scroll-up
 // load-more paging, edited markers, failed-send retry, Shared files + Notes tabs,
-// GIF picker + thread catch-up.
+// GIF picker + thread catch-up + own-message edit/delete (top-level context menu).
+import AppKit
 import DietDesign
 import SwiftUI
 
@@ -22,14 +23,26 @@ public struct ConversationView: View {
     @State private var showCatchUp: Bool
     @FocusState private var boxFocused: Bool
     @State private var gifHovering = false
+    /// Edit sheet target + draft (om-editdel).
+    @State private var editingMessage: ChatMessage?
+    @State private var editDraft = ""
+    /// Delete confirm target (om-editdel).
+    @State private var deletingMessage: ChatMessage?
+    @State private var showDeleteConfirm = false
+    @State private var shotSeeded = false
+    private let editOpen: Bool
+    private let deleteOpen: Bool
 
     /// - catchUpOpen: open the catch-up sheet at launch (the
     ///   --show-catchup shot hook only).
+    /// - editOpen/deleteOpen: open the edit sheet / delete confirm for the
+    ///   first own bubble at launch (--show-edit / --show-delete shot hooks).
     public init(
         store: ConversationStore, presence: PresenceStore = PresenceStore(),
         call: CallStore = CallStore(), shared: SharedFilesStore = SharedFilesStore(),
         notes: NotesStore = NotesStore(), catchUp: CatchUpStore = CatchUpStore(),
-        isGroup: Bool = true, initialTab: Int = 0, catchUpOpen: Bool = false
+        isGroup: Bool = true, initialTab: Int = 0, catchUpOpen: Bool = false,
+        editOpen: Bool = false, deleteOpen: Bool = false
     ) {
         self.store = store
         self.presence = presence
@@ -40,6 +53,8 @@ public struct ConversationView: View {
         self.isGroup = isGroup
         _tab = State(initialValue: initialTab)
         _showCatchUp = State(initialValue: catchUpOpen)
+        self.editOpen = editOpen
+        self.deleteOpen = deleteOpen
     }
 
     public var body: some View {
@@ -79,7 +94,9 @@ public struct ConversationView: View {
                                     MessageBubble(
                                         message: msg,
                                         failed: store.failedIDs.contains(msg.id),
-                                        onRetry: { _ = store.retry(id: msg.id) }
+                                        onRetry: { _ = store.retry(id: msg.id) },
+                                        onEdit: { beginEdit(msg) },
+                                        onDelete: { beginDelete(msg) }
                                     )
                                     .id(msg.id)
                                 }
@@ -114,6 +131,82 @@ public struct ConversationView: View {
                 catchUp: catchUp, messages: store.messages,
                 autoRun: CommandLine.arguments.contains("--show-catchup"))
         }
+        .sheet(item: $editingMessage) { msg in
+            editSheet(for: msg)
+        }
+        .confirmationDialog(
+            "Delete this message?",
+            isPresented: $showDeleteConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) {
+                if let target = deletingMessage {
+                    store.deleteMessage(id: target.id)
+                }
+                deletingMessage = nil
+            }
+            Button("Cancel", role: .cancel) { deletingMessage = nil }
+        } message: {
+            Text("This cannot be undone.")
+        }
+        .onAppear { seedEditDeleteShot() }
+        .onChange(of: store.messages.count) { seedEditDeleteShot() }
+    }
+
+    /// Open the edit sheet for one bubble (draft preseeded from content).
+    private func beginEdit(_ msg: ChatMessage) {
+        editDraft = msg.content
+        editingMessage = msg
+    }
+
+    /// Open the delete confirm for one bubble.
+    private func beginDelete(_ msg: ChatMessage) {
+        deletingMessage = msg
+        showDeleteConfirm = true
+    }
+
+    /// Shot hooks: --show-edit / --show-delete open the sheet/confirm for
+    /// the first own bubble once messages land (demo offline).
+    private func seedEditDeleteShot() {
+        guard !shotSeeded else { return }
+        guard editOpen || deleteOpen else { return }
+        guard let own = store.messages.first(where: \.isOwn) else { return }
+        shotSeeded = true
+        if editOpen {
+            beginEdit(own)
+        } else {
+            beginDelete(own)
+        }
+    }
+
+    private func editSheet(for msg: ChatMessage) -> some View {
+        VStack(alignment: .leading, spacing: DietSpace.sm) {
+            Text("Edit message")
+                .font(DietType.headline)
+                .foregroundStyle(DietColor.textPrimaryColor)
+            TextField("Message", text: $editDraft, axis: .vertical)
+                .textFieldStyle(.plain)
+                .font(DietType.body)
+                .foregroundStyle(DietColor.textPrimaryColor)
+                .padding(DietSpace.sm)
+                .background(DietColor.wellColor)
+                .clipShape(RoundedRectangle(cornerRadius: DietRadius.control))
+                .lineLimit(3...8)
+            HStack {
+                Spacer()
+                Button("Cancel") { editingMessage = nil }
+                    .buttonStyle(.dietSecondary)
+                Button("Save") {
+                    store.edit(messageID: msg.id, text: editDraft)
+                    editingMessage = nil
+                }
+                .buttonStyle(.dietPrimary)
+                .disabled(editDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    || editDraft.trimmingCharacters(in: .whitespacesAndNewlines) == msg.content)
+            }
+        }
+        .padding(DietSpace.md)
+        .frame(minWidth: 320, idealWidth: 400)
     }
 
     /// Lazily load the Shared tab when selected (no unsigned core calls
@@ -293,6 +386,8 @@ struct MessageBubble: View {
     let message: ChatMessage
     var failed: Bool = false
     var onRetry: () -> Void = {}
+    var onEdit: () -> Void = {}
+    var onDelete: () -> Void = {}
 
     var body: some View {
         HStack(spacing: DietSpace.xs) {
@@ -355,6 +450,17 @@ struct MessageBubble: View {
             .foregroundStyle(DietColor.textPrimaryColor)
             .opacity(failed ? 0.85 : 1)
             if !message.isOwn { Spacer(minLength: DietSpace.xxl) }
+        }
+        // TOP-LEVEL ONLY: no nested Menu — Edit/Delete/Copy are direct items.
+        .contextMenu {
+            if message.isOwn {
+                Button("Edit…", systemImage: "pencil", action: onEdit)
+                Button("Delete…", systemImage: "trash", role: .destructive, action: onDelete)
+            }
+            Button("Copy", systemImage: "doc.on.doc") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(message.content, forType: .string)
+            }
         }
     }
 }
