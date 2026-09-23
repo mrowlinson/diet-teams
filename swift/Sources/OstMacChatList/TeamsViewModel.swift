@@ -51,7 +51,7 @@ public final class TeamsViewModel: ObservableObject {
         }
     }
 
-    /// Fire-and-forget reload (toolbar button).
+    /// Fire-and-forget reload (error-state Retry, sign-in).
     public func refresh() {
         Task { await load() }
     }
