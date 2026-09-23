@@ -111,9 +111,16 @@ pub struct SharedFile {
     pub modified: Option<String>,
     /// Display name of the chat sender (chat path only; None for channels).
     pub sender: Option<String>,
+    /// File-attachment GUID mined from the driveItem eTag (om-inline-docs):
+    /// matches the `<attachment id>` in the message that shared this file,
+    /// so embedders render inline doc rows in the bubble. None when the
+    /// eTag carries no GUID (channel children often don't; the Shared tab
+    /// still lists the file, it just never matches a bubble).
+    pub attachment_id: Option<String>,
 }
 
 fn shared_from_item(item: DriveItem, sender: Option<String>) -> SharedFile {
+    let attachment_id = item.etag.as_deref().and_then(guid_from_etag);
     SharedFile {
         id: item.id,
         name: item.name.unwrap_or_else(|| "[unnamed]".to_string()),
@@ -125,6 +132,7 @@ fn shared_from_item(item: DriveItem, sender: Option<String>) -> SharedFile {
         created: item.created,
         modified: item.modified,
         sender,
+        attachment_id,
     }
 }
 
@@ -614,6 +622,27 @@ mod tests {
     fn reference_attachment_requires_guid() {
         let item: DriveItem = serde_json::from_str(r#"{"id":"i1","eTag":"nope"}"#).unwrap();
         assert!(reference_attachment(&item, "f").is_err());
+    }
+
+    #[test]
+    fn shared_file_carries_attachment_guid_from_etag() {
+        // Chat-file eTags embed the attachment GUID: the bubble-match key.
+        let with: DriveItem = serde_json::from_str(
+            r#"{"id":"i1","name":"f.docx","eTag":"\"c:{550E8400-E29B-41D4-A716-446655440000},2\""}"#,
+        )
+        .unwrap();
+        let f = shared_from_item(with, Some("A Uzer".to_string()));
+        assert_eq!(
+            f.attachment_id.as_deref(),
+            Some("550E8400-E29B-41D4-A716-446655440000")
+        );
+        // No GUID (channel children, missing eTag): None, never fatal.
+        let without: DriveItem =
+            serde_json::from_str(r#"{"id":"i2","name":"g.docx","eTag":"nope"}"#).unwrap();
+        assert_eq!(shared_from_item(without, None).attachment_id, None);
+        let missing: DriveItem =
+            serde_json::from_str(r#"{"id":"i3","name":"h.docx"}"#).unwrap();
+        assert_eq!(shared_from_item(missing, None).attachment_id, None);
     }
 
     #[test]

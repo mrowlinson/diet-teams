@@ -15,6 +15,7 @@ public enum DemoData {
     public static let repliesID = "demo-replies"
     public static let historyID = "demo-history"
     public static let botpostsID = "demo-botposts"
+    public static let docsID = "demo-docs"
 
     /// Sidebar rows. [0] is "demo" (matches ConversationStore.demo()).
     /// The rich row derives from the rich thread's last message, so its
@@ -41,6 +42,7 @@ public enum DemoData {
         repliesChat(),
         historyChat(),
         botPostsChat(),
+        docsChat(),
     ]
 
     /// Rich sidebar row: preview/sender/time from the rich thread's tail.
@@ -104,6 +106,26 @@ public enum DemoData {
         let last = msgs.last
         return ChatItem(
             chatId: botpostsID, name: "Demo — Bot Posts", is_group: true,
+            last_message_time: last?.timestamp,
+            last_message_sender: last?.sender,
+            last_message_preview: last?.content)
+    }
+
+    /// True for canned demo/chat ids (om-demo-select). Single namespace
+    /// check: the exact "demo" root plus the "demo-" prefix (rows,
+    /// channels, churn rows, reminder/note fixtures), plus the churn
+    /// meeting id (a real-shaped 19: thread that only exists in the
+    /// --show-sidebarchurn dataset). Live Teams ids never match.
+    public static func isDemoID(_ id: String) -> Bool {
+        id == demoID || id.hasPrefix("demo-") || id == churnMeetingID
+    }
+
+    /// Inline-docs sidebar row: preview/sender/time from the docs tail.
+    public static func docsChat(now: Date = Date()) -> ChatItem {
+        let msgs = docsMessages(now: now)
+        let last = msgs.last
+        return ChatItem(
+            chatId: docsID, name: "Demo — Shared Docs", is_group: true,
             last_message_time: last?.timestamp,
             last_message_sender: last?.sender,
             last_message_preview: last?.content)
@@ -193,6 +215,7 @@ public enum DemoData {
         case churnStandupID: return churnStandupMessages
         case historyID: return historyMessages()
         case botpostsID: return botPostsMessages()
+        case docsID: return docsMessages()
         default: break
         }
         if chatID.hasPrefix("demo-chan-") { return channelMessages }
@@ -204,12 +227,17 @@ public enum DemoData {
         chatID == richID ? ["rich-fail"] : []
     }
 
+    /// Demo threads flagging an owner mention (om-mentions): the rich
+    /// thread's edited bubble mines `@Me` from its `<at>` tag. Adopted
+    /// by the app's MentionStore at demo launch (offline, no feed).
+    public static let mentionedChatIDs: Set<String> = [richID]
+
     /// Canned shared files for `--demo` (om-shared lane). Design Sync has
     /// three (pdf + image + sheet, one with a sender); Ava has one; the
     /// rich thread and channels share the design set; standup is empty.
     public static func sharedFiles(for chatID: String) -> [SharedFile] {
         switch chatID {
-        case demoID, richID: return designFiles
+        case demoID, richID, docsID: return designFiles
         case avaID: return [avaFile]
         case standupID: return []
         default:
@@ -225,20 +253,23 @@ public enum DemoData {
             web_url: "https://example.sharepoint.com/onboarding-mocks.pdf",
             download_url: "https://example.sharepoint.com/download/onboarding-mocks.pdf",
             drive_id: "demo-drive-1",
-            created: "2026-09-21T10:02:11Z", sender: "Tom Becker"),
+            created: "2026-09-21T10:02:11Z", sender: "Tom Becker",
+            attachment_id: "doc-attach-1"),
         SharedFile(
             id: "demo-f2", name: "empty-states.png", size: 184320,
             mime: "image/png",
             web_url: "https://example.sharepoint.com/empty-states.png",
             download_url: "https://example.sharepoint.com/download/empty-states.png",
             drive_id: "demo-drive-1",
-            created: "2026-09-22T08:41:02Z", sender: "Ava Lindqvist"),
+            created: "2026-09-22T08:41:02Z", sender: "Ava Lindqvist",
+            attachment_id: "doc-attach-2"),
         SharedFile(
             id: "demo-f3", name: "launch-checklist.xlsx", size: 9216,
             mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             web_url: "https://example.sharepoint.com/launch-checklist.xlsx",
             drive_id: "demo-drive-1",
-            created: "2026-09-20T16:20:11Z", sender: "Priya Nair"),
+            created: "2026-09-20T16:20:11Z", sender: "Priya Nair",
+            attachment_id: "doc-attach-3"),
     ]
 
     private static let avaFile = SharedFile(
@@ -506,6 +537,44 @@ public enum DemoData {
                 timestamp: iso(at(h: 8, m: 9)),
                 content: "Deploy finished: release 42 notes",
                 raw: #"<p>Deploy finished: </p><attachment><a href="https://example.com/deploys/42">release 42 notes</a></attachment>"#),
+        ]
+    }
+
+    /// Inline-docs thread (om-inline-docs): a file-only PDF bubble (row
+    /// only, placeholder suppressed), a captioned bubble with two refs
+    /// (image + sheet rows under the text), and an own reply. Attachment
+    /// ids match `designFiles` (the Shared tab for this chat), so rows
+    /// resolve fully offline. Timestamps float off now (Today). `content`
+    /// mirrors core strip semantics (attachment tags remove cleanly).
+    public static func docsMessages(now: Date = Date()) -> [ChatMessage] {
+        func iso(_ d: Date) -> String {
+            let f = ISO8601DateFormatter()
+            f.formatOptions = [.withInternetDateTime]
+            return f.string(from: d)
+        }
+        func at(h: Int, m: Int) -> Date {
+            var cal = Calendar.current
+            cal.timeZone = TimeZone.current
+            return cal.date(bySettingHour: h, minute: m, second: 0, of: now) ?? now
+        }
+        return [
+            ChatMessage(
+                id: "doc-1", sender: "Tom Becker",
+                timestamp: iso(at(h: 9, m: 2)),
+                content: "",
+                raw: #"<attachment id="doc-attach-1"></attachment>"#),
+            ChatMessage(
+                id: "doc-2", sender: "Priya Nair",
+                timestamp: iso(at(h: 9, m: 5)),
+                content: "Mocks and the launch checklist — feedback by noon?",
+                raw: "<p>Mocks and the launch checklist — feedback by noon?</p>"
+                    + #"<attachment id="doc-attach-2"></attachment>"#
+                    + #"<attachment id="doc-attach-3"></attachment>"#),
+            ChatMessage(
+                id: "doc-3", sender: "Me",
+                timestamp: iso(at(h: 9, m: 9)),
+                content: "Got them — reviewing now.",
+                isOwn: true),
         ]
     }
 

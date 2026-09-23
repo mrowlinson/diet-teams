@@ -179,15 +179,33 @@ public enum MessageRender {
     /// Styled body: mention names bold, code blocks + `spans` monospaced,
     /// URLs linked. Base font/color come from the caller's Text environment.
     /// Runs over `renderText` (shortcodes expanded), so spans land on what
-    /// the bubble shows.
-    public static func attributedBody(for message: ChatMessage) -> AttributedString {
-        attributedBody(text: renderText(for: message), raw: message.raw)
+    /// the bubble shows. `highlighting` tints owner-mention ("mine")
+    /// spans with an accent wash so they pop in long threads; nil (or
+    /// blank) disables the wash — every mention still bolds.
+    public static func attributedBody(for message: ChatMessage, highlighting ownName: String? = nil) -> AttributedString {
+        attributedBody(text: renderText(for: message), raw: message.raw, highlighting: ownName)
+    }
+
+    /// Mine wash color: system accent at low opacity, safe in both
+    /// appearances over either bubble tint.
+    static let mineHighlight = Color.accentColor.opacity(0.25)
+
+    /// One mined mention name against the owner name: trimmed, one
+    /// leading `@` stripped (mined `<at>@Name</at>` inner text carries
+    /// the sigil; the owner name never does), case-insensitive.
+    /// Blank owners — or blank bare names — never match.
+    public static func isOwnerMention(_ name: String, ownName: String?) -> Bool {
+        guard let own = ownName?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !own.isEmpty
+        else { return false }
+        let bare = Mentions.bareName(name)
+        return !bare.isEmpty && bare.caseInsensitiveCompare(own) == .orderedSame
     }
 
     /// Styled body over explicit text. The bubble passes `bubbleText`
     /// (bot posts drop attachment-block prose), so spans land on what
     /// the bubble shows; miners still read `raw`.
-    static func attributedBody(text: String, raw: String?) -> AttributedString {
+    static func attributedBody(text: String, raw: String?, highlighting ownName: String? = nil) -> AttributedString {
         var a = AttributedString(text)
         func convert(_ r: Range<String.Index>) -> Range<AttributedString.Index>? {
             Range(r, in: a)
@@ -198,9 +216,11 @@ public enum MessageRender {
             names = mentionTokens(in: text)
         }
         for n in names {
+            let mine = isOwnerMention(n, ownName: ownName)
             for r in ranges(of: n, in: text) {
                 guard let ar = convert(r) else { continue }
                 a[ar].font = .body.bold()
+                if mine { a[ar].backgroundColor = mineHighlight }
             }
         }
         // Code blocks from <pre> + backtick spans.

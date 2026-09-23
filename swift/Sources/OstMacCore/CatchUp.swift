@@ -7,10 +7,11 @@
 //   - OFF by default; nothing leaves the machine until the user enables
 //     it and taps Summarize.
 //   - Provider picker (OpenCode CLI | OpenAI-compatible | OpenCode) +
-//     configurable base URL + model. OpenCode CLI is the default: with
-//     no key it shells out to `opencode run` (CLI auth covers the
-//     free-tier Spark model); with a key configured it uses direct
-//     HTTPS instead. Direct providers still require a key.
+//     configurable base URL + model. OpenCode CLI is the default and
+//     is CLI-ONLY: it always shells out to `opencode run` (CLI auth
+//     covers the free-tier Spark model) and never attempts HTTPS,
+//     even when a key is configured. Direct providers use HTTPS only
+//     and still require a key.
 //   - The key lives in the macOS keychain (service
 //     "dev.ostmac.OstMac.catchup", account "catchup-api-key"), never
 //     in UserDefaults/plist. The Settings key field writes keychain.
@@ -56,6 +57,18 @@ public enum CatchUp {
 
     public static func shouldOffer(messageCount: Int) -> Bool {
         messageCount >= threshold
+    }
+
+    /// True when the Base URL affects requests: direct providers
+    /// always use it; the CLI provider never does (exclusive routing:
+    /// CLI-selected shells out and ignores baseURL even with a key
+    /// set). The Settings row hides exactly when this is false, so no
+    /// dead row is ever shown.
+    /// - Note: `apiKey` is kept for caller compatibility; it plays no
+    ///   role under exclusive routing.
+    public static func usesBaseURL(provider: CatchUpProvider, apiKey: String) -> Bool {
+        _ = apiKey
+        return provider != .openCodeCLI
     }
 
     /// "{base}/chat/completions" — exactly one join slash.
@@ -185,10 +198,17 @@ public enum CatchUpError: Error, Sendable, Equatable {
     case badURL
     case empty
     case server(String)
+    case forbidden
     case cliMissing
     case cliAuthExpired
     case cliTimeout
     case cliBadOutput
+
+    /// Pure HTTP-status mapping (test seam): 403 gets its own clean
+    /// message; every other non-2xx stays a generic server failure.
+    public static func http(_ statusCode: Int) -> CatchUpError {
+        statusCode == 403 ? .forbidden : .server("HTTP \(statusCode)")
+    }
 
     public var message: String {
         switch self {
@@ -197,7 +217,8 @@ public enum CatchUpError: Error, Sendable, Equatable {
         case .badURL: "Bad base URL. Check it in Settings."
         case .empty: "The endpoint returned an empty summary."
         case let .server(detail): "Catch-up failed: \(detail)"
-        case .cliMissing: "opencode CLI not found. Install it from opencode.ai and retry (or add an API key for direct HTTPS)."
+        case .forbidden: "The endpoint refused the request (HTTP 403). Check your API key and model access, then retry."
+        case .cliMissing: "opencode CLI not found. Install it from opencode.ai, run `opencode auth login`, then retry."
         case .cliAuthExpired: "OpenCode CLI login expired. Run `opencode auth login` and retry."
         case .cliTimeout: "OpenCode CLI timed out. Retry."
         case .cliBadOutput: "OpenCode CLI returned unreadable output. Retry."
@@ -309,7 +330,7 @@ public struct URLSessionCatchUpTransport: CatchUpTransport {
             throw CatchUpError.server("no response")
         }
         guard (200 ..< 300).contains(http.statusCode) else {
-            throw CatchUpError.server("HTTP \(http.statusCode)")
+            throw CatchUpError.http(http.statusCode)
         }
         let decoded = try JSONDecoder().decode(ChatCompletionsResponse.self, from: data)
         guard let text = decoded.choices.first?.message.content, !text.isEmpty else {
@@ -360,6 +381,11 @@ public final class CatchUpCannedTransport: CatchUpTransport, @unchecked Sendable
 public enum CatchUpCLI {
     public static let executable = "opencode"
     public static let defaultTimeoutSeconds: Double = 60
+    /// Install guide surface (sheet + Settings when the CLI is
+    /// missing). Install via `installCommand`, then `loginCommand`.
+    public static let installSite = "https://opencode.ai"
+    public static let installCommand = "curl -fsSL https://opencode.ai/install | bash"
+    public static let loginCommand = "opencode auth login"
 
     public static func arguments(model: String, prompt: String) -> [String] {
         ["run", "--format", "json", "--model", model, prompt]
@@ -465,6 +491,10 @@ public struct CatchUpCLIResult: Sendable, Equatable {
 /// Shell-out seam. Live = Process; tests inject
 /// `CatchUpMockCLIRunner` and never spawn.
 public protocol CatchUpCLIRunner: Sendable {
+    /// False when the `opencode` executable cannot be found (drives
+    /// the missing-CLI install prompt; the run path still throws
+    /// .cliMissing if the binary vanishes between check and run).
+    var isAvailable: Bool { get }
     func run(model: String, prompt: String, timeoutSeconds: Double) async throws -> CatchUpCLIResult
 }
 
@@ -473,6 +503,8 @@ public protocol CatchUpCLIRunner: Sendable {
 /// with a timeout, captures stdout/stderr.
 public struct ProcessCatchUpCLIRunner: CatchUpCLIRunner {
     public init() {}
+
+    public var isAvailable: Bool { Self.resolveExecutable() != nil }
 
     public func run(model: String, prompt: String, timeoutSeconds: Double) async throws -> CatchUpCLIResult {
         guard let executableURL = Self.resolveExecutable() else {
@@ -530,10 +562,12 @@ public final class CatchUpMockCLIRunner: CatchUpCLIRunner, @unchecked Sendable {
     public private(set) var calls: [(model: String, prompt: String)] = []
     public var result: CatchUpCLIResult?
     public var failure: Error?
+    public var isAvailable: Bool
 
-    public init(result: CatchUpCLIResult? = nil, failure: Error? = nil) {
+    public init(result: CatchUpCLIResult? = nil, failure: Error? = nil, isAvailable: Bool = true) {
         self.result = result
         self.failure = failure
+        self.isAvailable = isAvailable
     }
 
     public func run(model: String, prompt: String, timeoutSeconds _: Double) async throws -> CatchUpCLIResult {
@@ -557,6 +591,10 @@ public struct OpenCodeCLICatchUpTransport: CatchUpTransport {
         self.runner = runner ?? ProcessCatchUpCLIRunner()
         self.timeoutSeconds = timeoutSeconds
     }
+
+    /// CLI presence check for the install prompt (see
+    /// `CatchUpStore.cliAvailable`).
+    public var isAvailable: Bool { runner.isAvailable }
 
     public func complete(baseURL _: String, apiKey _: String, model: String, prompt: String) async throws -> String {
         let res: CatchUpCLIResult
@@ -618,6 +656,16 @@ public final class CatchUpStore: ObservableObject {
 
     @Published public private(set) var state: State = .idle
 
+    /// Structured form of the current `.failed` detail (nil unless the
+    /// last summarize ended in a known `CatchUpError`). The sheet uses
+    /// it to show the CLI install prompt for `.cliMissing`.
+    @Published public private(set) var lastError: CatchUpError?
+
+    /// Whether the `opencode` binary resolves on PATH (via the CLI
+    /// runner). Non-CLI transports assume true; refresh explicitly
+    /// with `refreshCLIStatus()` (e.g. after the user installs it).
+    @Published public private(set) var cliAvailable: Bool
+
     private let transport: any CatchUpTransport
     private let cliTransport: any CatchUpTransport
     private let defaults: UserDefaults
@@ -632,7 +680,8 @@ public final class CatchUpStore: ObservableObject {
         keyStore: (any CatchUpKeyStore)? = nil
     ) {
         self.transport = transport ?? URLSessionCatchUpTransport()
-        self.cliTransport = cliTransport ?? OpenCodeCLICatchUpTransport()
+        let cli = cliTransport ?? OpenCodeCLICatchUpTransport()
+        self.cliTransport = cli
         self.defaults = defaults
         let keys = keyStore ?? CatchUpSystemKeychain()
         self.keys = keys
@@ -656,38 +705,54 @@ public final class CatchUpStore: ObservableObject {
         }
         _config = Published(initialValue: cfg)
         _state = Published(initialValue: .idle)
+        _lastError = Published(initialValue: nil)
+        _cliAvailable = Published(initialValue: (cli as? OpenCodeCLICatchUpTransport)?.isAvailable ?? true)
     }
 
     /// Summarize the given messages. Disabled/empty-thread always fail
-    /// WITHOUT touching either transport. Provider select: the CLI
-    /// provider (default) shells out with no key and uses direct HTTPS
-    /// when a key is configured; direct providers require a key and
-    /// fail with missingKey WITHOUT touching the transport.
+    /// WITHOUT touching either transport. Provider select is
+    /// exclusive: the CLI provider (default) ALWAYS shells out and
+    /// never attempts HTTPS, even with a key configured; direct
+    /// providers ALWAYS use HTTPS and require a key, failing with
+    /// missingKey WITHOUT touching the transport. Every failure lands
+    /// in `.failed` with a Retry path — never stuck in `.loading`.
     public func summarize(messages: [ChatMessage]) async {
-        guard config.enabled else { state = .failed(CatchUpError.off.message); return }
+        guard config.enabled else {
+            lastError = .off
+            state = .failed(CatchUpError.off.message)
+            return
+        }
         let hasKey = !config.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         if config.provider != .openCodeCLI, !hasKey {
+            lastError = .missingKey
             state = .failed(CatchUpError.missingKey.message)
             return
         }
         let transcript = CatchUp.transcript(from: messages)
         guard !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            lastError = nil
             state = .failed("Nothing to summarize.")
             return
         }
         state = .loading
         do {
-            // CLI default; direct HTTPS when a key is configured.
-            let useDirect = config.provider != .openCodeCLI || hasKey
-            let active: any CatchUpTransport = useDirect ? transport : cliTransport
+            // Exclusive routing: CLI-selected => CLI ONLY.
+            let active: any CatchUpTransport = config.provider == .openCodeCLI ? cliTransport : transport
             let text = try await active.complete(
                 baseURL: config.baseURL, apiKey: config.apiKey,
                 model: config.model, prompt: CatchUp.prompt(transcript: transcript))
-            state = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                ? .failed(CatchUpError.empty.message) : .loaded(text)
+            if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                lastError = .empty
+                state = .failed(CatchUpError.empty.message)
+            } else {
+                lastError = nil
+                state = .loaded(text)
+            }
         } catch let e as CatchUpError {
+            lastError = e
             state = .failed(e.message)
         } catch {
+            lastError = nil
             state = .failed(String(describing: error))
         }
     }
@@ -695,6 +760,13 @@ public final class CatchUpStore: ObservableObject {
     /// Back to idle (sheet reopen, chat switch).
     public func reset() {
         state = .idle
+        lastError = nil
+    }
+
+    /// Re-check whether the `opencode` binary resolves (Settings
+    /// "Check again" after the user installs it).
+    public func refreshCLIStatus() {
+        cliAvailable = (cliTransport as? OpenCodeCLICatchUpTransport)?.isAvailable ?? true
     }
 
     /// Test/demo seam: adopt a config without touching persistence.

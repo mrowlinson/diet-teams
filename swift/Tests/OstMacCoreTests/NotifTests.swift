@@ -15,9 +15,15 @@ final class NotifTests: XCTestCase {
             isEdit: edit, editedID: edit ? "m0" : nil)
     }
 
+    /// Isolated defaults: the banner toggle persists, so tests must
+    /// never read/write the real standard defaults.
+    func isolatedDefaults() -> UserDefaults {
+        UserDefaults(suiteName: "test-notif-\(UUID().uuidString)") ?? .standard
+    }
+
     func testPostsAndDelivers() async {
         let fake = FakeNotificationCenter()
-        let notifs = await MessageNotifications(backend: fake)
+        let notifs = MessageNotifications(backend: fake, defaults: isolatedDefaults())
         await notifs.handle(realtime(), openChatID: "19:other@thread.v2")
         let posted = await fake.posted
         XCTAssertEqual(posted.count, 1)
@@ -52,7 +58,7 @@ final class NotifTests: XCTestCase {
 
     func testDisabledPostsNothing() async {
         let fake = FakeNotificationCenter()
-        let notifs = await MessageNotifications(backend: fake)
+        let notifs = MessageNotifications(backend: fake, defaults: isolatedDefaults())
         await MainActor.run { notifs.enabled = false }
         await notifs.handle(realtime())
         let posted = await fake.posted
@@ -61,7 +67,7 @@ final class NotifTests: XCTestCase {
 
     func testRequestAuthorization() async {
         let fake = FakeNotificationCenter()
-        let notifs = await MessageNotifications(backend: fake)
+        let notifs = MessageNotifications(backend: fake, defaults: isolatedDefaults())
         await notifs.requestAuthorization()
         let authRequests = await fake.authRequests
         XCTAssertEqual(authRequests, 1)

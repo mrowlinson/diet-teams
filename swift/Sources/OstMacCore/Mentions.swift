@@ -114,6 +114,9 @@ public enum Mentions {
     /// learned from the Graph /me id as `8:orgid:{oid}`). Display-name
     /// match is the backup when protocol data lacks an MRI
     /// (content-mining path), unless `matchByName` is false (IDs only).
+    /// Mined inner text often carries the `@` prefix (`<at>@Me</at>`,
+    /// the shape core ships) — one leading `@` is stripped before the
+    /// name compare, so `@Me` matches owner `Me`.
     public static func mentionsOwner(_ mentions: [Mention], ownerMRI: String?, ownerDisplayName: String, matchByName: Bool = true) -> Bool {
         let wantName = ownerDisplayName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         for m in mentions {
@@ -121,7 +124,7 @@ public enum Mentions {
                 if mri.caseInsensitiveCompare(ownerMRI) == .orderedSame { return true }
                 continue // MRI present but different: not owner; do not name-match.
             }
-            if matchByName, !wantName.isEmpty, m.displayName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == wantName {
+            if matchByName, !wantName.isEmpty, bareName(m.displayName).lowercased() == wantName {
                 return true
             }
         }
@@ -129,17 +132,27 @@ public enum Mentions {
     }
 
     /// Channel-wide mention? Matches mentionType tag values Teams uses for
-    /// @channel/@team blasts, plus display-name spellings as fallback.
+    /// @channel/@team blasts, plus display-name spellings as fallback
+    /// (one leading `@` stripped, same as the owner gate).
     /// Protocol data varies here; both signals are checked explicitly.
     public static func mentionsChannelOrEveryone(_ mentions: [Mention]) -> Bool {
         for m in mentions {
             if let t = m.mentionType?.lowercased(),
                t == "channel" || t == "everyone" || t == "team" || t == "channelmessage"
             { return true }
-            let n = m.displayName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let n = bareName(m.displayName).lowercased()
             if n == "channel" || n == "everyone" || n == "team" { return true }
         }
         return false
+    }
+
+    /// Display name for matching: trimmed, one leading `@` stripped
+    /// (mined `<at>@Name</at>` inner text carries the sigil; the owner
+    /// name never does). Empty stays empty (never matches).
+    public static func bareName(_ displayName: String) -> String {
+        var n = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if n.hasPrefix("@") { n.removeFirst() }
+        return n.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     // MARK: Inline text
@@ -219,5 +232,26 @@ extension RealtimeMessage {
     /// matching covers the mined ones via the name-backup gate.
     public var mentions: [Mention] {
         Mentions.parse(content: raw ?? "")
+    }
+}
+
+extension ChatMessage {
+    /// Mentions mined from the unstripped body (same live path as
+    /// `RealtimeMessage.mentions`: `MessageInfo.raw` from core, Mention
+    /// spans + `<at>` tags, display-name matching). Nil/blank raw (old
+    /// payloads, local echoes) yields no mentions — never scan `content`
+    /// here (the bubble's `@token` fallback is render-only).
+    public var mentions: [Mention] {
+        Mentions.parse(content: raw ?? "")
+    }
+
+    /// True when this bubble mentions `ownName` (display-name backup;
+    /// MRI-carrying properties are unavailable on the live path).
+    /// Blank own names never match.
+    public func mentionsOwner(ownName: String?) -> Bool {
+        guard let own = ownName?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !own.isEmpty
+        else { return false }
+        return Mentions.mentionsOwner(mentions, ownerMRI: nil, ownerDisplayName: own)
     }
 }

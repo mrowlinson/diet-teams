@@ -17,6 +17,7 @@ public struct SidebarColumn: View {
     @ObservedObject private var reminders: RemindersViewModel
     @ObservedObject private var presence: PresenceStore
     @ObservedObject private var unread: UnreadStore
+    @ObservedObject private var mentions: MentionStore
     private let openChatID: String?
     private let initialFilter: String
     private let onOpenChannel: (String, String) -> Void
@@ -27,6 +28,7 @@ public struct SidebarColumn: View {
         reminders: RemindersViewModel,
         presence: PresenceStore = PresenceStore(),
         unread: UnreadStore = UnreadStore(),
+        mentions: MentionStore = MentionStore(),
         openChatID: String? = nil,
         initialSection: SidebarSection = .chats,
         initialFilter: String = "",
@@ -37,6 +39,7 @@ public struct SidebarColumn: View {
         self.reminders = reminders
         self.presence = presence
         self.unread = unread
+        self.mentions = mentions
         self.openChatID = openChatID
         self.initialFilter = initialFilter
         _section = State(initialValue: initialSection)
@@ -51,15 +54,21 @@ public struct SidebarColumn: View {
             DietSeamH()
             switch section {
             case .chats:
-                ChatListSidebar(model: chats, presence: presence, unread: unread, initialFilter: initialFilter)
+                ChatListSidebar(model: chats, presence: presence, unread: unread, mentions: mentions, initialFilter: initialFilter)
+                    .transition(.opacity)
             case .teams:
                 TeamsBrowser(
                     model: teams, openChatID: openChatID, unread: unread,
                     initialFilter: initialFilter, onOpen: onOpenChannel)
+                    .transition(.opacity)
             case .reminders:
                 RemindersBrowser(model: reminders)
+                    .transition(.opacity)
             }
         }
+        // System-default crossfade when the segmented switcher flips
+        // sections. Standard SwiftUI only (no custom drivers).
+        .animation(.default, value: section)
     }
 }
 

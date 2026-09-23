@@ -2,6 +2,7 @@
 // (Window ▸ Diagnostics, `--show-diagnostics` shot hook). Holds every
 // counter the slim status bar dropped (core, session, feed counts, call
 // test buttons), so the bar itself is just the Live dot + errors.
+// om-settings-trim: also hosts token health (moved from Settings).
 // Native grouped Form + LabeledContent throughout.
 
 import DietDesign
@@ -10,9 +11,15 @@ import SwiftUI
 
 struct DiagnosticsView: View {
     @EnvironmentObject private var state: AppState
+    // Token health moved here from Settings (om-settings-trim): one
+    // diagnostics home. Manual Run check only (never auto-fires).
+    @StateObject private var health = HealthStore()
 
     var body: some View {
         Form {
+            Section("Token health") {
+                HealthView(store: health)
+            }
             Section("Core") {
                 LabeledContent(
                     "Version",

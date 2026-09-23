@@ -485,13 +485,17 @@ public struct SharedFile: Decodable, Sendable, Identifiable, Equatable {
     public let created: String?
     public let modified: String?
     public let sender: String?
+    /// File-attachment GUID from the driveItem eTag (om-inline-docs): the
+    /// bubble-match key for `<attachment id>` refs. Nil on old core builds
+    /// and for items whose eTag carries no GUID.
+    public let attachment_id: String?
 
     public init(
         id: String, name: String, size: UInt64 = 0,
         mime: String? = nil, web_url: String? = nil,
         download_url: String? = nil, drive_id: String? = nil,
         created: String? = nil, modified: String? = nil,
-        sender: String? = nil
+        sender: String? = nil, attachment_id: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -503,6 +507,7 @@ public struct SharedFile: Decodable, Sendable, Identifiable, Equatable {
         self.created = created
         self.modified = modified
         self.sender = sender
+        self.attachment_id = attachment_id
     }
 
     /// "48211" -> "47.1 KB" (1 decimal, B/KB/MB/GB).

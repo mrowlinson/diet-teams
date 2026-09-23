@@ -92,7 +92,9 @@ final class CatchUpTests: XCTestCase {
         let mock = CatchUpCannedTransport(stub: "TL;DR: standup happened.")
         let cliMock = CatchUpCannedTransport(stub: "SHOULD NOT APPEAR")
         let (store, _) = store(transport: mock, cliTransport: cliMock)
-        store.adopt(CatchUpConfig(enabled: true, apiKey: "k"))
+        // Direct provider: HTTPS path (the CLI provider never uses
+        // it, even with a key — see CatchUpFallbackTests).
+        store.adopt(CatchUpConfig(provider: .openAICompatible, enabled: true, apiKey: "k"))
         await store.summarize(messages: thread(25))
         XCTAssertEqual(mock.prompts.count, 1)
         XCTAssertTrue(cliMock.prompts.isEmpty)
@@ -103,7 +105,7 @@ final class CatchUpTests: XCTestCase {
         let mock = CatchUpCannedTransport(stub: "ok")
         let cliMock = CatchUpCannedTransport(stub: "SHOULD NOT APPEAR")
         let (store, _) = store(transport: mock, cliTransport: cliMock)
-        store.adopt(CatchUpConfig(enabled: true, apiKey: "k"))
+        store.adopt(CatchUpConfig(provider: .openAICompatible, enabled: true, apiKey: "k"))
         let msgs = [
             ChatMessage(id: "m1", sender: "Priya", timestamp: "t", content: "ship the picker"),
             ChatMessage(id: "m2", sender: "Tom", timestamp: "t", content: "on it\nsecond line"),
@@ -125,7 +127,7 @@ final class CatchUpTests: XCTestCase {
         let mock = CatchUpCannedTransport(stub: "", failure: Boom())
         let cliMock = CatchUpCannedTransport(stub: "SHOULD NOT APPEAR")
         let (store, _) = store(transport: mock, cliTransport: cliMock)
-        store.adopt(CatchUpConfig(enabled: true, apiKey: "k"))
+        store.adopt(CatchUpConfig(provider: .openAICompatible, enabled: true, apiKey: "k"))
         await store.summarize(messages: thread(25))
         XCTAssertTrue(cliMock.prompts.isEmpty)
         if case .failed = store.state {} else {

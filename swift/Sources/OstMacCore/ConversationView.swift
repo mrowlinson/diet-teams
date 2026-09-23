@@ -1,4 +1,4 @@
-// ConversationView.swift — om-conv/om-convrich/om-shared/om-notes/om-cmdk/om-catchup/om-reactions/om-msgactions/om-replies/om-history/om-scroll/om-botposts/om-editdel/om-react-polish: SwiftUI chat window.
+// ConversationView.swift — om-conv/om-convrich/om-shared/om-notes/om-cmdk/om-catchup/om-reactions/om-msgactions/om-replies/om-history/om-scroll/om-botposts/om-editdel/om-react-polish/om-catchup-sheet-dismiss: SwiftUI chat window.
 // Rich bubbles (mentions, code spans, links), day separators, scroll-up
 // load-more paging, edited markers, failed-send retry, Shared files + Notes tabs,
 // GIF picker + thread catch-up + reaction picker/counts + copy/forward/save bubble menu,
@@ -21,10 +21,12 @@ public struct ConversationView: View {
     @State private var draft = ""
     @State private var tab: Int
     @State private var showGIFs = false
+    @State private var showMentions = false
     @AppStorage("tenorAPIKey") private var tenorAPIKey = ""
     @State private var showCatchUp: Bool
     @FocusState private var boxFocused: Bool
     @State private var gifHovering = false
+    @State private var mentionHovering = false
     /// Forward tap (om-msgactions): the host opens its jump-palette sheet
     /// (OstMac target owns JumpPaletteView; this module cannot import it).
     private let onForward: (ChatMessage) -> Void
@@ -93,7 +95,9 @@ public struct ConversationView: View {
                 // chat (see ChatTimelineView).
                 ChatTimelineView(
                     store: store, onForward: onForward,
-                    onEdit: beginEdit, onDelete: beginDelete)
+                    onEdit: beginEdit, onDelete: beginDelete,
+                    sharedFiles: shared.chatID == store.chatID ? shared.files : [],
+                    onOpenDoc: { _ = shared.open($0.file) })
                     .id("chat-\(store.chatID ?? "-")")
                 DietSeamH()
                 sendBox
@@ -107,10 +111,24 @@ public struct ConversationView: View {
         .frame(minWidth: 380, minHeight: 480)
         .background(DietColor.windowColor)
         .onChange(of: store.chatID) { syncShared() }
-        .sheet(isPresented: $showCatchUp) {
+        .onChange(of: store.messages.count) { syncShared() }
+        // om-catchup-sheet-dismiss: popover, not a window-modal sheet —
+        // only a popover dismisses on click-outside. Done → dismissViaDone,
+        // Esc → dismissViaEscape (explicit, works from any focus), and the
+        // onChange net → dismissViaClickOutside for click-outside + any
+        // other system dismiss. Every path closes AND resets the summary.
+        .popover(isPresented: $showCatchUp, arrowEdge: .top) {
             CatchUpView(
                 catchUp: catchUp, messages: store.messages,
-                autoRun: CommandLine.arguments.contains("--show-catchup"))
+                autoRun: CommandLine.arguments.contains("--show-catchup"),
+                onDone: { CatchUpSheet.dismissViaDone(presented: $showCatchUp, store: catchUp) })
+                .onExitCommand { CatchUpSheet.dismissViaEscape(presented: $showCatchUp, store: catchUp) }
+        }
+        .onChange(of: showCatchUp) { _, isOpen in
+            // System dismiss (click-outside, Esc): the binding is already
+            // false; the router call resets the summary state. Setting
+            // false → false never retriggers this handler.
+            if !isOpen { CatchUpSheet.dismissViaClickOutside(presented: $showCatchUp, store: catchUp) }
         }
         .sheet(item: $editingMessage) { msg in
             editSheet(for: msg)
@@ -195,9 +213,20 @@ public struct ConversationView: View {
 
     /// Lazily load the Shared tab when selected (no unsigned core calls
     /// from the Chat tab). Demo mode adopts canned files offline.
+    /// Om-inline-docs: the Chat tab also preloads the list (metadata
+    /// only, never bytes) when a visible bubble carries doc refs, so
+    /// inline rows can resolve; chats without refs never load.
     private func syncShared() {
-        guard tab == 1, let id = store.chatID else { return }
+        guard let id = store.chatID else { return }
         guard shared.chatID != id else { return }
+        if tab == 1 {
+            loadShared(id: id)
+        } else if tab == 0, InlineDocs.shouldPreload(messages: store.messages) {
+            loadShared(id: id)
+        }
+    }
+
+    private func loadShared(id: String) {
         if store.isDemo {
             shared.showDemo(chatID: id, files: DemoData.sharedFiles(for: id))
         } else {
@@ -242,8 +271,7 @@ public struct ConversationView: View {
             }
             if CatchUp.shouldOffer(messageCount: store.messages.count) {
                 Button("Catch up", systemImage: "sparkles") {
-                    catchUp.reset()
-                    showCatchUp = true
+                    CatchUpSheet.open(presented: $showCatchUp, store: catchUp)
                 }
                 .buttonStyle(.dietSecondary)
                 .help("Summarize this thread: TL;DR, key points, action items")
@@ -298,6 +326,33 @@ public struct ConversationView: View {
         VStack(spacing: 0) {
             replyChip
             HStack(spacing: DietSpace.sm) {
+                Button {
+                    showMentions = true
+                } label: {
+                    Image(systemName: "at")
+                        .font(.system(size: DietSize.iconMD))
+                        .foregroundStyle(DietColor.textSecondaryColor)
+                        .padding(.horizontal, DietSpace.xs)
+                        .padding(.vertical, DietSpace.xxs)
+                        .background(
+                            mentionHovering ? DietColor.wellColor : .clear,
+                            in: RoundedRectangle(cornerRadius: DietRadius.control))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: DietRadius.control)
+                                .stroke(DietColor.dividerColor, lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .onHover { mentionHovering = $0 }
+                .help("Mention someone (@)")
+                .popover(isPresented: $showMentions, arrowEdge: .top) {
+                    MentionPickerView(
+                        roster: MentionCompose.roster(
+                            from: store.messages, excluding: store.ownDisplayName)
+                    ) { name in
+                        insertMention(name)
+                        showMentions = false
+                    }
+                }
                 Button {
                     showGIFs = true
                 } label: {
@@ -366,6 +421,14 @@ public struct ConversationView: View {
         boxFocused = true
     }
 
+    /// Append a picked @-mention to the draft (`@Name `, MentionCompose
+    /// spacing); the user still hits Send. Plain text — the send path
+    /// is untouched.
+    private func insertMention(_ name: String) {
+        draft = MentionCompose.insert(name, into: draft)
+        boxFocused = true
+    }
+
     static func appendGIF(_ url: String, to draft: String) -> String {
         draft.isEmpty ? url : "\(draft) \(url)"
     }
@@ -382,6 +445,9 @@ public struct ConversationView: View {
 struct MessageBubble: View {
     let message: ChatMessage
     var failed: Bool = false
+    /// Own display name for the mine wash (om-mentions): mention spans
+    /// matching it get the accent highlight. Nil disables the wash.
+    var highlightName: String? = nil
     /// Resolved quote parent (om-replies); nil for plain bubbles and
     /// evicted parents (the fallback line covers the latter).
     var quoted: ChatMessage?
@@ -394,6 +460,13 @@ struct MessageBubble: View {
     /// Edit/delete (om-editdel): own bubbles only, top-level menu items.
     var onEdit: () -> Void = {}
     var onDelete: () -> Void = {}
+    /// Loaded Shared-tab files for this chat (om-inline-docs): doc refs
+    /// resolve against them in memory (no fetch). Empty until the Shared
+    /// tab (or ref preload) loads — unresolved refs keep old behavior.
+    var sharedFiles: [SharedFile] = []
+    /// Doc-row Open tap (om-inline-docs): the host previews the file
+    /// (SharedFilesStore.open parity). Default opens the SharePoint page.
+    var onOpenDoc: (InlineDoc) -> Void = { InlineDocs.open($0) }
 
     var body: some View {
         HStack(spacing: DietSpace.xs) {
@@ -418,6 +491,7 @@ struct MessageBubble: View {
                     let rendered = MessageRender.bubbleText(for: message)
                     let images = MessageRender.images(fromRaw: message.raw)
                     let posts = MessageRender.botPosts(fromRaw: message.raw ?? message.content)
+                    let docs = InlineDocs.docs(for: message, files: sharedFiles)
                     if !rendered.isEmpty {
                         // Selectable AND custom-menu: the bridge's local
                         // monitor swallows bubble right-clicks (popping
@@ -425,7 +499,7 @@ struct MessageBubble: View {
                         // left-drag selects, right-click reacts, Cmd+C
                         // copies the selection, and the bubble menu's Copy
                         // still takes the full message.
-                        Text(MessageRender.attributedBody(text: rendered, raw: message.raw))
+                        Text(MessageRender.attributedBody(text: rendered, raw: message.raw, highlighting: highlightName))
                             .font(DietType.body)
                             .tint(.accentColor)
                             .textSelection(.enabled)
@@ -445,7 +519,10 @@ struct MessageBubble: View {
                     if !posts.isEmpty {
                         BotPostRows(posts: posts)
                     }
-                    if MessageRender.showsPlaceholder(for: message) {
+                    if !docs.isEmpty {
+                        InlineDocRows(docs: docs, onOpen: onOpenDoc)
+                    }
+                    if MessageRender.showsPlaceholder(for: message), docs.isEmpty {
                         Text("Bot post unavailable")
                             .font(DietType.caption1)
                             .italic()

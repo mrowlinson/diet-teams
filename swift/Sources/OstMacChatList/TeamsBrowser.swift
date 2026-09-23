@@ -16,6 +16,8 @@ public struct TeamsBrowser: View {
     private let openChatID: String?
     private let onOpen: (String, String) -> Void
     @State private var searchText = ""
+    /// Collapsed team ids. Empty = all expanded (new teams arrive open).
+    @State private var collapsedTeamIDs: Set<String> = []
 
     public init(
         model: TeamsViewModel, openChatID: String? = nil,
@@ -36,6 +38,26 @@ public struct TeamsBrowser: View {
         "\(team) > #\(channel)"
     }
 
+    /// Disclosure state for one team. Filtering pins every visible team
+    /// open so matches are never hidden inside a collapsed group.
+    /// Pure helper so tests pin the expand/collapse contract.
+    public static func isExpanded(teamID: String, collapsed: Set<String>, filtering: Bool) -> Bool {
+        if filtering { return true }
+        return !collapsed.contains(teamID)
+    }
+
+    /// Next collapsed set after toggling one team. Pure helper so tests
+    /// pin the per-team toggle (no all-or-nothing side effects).
+    public static func toggled(_ collapsed: Set<String>, teamID: String) -> Set<String> {
+        var out = collapsed
+        if out.contains(teamID) {
+            out.remove(teamID)
+        } else {
+            out.insert(teamID)
+        }
+        return out
+    }
+
     public var body: some View {
         Group {
             switch model.state {
@@ -47,11 +69,13 @@ public struct TeamsBrowser: View {
                         .foregroundStyle(DietColor.textSecondaryColor)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .transition(.opacity)
             case .empty:
                 DietEmptyState(
                     systemImage: "person.3",
                     title: "No teams",
                     message: "Teams you join will appear here.")
+                    .transition(.opacity)
             case .error(let message):
                 DietEmptyState(
                     systemImage: "exclamationmark.triangle",
@@ -59,14 +83,20 @@ public struct TeamsBrowser: View {
                     message: message,
                     actionLabel: "Retry",
                     action: { model.refresh() })
+                    .transition(.opacity)
             case .loaded:
                 loadedList
+                    .transition(.opacity)
             }
         }
+        // System-default crossfade between content states (load lands
+        // softly instead of popping). Standard SwiftUI only.
+        .animation(.default, value: model.state)
     }
 
     private var loadedList: some View {
         let visible = TeamsViewModel.filtered(model.teams, query: searchText)
+        let filtering = !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         return VStack(spacing: 0) {
             DietSearchField("Filter teams", text: $searchText)
                 .padding(.horizontal, DietSpace.sm)
@@ -80,9 +110,13 @@ public struct TeamsBrowser: View {
                     actionLabel: "Clear search",
                     action: { searchText = "" })
             } else {
+                // Native outline: one DisclosureGroup per team inside a
+                // sidebar list (Finder/Mail chevron + animation language).
                 List {
                     ForEach(visible) { team in
-                        Section {
+                        DisclosureGroup(
+                            isExpanded: expandedBinding(for: team.id, filtering: filtering)
+                        ) {
                             if team.channels.isEmpty {
                                 Text("No channels")
                                     .font(DietType.callout)
@@ -97,14 +131,37 @@ public struct TeamsBrowser: View {
                                         .unreadBadge(unread.count(for: channel.id))
                                 }
                             }
-                        } header: {
+                        } label: {
                             TeamHeader(name: team.name)
                         }
                     }
                 }
                 .listStyle(.sidebar)
+                // System-default animation for chevron toggles (value 1)
+                // and for filter keystrokes (value 2: rows match/unmatch
+                // plus pinned-open expansion). Standard SwiftUI only.
+                .animation(.default, value: collapsedTeamIDs)
+                .animation(.default, value: searchText)
             }
         }
+    }
+
+    /// Per-team disclosure binding. While filtering the getter pins open;
+    /// the setter still records intent so clearing the filter lands where
+    /// the user left it.
+    private func expandedBinding(for teamID: String, filtering: Bool) -> Binding<Bool> {
+        Binding(
+            get: {
+                Self.isExpanded(teamID: teamID, collapsed: collapsedTeamIDs, filtering: filtering)
+            },
+            set: { wantExpanded in
+                if wantExpanded {
+                    collapsedTeamIDs.remove(teamID)
+                } else {
+                    collapsedTeamIDs.insert(teamID)
+                }
+            }
+        )
     }
 }
 

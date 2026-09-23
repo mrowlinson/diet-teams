@@ -4,27 +4,87 @@
 // threads; the Settings section holds the provider picker + BYO key +
 // base URL + model. Both show the privacy note (thread text leaves
 // the machine).
+//
+// om-catchup-sheet-dismiss: presented as a popover (a window-modal
+// sheet cannot dismiss on click-outside) with Done + Esc +
+// click-outside dismiss; every close resets the summary state.
 import AppKit
 import SwiftUI
+
+// MARK: - Sheet dismissal routing
+
+/// One funnel for every catch-up dismiss intent. `close(presented:store:)`
+/// closes the presentation AND resets the summary state, so a reopen
+/// always starts from `.idle`. Each intent keeps its own entry point so
+/// regression tests pin all three paths:
+///   - Done button → `dismissViaDone`
+///   - Esc (`.onExitCommand`, fires from any focus — no trap) →
+///     `dismissViaEscape`
+///   - click-outside / any other system dismiss (binding `onChange`) →
+///     `dismissViaClickOutside`
+///
+/// All three are idempotent: dismissing an already-closed sheet is a
+/// no-op that still leaves the store at `.idle`.
+@MainActor
+public enum CatchUpSheet {
+    public static func open(presented: Binding<Bool>, store: CatchUpStore) {
+        store.reset()
+        presented.wrappedValue = true
+    }
+
+    public static func dismissViaDone(presented: Binding<Bool>, store: CatchUpStore) {
+        close(presented: presented, store: store)
+    }
+
+    public static func dismissViaEscape(presented: Binding<Bool>, store: CatchUpStore) {
+        close(presented: presented, store: store)
+    }
+
+    public static func dismissViaClickOutside(presented: Binding<Bool>, store: CatchUpStore) {
+        close(presented: presented, store: store)
+    }
+
+    private static func close(presented: Binding<Bool>, store: CatchUpStore) {
+        presented.wrappedValue = false
+        store.reset()
+    }
+}
 
 /// Sheet content: one Summarize tap → TL;DR/key-points/action-items.
 public struct CatchUpView: View {
     @ObservedObject private var catchUp: CatchUpStore
     private let messages: [ChatMessage]
     private let autoRun: Bool
+    private let onDone: () -> Void
 
     /// - autoRun: summarize once on appear (the --show-catchup shot
     ///   hook only; real taps always come from the button).
-    public init(catchUp: CatchUpStore, messages: [ChatMessage], autoRun: Bool = false) {
+    /// - onDone: Done / Esc tap. The host routes it through
+    ///   `CatchUpSheet.dismissViaDone` (close + state reset).
+    public init(
+        catchUp: CatchUpStore, messages: [ChatMessage], autoRun: Bool = false,
+        onDone: @escaping () -> Void = {}
+    ) {
         self.catchUp = catchUp
         self.messages = messages
         self.autoRun = autoRun
+        self.onDone = onDone
     }
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Thread catch-up")
-                .font(.headline)
+            HStack {
+                Text("Thread catch-up")
+                    .font(.headline)
+                Spacer(minLength: 12)
+                // Native macOS dismiss: a visible Done button that ALSO
+                // owns .cancelAction, so Esc dismisses from any focus
+                // (no focus trap). Summarize keeps .defaultAction (Return);
+                // the two shortcuts never conflict.
+                Button("Done", action: onDone)
+                    .buttonStyle(.bordered)
+                    .keyboardShortcut(.cancelAction)
+            }
             Text(CatchUp.privacyNote)
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -82,11 +142,44 @@ public struct CatchUpView: View {
                 .font(.body)
                 .foregroundStyle(.red)
                 .textSelection(.enabled)
+            if catchUp.lastError == .cliMissing {
+                CatchUpInstallPrompt()
+            }
             Button("Retry") {
                 Task { await catchUp.summarize(messages: messages) }
             }
             .buttonStyle(.link)
         }
+    }
+}
+
+/// Missing-CLI install prompt: what to run + where to get it. Shown
+/// in the sheet's failed state and in Settings when the CLI provider
+/// is selected but the binary is missing.
+public struct CatchUpInstallPrompt: View {
+    public init() {}
+
+    public var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("To use the OpenCode CLI provider:")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text("1. Install: \(CatchUpCLI.installCommand)")
+                .font(.caption)
+                .monospaced()
+                .textSelection(.enabled)
+            Text("2. Sign in: \(CatchUpCLI.loginCommand)")
+                .font(.caption)
+                .monospaced()
+                .textSelection(.enabled)
+            if let url = URL(string: CatchUpCLI.installSite) {
+                Link("Install opencode CLI", destination: url)
+                    .font(.caption)
+            }
+        }
+        .padding(8)
+        .background(.secondary.opacity(0.12))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 }
 
@@ -110,23 +203,61 @@ public struct CatchUpSettingsSection: View {
             .onChange(of: catchUp.config.provider) { _, provider in
                 catchUp.selectProvider(provider)
             }
-            TextField("Base URL", text: $catchUp.config.baseURL)
-                .textSelection(.enabled)
+            if catchUp.config.provider == .openCodeCLI {
+                HStack {
+                    Text("opencode CLI")
+                    Spacer()
+                    Text(catchUp.cliAvailable ? "Found" : "Missing")
+                        .foregroundStyle(catchUp.cliAvailable ? .green : .red)
+                    Button("Check again") {
+                        catchUp.refreshCLIStatus()
+                    }
+                    .buttonStyle(.link)
+                }
+                .font(.caption)
+                .onAppear {
+                    catchUp.refreshCLIStatus()
+                }
+                if !catchUp.cliAvailable {
+                    CatchUpInstallPrompt()
+                }
+            }
+            // Dead-row trim (om-settings-trim): the CLI transport
+            // ignores baseURL (exclusive routing: CLI-selected never
+            // uses HTTPS, even with a key set), so the row hides
+            // exactly when it would do nothing.
+            if CatchUp.usesBaseURL(
+                provider: catchUp.config.provider, apiKey: catchUp.config.apiKey)
+            {
+                TextField("Base URL", text: $catchUp.config.baseURL)
+                    .textSelection(.enabled)
+            }
             TextField("Model", text: $catchUp.config.model)
             SecureField("API key", text: $catchUp.config.apiKey)
             Text("The key is kept in your Mac keychain, never on disk.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            if catchUp.config.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                Text("No key — the OpenCode CLI provider uses your `opencode auth login` (free tier).")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else {
-                Text("Key set — uses direct HTTPS.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+            keyCaption
             Text(CatchUp.privacyNote)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    /// Key-status caption: the CLI note asserts exclusive routing (a
+    /// saved key never switches the CLI provider to HTTPS — it
+    /// applies to the direct providers); direct providers require a
+    /// key.
+    @ViewBuilder
+    private var keyCaption: some View {
+        let keyEmpty = catchUp.config.apiKey
+            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if catchUp.config.provider == .openCodeCLI {
+            Text("CLI-only: shells out to opencode (your `opencode auth login`, free tier) and never uses HTTPS. A saved key applies to the direct providers.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } else if keyEmpty {
+            Text("Required — direct requests fail without a key.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

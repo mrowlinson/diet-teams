@@ -158,7 +158,7 @@ struct OstMacAppMain: App {
         }
         .defaultSize(width: 440, height: 480)
         Settings {
-            SettingsView(auth: state.auth, catchUp: state.catchUp)
+            SettingsView(auth: state.auth, catchUp: state.catchUp, notifs: state.notifs)
         }
         .commands { OstMacCommands() }
     }
@@ -205,6 +205,7 @@ final class AppState: ObservableObject {
     let feed = RealtimeFeed()
     let notifs = MessageNotifications()
     let unread = UnreadStore()
+    let mentions = MentionStore()
     let auth = AuthViewModel()
     let presence = PresenceStore()
     let call: CallStore
@@ -270,7 +271,7 @@ final class AppState: ObservableObject {
             // canned summary, no network.
             let canned = CatchUpCannedTransport(stub: Self.catchUpDemoSummary)
             let store = CatchUpStore(
-                transport: canned,
+                cliTransport: canned,
                 defaults: UserDefaults(suiteName: "shot-catchup") ?? .standard,
                 keyStore: CatchUpMemoryKeyStore())
             store.adopt(CatchUpConfig(enabled: true, apiKey: "demo"))
@@ -326,6 +327,7 @@ final class AppState: ObservableObject {
             for (chatID, peer) in DemoData.peerPresence() {
                 presence.adoptChatPeer(chatID: chatID, response: peer)
             }
+            mentions.adopt(DemoData.mentionedChatIDs)
         } else {
             chats = ChatListViewModel()
             teams = TeamsViewModel()
@@ -401,14 +403,24 @@ final class AppState: ObservableObject {
             // working auth regardless.
             signedIn = true
         }
-        // Restore: explicit --chat wins, else last selection.
-        let target = preselectID ?? persistedSelection
-        if let id = target {
-            if chats.chats.contains(where: { $0.id == id }) {
-                chats.selectedChatID = id // sink opens it
-            } else {
-                open(chatID: id, chatName: preselectName)
-            }
+        // Restore (om-demo-select): explicit --chat wins, else the last
+        // selection — resolved against the loaded list, never blind. A
+        // restored id absent from the list falls back to the first chat
+        // (no direct open, no 404); demo threads never load outside the
+        // demo flags.
+        let action = SelectionRestore.resolve(
+            explicit: preselectID, restored: persistedSelection,
+            chats: chats.chats, isDemo: isDemo)
+        if !isDemo, let stale = persistedSelection, DemoData.isDemoID(stale) {
+            persistedSelection = nil // scrub pre-fix demo default
+        }
+        switch action {
+        case .select(let id):
+            chats.selectedChatID = id // sink opens it
+        case .openDirect(let id):
+            open(chatID: id, chatName: preselectName)
+        case .none:
+            break
         }
         if !isDemo {
             presence.refreshOwnSoon() // own dot; non-critical on failure
@@ -491,9 +503,16 @@ final class AppState: ObservableObject {
     }
 
     private func open(chatID id: String, chatName: String?) {
+        // Demo threads never load outside the demo flags (a stale
+        // demo-react default 404d the installed build); demo
+        // selections never reach shared defaults either.
+        guard isDemo || !DemoData.isDemoID(id) else { return }
         openChatID = id
-        persistedSelection = id
+        if SelectionRestore.shouldPersist(chatID: id) {
+            persistedSelection = id
+        }
         unread.markRead(chatID: id) // om-notifbadge: opening marks read
+        mentions.markRead(chatID: id) // om-mentions: opening clears the flag
         if isDemo {
             let name = chatName ?? DemoData.name(for: id) ?? "Conversation"
             var msgs = DemoData.messages(for: id)
@@ -597,9 +616,20 @@ final class AppState: ObservableObject {
         let chatName = chats.chats.first(where: { $0.id == msg.chatID })?.name ?? ""
         let decision = rulesDecision(for: msg, chatName: chatName)
         unread.ingest(decision: decision, chatID: msg.chatID, openChatID: openChatID)
+        mentions.ingest(
+            realtime: msg, ownName: conv.ownDisplayName,
+            ownerMRI: resolvedOwnerMRI, openChatID: openChatID)
         maybeNotify(msg, chatName: chatName, decision: decision)
         guard msg.isFor(chatID: openChatID) else { return }
         conv.ingest(realtime: msg)
+    }
+
+    /// Owner MRI for live-event matching: configured value wins, else
+    /// the Graph-learned one (nil until it lands — the display-name
+    /// backup covers the gap). Shared by the rules decision and the
+    /// mention tracker so both gates see the same identity.
+    private var resolvedOwnerMRI: String? {
+        rulesConfig.owner.mri.isEmpty ? ownerMRI : rulesConfig.owner.mri
     }
 
     /// One rules decision for a live event (owns the meeting-start
@@ -608,15 +638,16 @@ final class AppState: ObservableObject {
     private func rulesDecision(for msg: RealtimeMessage, chatName: String) -> ChatFilter.Decision {
         var cfg = rulesConfig
         if let own = conv.ownDisplayName, !own.isEmpty { cfg.owner.displayName = own }
-        let mri: String? = cfg.owner.mri.isEmpty ? ownerMRI : cfg.owner.mri
         return ChatFilter.decide(
-            message: msg, chatDisplayName: chatName, ownerMRI: mri,
+            message: msg, chatDisplayName: chatName, ownerMRI: resolvedOwnerMRI,
             rules: cfg, meetingDedup: &meetingDedup, now: Date())
     }
 
     /// Rules-based banner for one live event (om-rules: TN ChatFilter
-    /// port). Posts through Notifier only on .notify.
+    /// port). Posts through Notifier only on .notify. Respects the
+    /// Settings banner toggle (om-settings-trim) so OFF is really off.
     private func maybeNotify(_ msg: RealtimeMessage, chatName: String, decision: ChatFilter.Decision) {
+        guard notifs.enabled else { return }
         guard case .notify(let reason) = decision else { return }
         let title: String
         let body: String
@@ -730,6 +761,7 @@ final class AppState: ObservableObject {
             feed.stop()
             presence.clear()
             unread.markAllRead() // om-notifbadge: dock clears on sign-out
+            mentions.markAllRead() // om-mentions: flags clear on sign-out
             refreshFeedStatus()
         default:
             break
@@ -760,6 +792,7 @@ struct RootView: View {
                         reminders: state.reminders,
                         presence: state.presence,
                         unread: state.unread,
+                        mentions: state.mentions,
                         openChatID: state.openChatID,
                         initialSection: RootView.initialSection,
                         initialFilter: OstMacAppMain.filterQuery(args: CommandLine.arguments),
