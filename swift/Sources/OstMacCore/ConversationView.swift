@@ -1,4 +1,4 @@
-// ConversationView.swift — om-conv/om-convrich/om-shared/om-notes/om-cmdk/om-catchup/om-reactions/om-msgactions/om-replies: SwiftUI chat window.
+// ConversationView.swift — om-conv/om-convrich/om-shared/om-notes/om-cmdk/om-catchup/om-reactions/om-msgactions/om-replies/om-scroll: SwiftUI chat window.
 // Rich bubbles (mentions, code spans, links), day separators, scroll-up
 // load-more paging, edited markers, failed-send retry, Shared files + Notes tabs,
 // GIF picker + thread catch-up + reaction picker/counts + copy/forward/save bubble menu,
@@ -18,7 +18,6 @@ public struct ConversationView: View {
     /// False for 1:1 chats (header shows the chatmate dot).
     private let isGroup: Bool
     @State private var draft = ""
-    @State private var lastSeenID: String?
     @State private var tab: Int
     @State private var showGIFs = false
     @AppStorage("tenorAPIKey") private var tenorAPIKey = ""
@@ -72,44 +71,10 @@ public struct ConversationView: View {
             .onChange(of: tab) { syncShared() }
             DietSeamH()
             if tab == 0 {
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: DietSpace.sm) {
-                            loadMoreRow
-                            if store.messages.isEmpty, !store.loading {
-                                DietEmptyState(
-                                    systemImage: "bubble.left.and.bubble.right",
-                                    title: "No messages yet",
-                                    message: "Start the conversation below — your message appears here.")
-                            }
-                            ForEach(sections, id: \.key) { section in
-                                DietDaySeparator(section.label)
-                                ForEach(section.messages) { msg in
-                                    MessageBubble(
-                                        message: msg,
-                                        failed: store.failedIDs.contains(msg.id),
-                                        quoted: store.quotedParent(for: msg),
-                                        onRetry: { _ = store.retry(id: msg.id) },
-                                        onReact: { store.toggleReaction(messageID: msg.id, emoji: $0) },
-                                        onForward: { onForward(msg) },
-                                        onReply: { store.beginReply(to: msg) }
-                                    )
-                                    .id(msg.id)
-                                }
-                            }
-                        }
-                        .padding(DietSpace.md)
-                    }
-                    .defaultScrollAnchor(.bottom)
-                    .onChange(of: store.messages.count) {
-                        scrollOnNew(proxy)
-                    }
-                    .onAppear {
-                        store.openIfNeeded()
-                        scrollToBottom(proxy, animated: false)
-                        lastSeenID = store.messages.last?.id
-                    }
-                }
+                // Per-chat identity: fresh scroll model/sentinel/settle per
+                // chat (see ChatTimelineView).
+                ChatTimelineView(store: store, onForward: onForward)
+                    .id("chat-\(store.chatID ?? "-")")
                 DietSeamH()
                 sendBox
             } else if tab == 1 {
@@ -138,23 +103,6 @@ public struct ConversationView: View {
             shared.showDemo(chatID: id, files: DemoData.sharedFiles(for: id))
         } else {
             shared.open(chatID: id)
-        }
-    }
-
-    private var sections: [MessageRender.DaySection] {
-        MessageRender.daySections(store.messages)
-    }
-
-    private var loadMoreRow: some View {
-        Group {
-            if store.loadingMore {
-                HStack { Spacer(); ProgressView().controlSize(.small); Spacer() }
-            } else if store.canLoadMore {
-                Button("Load older messages") { store.loadMore() }
-                    .buttonStyle(.dietSecondary)
-                    .frame(maxWidth: .infinity)
-                    .onAppear { store.loadMore() }
-            }
         }
     }
 
@@ -323,25 +271,6 @@ public struct ConversationView: View {
         draft.isEmpty ? url : "\(draft) \(url)"
     }
 
-    /// Auto-scroll only when the tail actually advanced (new message), never
-    /// for top-prepended history pages (count grows but last id is stable).
-    private func scrollOnNew(_ proxy: ScrollViewProxy) {
-        let current = store.messages.last?.id
-        guard current != lastSeenID else { return }
-        lastSeenID = current
-        scrollToBottom(proxy)
-    }
-
-    private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool = true) {
-        guard let last = store.messages.last else { return }
-        DispatchQueue.main.async {
-            if animated {
-                withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
-            } else {
-                proxy.scrollTo(last.id, anchor: .bottom)
-            }
-        }
-    }
 }
 
 struct MessageBubble: View {
