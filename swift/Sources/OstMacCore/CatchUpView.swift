@@ -162,27 +162,42 @@ public struct CatchUpSettingsSection: View {
                     CatchUpInstallPrompt()
                 }
             }
-            TextField("Base URL", text: $catchUp.config.baseURL)
-                .textSelection(.enabled)
+            // Dead-row trim (om-settings-trim): the CLI transport
+            // ignores baseURL (exclusive routing: CLI-selected never
+            // uses HTTPS, even with a key set), so the row hides
+            // exactly when it would do nothing.
+            if CatchUp.usesBaseURL(
+                provider: catchUp.config.provider, apiKey: catchUp.config.apiKey)
+            {
+                TextField("Base URL", text: $catchUp.config.baseURL)
+                    .textSelection(.enabled)
+            }
             TextField("Model", text: $catchUp.config.model)
             SecureField("API key", text: $catchUp.config.apiKey)
             Text("The key is kept in your Mac keychain, never on disk.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            if catchUp.config.provider == .openCodeCLI {
-                Text("CLI-only: shells out to opencode (your `opencode auth login`, free tier) and never uses HTTPS. A saved key applies to the direct providers.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else if catchUp.config.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                Text("Direct providers need an API key.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else {
-                Text("Key set — uses direct HTTPS.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+            keyCaption
             Text(CatchUp.privacyNote)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    /// Key-status caption: the CLI note asserts exclusive routing (a
+    /// saved key never switches the CLI provider to HTTPS — it
+    /// applies to the direct providers); direct providers require a
+    /// key.
+    @ViewBuilder
+    private var keyCaption: some View {
+        let keyEmpty = catchUp.config.apiKey
+            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if catchUp.config.provider == .openCodeCLI {
+            Text("CLI-only: shells out to opencode (your `opencode auth login`, free tier) and never uses HTTPS. A saved key applies to the direct providers.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } else if keyEmpty {
+            Text("Required — direct requests fail without a key.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

@@ -158,7 +158,7 @@ struct OstMacAppMain: App {
         }
         .defaultSize(width: 440, height: 480)
         Settings {
-            SettingsView(auth: state.auth, catchUp: state.catchUp)
+            SettingsView(auth: state.auth, catchUp: state.catchUp, notifs: state.notifs)
         }
         .commands { OstMacCommands() }
     }
@@ -644,8 +644,10 @@ final class AppState: ObservableObject {
     }
 
     /// Rules-based banner for one live event (om-rules: TN ChatFilter
-    /// port). Posts through Notifier only on .notify.
+    /// port). Posts through Notifier only on .notify. Respects the
+    /// Settings banner toggle (om-settings-trim) so OFF is really off.
     private func maybeNotify(_ msg: RealtimeMessage, chatName: String, decision: ChatFilter.Decision) {
+        guard notifs.enabled else { return }
         guard case .notify(let reason) = decision else { return }
         let title: String
         let body: String

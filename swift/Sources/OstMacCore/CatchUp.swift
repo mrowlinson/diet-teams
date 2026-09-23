@@ -59,6 +59,18 @@ public enum CatchUp {
         messageCount >= threshold
     }
 
+    /// True when the Base URL affects requests: direct providers
+    /// always use it; the CLI provider never does (exclusive routing:
+    /// CLI-selected shells out and ignores baseURL even with a key
+    /// set). The Settings row hides exactly when this is false, so no
+    /// dead row is ever shown.
+    /// - Note: `apiKey` is kept for caller compatibility; it plays no
+    ///   role under exclusive routing.
+    public static func usesBaseURL(provider: CatchUpProvider, apiKey: String) -> Bool {
+        _ = apiKey
+        return provider != .openCodeCLI
+    }
+
     /// "{base}/chat/completions" — exactly one join slash.
     public static func endpoint(baseURL: String) -> String {
         baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
