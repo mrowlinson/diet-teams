@@ -148,13 +148,19 @@ public enum MessageRender {
     /// Runs over `renderText` (shortcodes expanded), so spans land on what
     /// the bubble shows.
     public static func attributedBody(for message: ChatMessage) -> AttributedString {
-        let text = renderText(for: message)
+        attributedBody(text: renderText(for: message), raw: message.raw)
+    }
+
+    /// Styled body over explicit text. The bubble passes `bubbleText`
+    /// (bot posts drop attachment-block prose), so spans land on what
+    /// the bubble shows; miners still read `raw`.
+    static func attributedBody(text: String, raw: String?) -> AttributedString {
         var a = AttributedString(text)
         func convert(_ r: Range<String.Index>) -> Range<AttributedString.Index>? {
             Range(r, in: a)
         }
         // Mentions (names mined from <at> tags; fall back to @token scan).
-        var names = mentions(fromRaw: message.raw)
+        var names = mentions(fromRaw: raw)
         if names.isEmpty {
             names = mentionTokens(in: text)
         }
@@ -165,7 +171,7 @@ public enum MessageRender {
             }
         }
         // Code blocks from <pre> + backtick spans.
-        for b in codeBlocks(fromRaw: message.raw) {
+        for b in codeBlocks(fromRaw: raw) {
             for r in ranges(of: b, in: text) {
                 guard let ar = convert(r) else { continue }
                 a[ar].font = .body.monospaced()
@@ -242,9 +248,12 @@ public enum MessageRender {
     static func attributes(of tag: String) -> [String: String] {
         var attrs: [String: String] = [:]
         var i = tag.startIndex
-        // Skip "<img".
-        if tag.lowercased().hasPrefix("<img") {
-            i = tag.index(i, offsetBy: 4)
+        // Skip "<tagname" (any tag: img, a, attachment, ...).
+        if tag.hasPrefix("<") {
+            i = tag.index(after: i)
+            while i < tag.endIndex, tag[i].isLetter || tag[i].isNumber {
+                i = tag.index(after: i)
+            }
         }
         func skipSpace() {
             while i < tag.endIndex, tag[i].isWhitespace || tag[i] == "/" { i = tag.index(after: i) }
@@ -397,5 +406,301 @@ public enum MessageRender {
             i = j
         }
         return out
+    }
+
+    // MARK: - Bot posts (om-botposts lane)
+
+    /// One RSS/bot/card row: a title plus an optional link target.
+    /// Mined from `raw` (attachment blocks or card JSON). The bubble
+    /// renders one native row per post, so structured posts never
+    /// collapse into a blank bubble or a raw JSON blob.
+    public struct BotPost: Sendable, Equatable {
+        public let title: String
+        public let url: String?
+
+        public init(title: String, url: String? = nil) {
+            self.title = title
+            self.url = url
+        }
+    }
+
+    /// Card content-type markers (same set as ost `has_card_payload`).
+    static let cardMarkers = [
+        "o365connector", "adaptivecard", "messagecard",
+        "application/vnd.microsoft",
+    ]
+
+    /// Max rows per bubble (RSS digests are small; caps a hostile blob).
+    static let maxBotRows = 10
+
+    /// Rows for one message: `<attachment>` blocks first (title + link
+    /// mined from each block's inner HTML), else a card-JSON payload
+    /// mined for title + URL. Anything else (plain text, images) yields
+    /// no rows. Callers pass `message.raw ?? message.content`.
+    public static func botPosts(fromRaw raw: String?) -> [BotPost] {
+        guard let raw,
+              !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return [] }
+        let blocks = innerTexts(of: "attachment", in: raw)
+        if !blocks.isEmpty {
+            return blocks.compactMap(postFromAttachment).prefix(maxBotRows).map { $0 }
+        }
+        guard looksLikeJSONObject(raw) else { return [] }
+        return cardPosts(fromJSON: raw)
+    }
+
+    /// One attachment block → one row. The first link wins: its anchor
+    /// text is the title (stripped block text when the anchor is bare,
+    /// the URL itself when that is empty too). Link-less blocks fall
+    /// back to their collapsed text; empty blocks are unparseable (nil).
+    static func postFromAttachment(_ inner: String) -> BotPost? {
+        if let link = links(in: inner).first(where: { !$0.href.isEmpty }) {
+            let anchor = link.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            let stripped = decodeEntities(stripTags(inner))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let title = !anchor.isEmpty ? anchor : (!stripped.isEmpty ? stripped : link.href)
+            return BotPost(title: title, url: link.href)
+        }
+        let title = decodeEntities(stripTags(inner))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return title.isEmpty ? nil : BotPost(title: String(title.prefix(140)))
+    }
+
+    /// `(anchor text, href)` pairs in order. The open match requires a
+    /// tag boundary after `<a`, so `<attachment>`/`<at>` never match.
+    /// Tag/attr names are case-insensitive; href-less anchors are dropped.
+    static func links(in html: String) -> [(text: String, href: String)] {
+        var out: [(text: String, href: String)] = []
+        var rest = html[...]
+        while let s = rest.range(of: "<a", options: .caseInsensitive) {
+            let afterA = rest.index(s.lowerBound, offsetBy: 2, limitedBy: rest.endIndex)
+            guard let afterA, afterA < rest.endIndex else { break }
+            let boundary = rest[afterA]
+            guard boundary.isWhitespace || boundary == ">" || boundary == "/" else {
+                rest = rest[afterA...]
+                continue
+            }
+            guard let gt = rest[s.upperBound...].firstIndex(of: ">"),
+                  let e = rest[gt...].range(of: "</a>", options: .caseInsensitive)
+            else { break }
+            let open = String(rest[s.lowerBound ... gt])
+            let href = attributes(of: open)["href"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !href.isEmpty {
+                let text = decodeEntities(stripTags(String(
+                    rest[rest.index(after: gt) ..< e.lowerBound])))
+                out.append((text: text, href: decodeEntities(href)))
+            }
+            rest = rest[e.upperBound...]
+        }
+        return out
+    }
+
+    /// Trimmed text starting with `{` (a probable JSON payload).
+    static func looksLikeJSONObject(_ text: String) -> Bool {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return t.hasPrefix("{") && t.contains("}")
+    }
+
+    /// True for card JSON: a JSON object carrying a card content-type
+    /// marker. Such blobs never render as bubble text (rows or the
+    /// placeholder replace them).
+    public static func isCardPayload(_ text: String) -> Bool {
+        guard looksLikeJSONObject(text) else { return false }
+        let lower = text.lowercased()
+        return cardMarkers.contains { lower.contains($0) }
+    }
+
+    /// True when the bubble text must be hidden: card-marked JSON, or
+    /// any JSON object that already yielded rows (raw JSON is noise
+    /// once rows exist). Plain prose + rows coexist (mixed bot posts).
+    public static func suppressText(content: String, posts: [BotPost]) -> Bool {
+        isCardPayload(content)
+            || (looksLikeJSONObject(content) && !posts.isEmpty)
+    }
+
+    /// Body text for the bubble's text area: `renderText`, except bot
+    /// posts show only the prose OUTSIDE attachment blocks (the rows
+    /// carry the block titles, so showing both would duplicate them),
+    /// and suppressed JSON shows nothing. Replies keep `renderText`
+    /// (the quote block owns attribution; never rewrite reply bodies).
+    public static func bubbleText(for message: ChatMessage) -> String {
+        let posts = botPosts(fromRaw: message.raw ?? message.content)
+        if suppressText(content: message.content, posts: posts) { return "" }
+        guard !posts.isEmpty, message.reply_to == nil, let raw = message.raw else {
+            return renderText(for: message)
+        }
+        return expandShortcodes(outsideText(fromRaw: raw))
+    }
+
+    /// Stripped text with `<attachment>…</attachment>` spans removed.
+    static func outsideText(fromRaw raw: String) -> String {
+        decodeEntities(stripTags(removeAttachmentBlocks(from: raw)))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Raw HTML minus attachment spans (case-insensitive). Unterminated
+    /// blocks are kept (malformed input still renders as text).
+    static func removeAttachmentBlocks(from html: String) -> String {
+        var result = ""
+        var rest = html[...]
+        let open = "<attachment", close = "</attachment>"
+        while let s = rest.range(of: open, options: .caseInsensitive),
+              let gt = rest[s.upperBound...].firstIndex(of: ">"),
+              let e = rest[gt...].range(of: close, options: .caseInsensitive)
+        {
+            result += rest[..<s.lowerBound]
+            rest = rest[e.upperBound...]
+        }
+        result += rest
+        return result
+    }
+
+    /// True when the bubble would otherwise render empty but carries a
+    /// server payload: no visible text, no images, no rows, yet
+    /// content/raw is non-blank. The bubble shows the placeholder
+    /// instead — a thread never shows a blank bubble for server data.
+    /// Truly empty synthetic bubbles (no content, no raw) stay blank.
+    public static func showsPlaceholder(for message: ChatMessage) -> Bool {
+        let posts = botPosts(fromRaw: message.raw ?? message.content)
+        if !posts.isEmpty { return false }
+        if !bubbleText(for: message).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return false
+        }
+        if !images(fromRaw: message.raw).isEmpty { return false }
+        let contentBlank = message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let rawBlank = (message.raw ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return !(contentBlank && rawBlank)
+    }
+
+    /// Card JSON → rows: the top object plus each `attachments[]`
+    /// element (Adaptive cards nest under `content`). Each candidate
+    /// contributes title (first `title`/`text`/`summary`/`name` string)
+    /// + URL (link-keyed first, else any http(s) string). Candidates
+    /// with neither are skipped (unparseable → the placeholder covers
+    /// the bubble).
+    static func cardPosts(fromJSON text: String) -> [BotPost] {
+        guard let data = text.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data)
+        else { return [] }
+        var candidates: [Any] = [json]
+        if let top = json as? [String: Any],
+           let attachments = top["attachments"] as? [Any]
+        {
+            candidates += attachments
+        }
+        var out: [BotPost] = []
+        for candidate in candidates.prefix(maxBotRows) {
+            let obj = (candidate as? [String: Any])?["content"] ?? candidate
+            let title = firstTitle(in: obj, depth: 6)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let url = firstKeyedURL(in: obj, depth: 6)
+                ?? firstURLString(in: obj, depth: 6).flatMap { firstURL(in: $0) }
+            if title.isEmpty, url == nil { continue }
+            out.append(BotPost(
+                title: title.isEmpty ? url! : title,
+                url: url))
+        }
+        return out
+    }
+
+    /// First http(s) URL under a link-ish key (`uri`, `url`, `target`,
+    /// `openUri`, `contentUrl`, `webUrl`, `href`), depth-capped. Keys
+    /// are matched case-insensitively. Preferred over any-URL so
+    /// incidental URLs (`@context`, avatars) never win over the card's
+    /// real target.
+    static func firstKeyedURL(in value: Any, depth: Int) -> String? {
+        guard depth > 0 else { return nil }
+        if let dict = value as? [String: Any] {
+            for (key, found) in dict
+                where ["url", "uri", "target", "openuri", "contenturl", "weburl", "href"]
+                .contains(key.lowercased())
+            {
+                if let s = found as? String, let url = firstURL(in: s) { return url }
+            }
+            for (_, found) in dict {
+                if let hit = firstKeyedURL(in: found, depth: depth - 1) { return hit }
+            }
+            return nil
+        }
+        if let array = value as? [Any] {
+            for element in array {
+                if let hit = firstKeyedURL(in: element, depth: depth - 1) { return hit }
+            }
+        }
+        return nil
+    }
+
+    /// First non-empty string under a title-ish key, depth-capped.
+    /// Keys are matched case-insensitively (`Title`, `TITLE`, ...).
+    static func firstTitle(in value: Any, depth: Int) -> String? {
+        guard depth > 0 else { return nil }
+        if let dict = value as? [String: Any] {
+            for wanted in ["title", "text", "summary", "name"] {
+                for (key, found) in dict where key.lowercased() == wanted {
+                    if let s = found as? String,
+                       !s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    {
+                        return s
+                    }
+                }
+            }
+            for (_, found) in dict {
+                if let hit = firstTitle(in: found, depth: depth - 1) { return hit }
+            }
+            return nil
+        }
+        if let array = value as? [Any] {
+            for element in array {
+                if let hit = firstTitle(in: element, depth: depth - 1) { return hit }
+            }
+        }
+        return nil
+    }
+
+    /// First string containing an http(s) URL, depth-capped.
+    static func firstURLString(in value: Any, depth: Int) -> String? {
+        guard depth > 0 else { return nil }
+        if let s = value as? String {
+            return firstURL(in: s) == nil ? nil : s
+        }
+        if let dict = value as? [String: Any] {
+            for (_, found) in dict {
+                if let hit = firstURLString(in: found, depth: depth - 1) { return hit }
+            }
+            return nil
+        }
+        if let array = value as? [Any] {
+            for element in array {
+                if let hit = firstURLString(in: element, depth: depth - 1) { return hit }
+            }
+        }
+        return nil
+    }
+
+    /// First `https?://…` substring, cut at whitespace or a JSON/HTML
+    /// delimiter. Nil when none is present.
+    static func firstURL(in text: String) -> String? {
+        var best: String.Index?
+        for scheme in ["https://", "http://"] {
+            if let r = text.range(of: scheme, options: .caseInsensitive),
+               best == nil || r.lowerBound < best!
+            {
+                best = r.lowerBound
+            }
+        }
+        guard let start = best else { return nil }
+        var end = start
+        while end < text.endIndex {
+            let c = text[end]
+            if c.isWhitespace || c == "\"" || c == "'" || c == "}" || c == "]"
+                || c == ")" || c == "<" || c == "\\"
+            {
+                break
+            }
+            end = text.index(after: end)
+        }
+        let url = String(text[start ..< end])
+        return URL(string: url) == nil ? nil : url
     }
 }

@@ -130,6 +130,16 @@ needing maintainer buy-in. Minor PRs stand alone; majors are separate PRs.
     --reply-to <id>`; `read` marks replies `(reply to <id>)`. Unit tests:
     snippet collapse/truncate (incl. multibyte boundary), build→split
     round-trip with escaping, malformed-quote cases.
+19. [minor] `src/api/chat.rs` — **keep RSS/bot/card posts (om-botposts
+    lane)**. `has_card_payload` (an `<attachment>` block or an O365 /
+    Adaptive / MessageCard marker, case-insensitive) joins the empty-text
+    keep rule next to `has_image`: card posts strip to `""` but are real
+    messages — the embedder renders title+link rows from `raw`, or a
+    placeholder when it cannot parse the payload — so history never
+    silently drops them. CLI `read` prints `(card post)` for kept
+    card-shaped empties instead of a blank line (image-only bubbles
+    unchanged). Unit tests: attachment/marker detection incl. casing,
+    plain/image/empty negatives.
 
 ## Upstream PRs (2026-09-22, base 0892144; main red on sdp E0308 until #5)
 

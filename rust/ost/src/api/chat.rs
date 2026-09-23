@@ -164,12 +164,21 @@ pub async fn read_messages(chat_id: &str, limit: usize) -> Result<()> {
     }
 
     for msg in &msgs {
+        // OstMac om-botposts: kept card posts carry empty `content` (the
+        // embedder mines rows from `raw`) — never print a blank line.
+        // Image-only bubbles keep their own shape (empty body, raw has
+        // `<img>`); only card payloads get the marker.
+        let body = if msg.content.trim().is_empty() && has_card_payload(&msg.raw) {
+            "(card post)"
+        } else {
+            msg.content.as_str()
+        };
         match &msg.reply_to {
             Some(parent) => println!(
                 "[{}] {}: {} (reply to {})",
-                msg.timestamp, msg.sender, msg.content, parent
+                msg.timestamp, msg.sender, body, parent
             ),
-            None => println!("[{}] {}: {}", msg.timestamp, msg.sender, msg.content),
+            None => println!("[{}] {}: {}", msg.timestamp, msg.sender, body),
         }
     }
 
@@ -713,7 +722,10 @@ pub async fn read_messages_page(
 
         // OstMac om-richmedia: image-only bubbles strip to "" but are
         // real messages — keep them (the embedder mines `<img>` from raw).
-        if text.trim().is_empty() && !has_image(content) {
+        // OstMac om-botposts: same for RSS/bot/card posts — attachment and
+        // card payloads strip to "" but the embedder renders them as
+        // title+link rows (or a placeholder when unparseable).
+        if text.trim().is_empty() && !has_image(content) && !has_card_payload(content) {
             continue;
         }
 
@@ -737,6 +749,20 @@ pub async fn read_messages_page(
         messages: result,
         backward_link,
     })
+}
+
+/// True when raw content carries an RSS/bot/card payload: an
+/// `<attachment>` block (case-insensitive) or a card content-type marker
+/// (O365 connector / Adaptive / MessageCard). Such posts strip to empty
+/// text but must survive filtering — the embedder renders title+link
+/// rows from the payload, or a placeholder when it cannot parse it.
+fn has_card_payload(html: &str) -> bool {
+    let lower = html.to_lowercase();
+    lower.contains("<attachment")
+        || lower.contains("o365connector")
+        || lower.contains("adaptivecard")
+        || lower.contains("messagecard")
+        || lower.contains("application/vnd.microsoft")
 }
 
 /// True when raw HTML carries an `<img` tag (case-insensitive).
@@ -775,6 +801,28 @@ src="x">"#));
         assert!(!has_image("<p>plain text</p>"));
         assert!(!has_image("<p>image word, no tag</p>"));
         assert!(!has_image(""));
+    }
+
+    #[test]
+    fn card_payload_detection() {
+        // Empty placeholder attachment (server holds the card): kept.
+        assert!(has_card_payload(r#"<attachment id="abc123"></attachment>"#));
+        assert!(has_card_payload(
+            r#"<p>digest</p><ATTACHMENT><p><a href="https://h/a">Post A</a></p></ATTACHMENT>"#
+        ));
+        // Card content-type markers in any casing: kept.
+        assert!(has_card_payload(
+            r#"{"@type":"MessageCard","title":"Build green"}"#
+        ));
+        assert!(has_card_payload(
+            r#"<div data-contenttype="application/vnd.microsoft.card.adaptive"></div>"#
+        ));
+        assert!(has_card_payload("connector o365connector card"));
+        // Plain text, bare images, and empty payloads: not cards.
+        assert!(!has_card_payload("<p>plain text</p>"));
+        assert!(!has_card_payload(r#"<p><img src="https://h/x.png"></p>"#));
+        assert!(!has_card_payload(""));
+        assert!(!has_card_payload("   "));
     }
 
     #[test]
