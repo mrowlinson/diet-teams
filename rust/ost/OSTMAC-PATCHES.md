@@ -66,7 +66,7 @@ needing maintainer buy-in. Minor PRs stand alone; majors are separate PRs.
     keep our copy lean (CLI debug surface + `ostmac-core` lib only). All CLI
     subcommands (`chats`/`read`/`send`/`call-test`/etc) unchanged. 8 TUI unit
     tests drop with the module; zero failures expected elsewhere.
-14. `src/api/files.rs` (new) + `src/api/client.rs` + `src/api/mod.rs` +
+14. [major] `src/api/files.rs` (new) + `src/api/client.rs` + `src/api/mod.rs` +
     `src/main.rs` — **chat shared files via Graph driveItems (om-shared lane)**.
     `SharedFile`/`list_chat_files_data`/`download_file_data`/`upload_file_data`
     re-exported in `src/api/mod.rs`. Chats: Graph `/me/chats/{id}/messages`
@@ -81,7 +81,7 @@ needing maintainer buy-in. Minor PRs stand alone; majors are separate PRs.
     round-trip, segment encoding, eTag GUID scan, children/message parsing,
     attachment preference.
 
-15. `src/api/todo.rs` (new) + `src/api/mod.rs` + `src/api/client.rs` +
+15. [major] `src/api/todo.rs` (new) + `src/api/mod.rs` + `src/api/client.rs` +
     `src/main.rs` — **Microsoft To Do lists/tasks (om-remind lane)**.
     Graph `/me/todo/lists`, `/lists/{id}/tasks` (GET), create (POST),
     complete (PATCH `status: completed`). `TodoListInfo`/`TodoTaskInfo`
@@ -91,7 +91,7 @@ needing maintainer buy-in. Minor PRs stand alone; majors are separate PRs.
     consents Tasks.ReadWrite; 403 surfaces as the call detail). Ids breaking
     the path (`/`, `?`, `#`, whitespace) rejected pre-network. TUI untouched.
 
-16. `src/api/notes.rs` (new) + `src/api/client.rs` (`graph_patch_raw`) +
+16. [major] `src/api/notes.rs` (new) + `src/api/client.rs` (`graph_patch_raw`) +
     `src/main.rs` (`Notes` cmd) — **OneNote read + paragraph append
     (om-notes lane)**. `list_notebooks_data` (`/me` or `/groups/{id}` scoped),
     `list_notebook_sections_data` (sections with nested pages; failed pages
@@ -150,7 +150,7 @@ needing maintainer buy-in. Minor PRs stand alone; majors are separate PRs.
     shape. Live-verified 2026-09-23 (`chats`: labels applied, 1:1s
     mate-named).
 
-19. [minor] `src/api/media.rs` + `src/api/client.rs` +
+20. [minor] `src/api/media.rs` + `src/api/client.rs` +
     `tests/imgfix_live_probe.rs` (new) — **live AMS fetch fix (om-imgfix
     lane)**. Inline images 401d: the ASM object-store family
     (`*.asm.skype.com`, `*.asyncgw.teams.microsoft.com`) authenticates
@@ -168,7 +168,7 @@ needing maintainer buy-in. Minor PRs stand alone; majors are separate PRs.
     probe pre-fix 401 on `us-api.asm.skype.com …/views/imgo`; matrix
     red→green on the mapping; app screenshots show loaded images.
 
-19. [minor] `src/api/chat.rs` — **keep RSS/bot/card posts (om-botposts
+21. [minor] `src/api/chat.rs` — **keep RSS/bot/card posts (om-botposts
     lane)**. `has_card_payload` (an `<attachment>` block or an O365 /
     Adaptive / MessageCard marker, case-insensitive) joins the empty-text
     keep rule next to `has_image`: card posts strip to `""` but are real
@@ -179,7 +179,7 @@ needing maintainer buy-in. Minor PRs stand alone; majors are separate PRs.
     unchanged). Unit tests: attachment/marker detection incl. casing,
     plain/image/empty negatives.
 
-19. [minor] `src/api/files.rs` — **scope-aware chat/channel routing
+22. [minor] `src/api/files.rs` — **scope-aware chat/channel routing
     (om-sharednotes lane)**. New `is_channel_id` (`@thread.tacv2` suffix;
     chats share the `19:` prefix but end `@thread.v2`): list tries the
     channel filesFolder path first for channel-shaped ids and the
@@ -189,7 +189,7 @@ needing maintainer buy-in. Minor PRs stand alone; majors are separate PRs.
     with "no joined team contains channel" instead of mis-posting to the
     OneDrive chat folder. Unit test: tacv2 suffix cases.
 
-17. [minor] `src/api/chat.rs` + `src/api/client.rs` + `src/api/mod.rs` +
+23. [minor] `src/api/chat.rs` + `src/api/client.rs` + `src/api/mod.rs` +
     `src/main.rs` — **edit + delete own messages (om-editdel lane)**.
     Native chat service per-message URL (`PUT` edit with `skypeeditedid`,
     `DELETE` remove); pure `message_url`/`edit_message_body` builders so
@@ -208,3 +208,23 @@ Minor (standalone modulo #5-first; merge in any order after):
 Major (need maintainer buy-in):
 - (e) [major] macav module: https://github.com/eisbaw/ost/pull/9
 - (f) [major] event_hub+lib surface: https://github.com/eisbaw/ost/pull/10
+
+## Upstream PRs, wave 2 (2026-09-23, base 0892144; ledger renumbered 17–23
+preserving entry order — dup 17s/19s disambiguated, no history rewrite)
+
+Major (need maintainer buy-in; branch names predate the [major] tag):
+- (g) [major] files (ledger 14): https://github.com/eisbaw/ost/pull/11
+- (h) [major] todo (ledger 15): https://github.com/eisbaw/ost/pull/12
+- (i) [major] notes (ledger 16): https://github.com/eisbaw/ost/pull/13
+Minor (stacked: merge after the noted base; only each PR's top commit is new):
+- (j) quote replies (ledger 18, after #6): https://github.com/eisbaw/ost/pull/14
+- (k) chat names (ledger 19, after #6): https://github.com/eisbaw/ost/pull/15
+- (l) AMS imgfetch fix (ledger 20, after #6 + #10 — lib surface needed to
+  compile the integration probe): https://github.com/eisbaw/ost/pull/16
+- (m) bot/card posts (ledger 21, after #6): https://github.com/eisbaw/ost/pull/17
+- (n) shared scope routing (ledger 22, after #11): https://github.com/eisbaw/ost/pull/18
+- (o) edit + delete msgs (ledger 23, after #6; DELETE takes an optional JSON
+  body, deletes pass None): https://github.com/eisbaw/ost/pull/19
+Skipped: ledger 17 reactions (wire shape NOT live-verified — confirm with
+`react` against a signed-in box before upstreaming); ledger 13
+[LOCAL-ONLY, do not upstream].
