@@ -8,14 +8,17 @@ import SwiftUI
 public struct ChatListSidebar: View {
     @ObservedObject private var model: ChatListViewModel
     @ObservedObject private var presence: PresenceStore
+    @ObservedObject private var unread: UnreadStore
     @State private var searchText = ""
 
     public init(
         model: ChatListViewModel, presence: PresenceStore = PresenceStore(),
+        unread: UnreadStore = UnreadStore(),
         initialFilter: String = ""
     ) {
         self.model = model
         self.presence = presence
+        self.unread = unread
         _searchText = State(initialValue: initialFilter)
     }
 
@@ -70,7 +73,9 @@ public struct ChatListSidebar: View {
                         ChatRow(
                             chat: chat,
                             peerAvailability: chat.is_group ? nil : .some(presence.availabilityForChat(chat.id))
-                        ).tag(chat.id)
+                        )
+                        .tag(chat.id)
+                        .unreadBadge(unread.count(for: chat.id))
                     }
                 }
                 .listStyle(.sidebar)
@@ -120,5 +125,19 @@ struct ChatRow: View {
             sender: chat.last_message_sender,
             preview: chat.last_message_preview)
         return line.isEmpty ? "No messages" : line
+    }
+}
+
+/// Native list badge for unread counts (om-notifbadge): the system
+/// `.badge(_:)` when positive, no badge at zero. Shared by the chats
+/// list and the teams browser (same module).
+extension View {
+    @ViewBuilder
+    func unreadBadge(_ count: Int) -> some View {
+        if count > 0 {
+            badge(count)
+        } else {
+            self
+        }
     }
 }
