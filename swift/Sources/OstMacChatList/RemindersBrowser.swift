@@ -1,10 +1,15 @@
 // RemindersBrowser.swift — SwiftUI browser: To Do lists + tasks.
+import DietDesign
 import OstMacCore
 import SwiftUI
 
 /// Reminders browser. Lists picker on top, tasks below with an add field;
 /// tapping a circle marks the task done (one-way; completed rows stay
 /// visible unless hidden). Mirrors TeamsBrowser states.
+///
+/// om-reskin-teams: DietDesign states + rows (browser-adjacent to the
+/// Teams tab in the same switcher). Errors are `DietEmptyState` /
+/// `DietBanner`; dividers are the single `DietSeamH` language.
 public struct RemindersBrowser: View {
     @ObservedObject private var model: RemindersViewModel
     @State private var newTitle = ""
@@ -18,34 +23,25 @@ public struct RemindersBrowser: View {
         Group {
             switch model.state {
             case .loading:
-                VStack(spacing: 8) {
+                VStack(spacing: DietSpace.sm) {
                     ProgressView()
-                    Text("Loading reminders…").font(.callout)
-                        .foregroundStyle(.secondary)
+                    Text("Loading reminders…")
+                        .font(DietType.callout)
+                        .foregroundStyle(DietColor.textSecondaryColor)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             case .empty:
-                VStack(spacing: 8) {
-                    Image(systemName: "checklist")
-                        .font(.largeTitle).foregroundStyle(.secondary)
-                    Text("No lists").font(.headline)
-                    Text("Your Microsoft To Do lists will appear here.")
-                        .font(.callout).foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                DietEmptyState(
+                    systemImage: "checklist",
+                    title: "No lists",
+                    message: "Your Microsoft To Do lists will appear here.")
             case .error(let message):
-                VStack(spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle")
-                        .font(.largeTitle).foregroundStyle(.secondary)
-                    Text("Couldn't load reminders").font(.headline)
-                    Text(message).font(.callout)
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                    Button("Retry") { model.refresh() }
-                        .padding(.top, 4)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding()
+                DietEmptyState(
+                    systemImage: "exclamationmark.triangle",
+                    title: "Couldn't load reminders",
+                    message: message,
+                    actionLabel: "Retry",
+                    action: { model.refresh() })
             case .loaded:
                 loadedBody
             }
@@ -53,10 +49,9 @@ public struct RemindersBrowser: View {
         .navigationTitle("Reminders")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                Button { model.refreshTasks() } label: {
-                    Image(systemName: "arrow.clockwise")
+                DietIconButton("Refresh tasks", systemImage: "arrow.clockwise") {
+                    model.refreshTasks()
                 }
-                .help("Refresh tasks")
                 .disabled(model.state == .loading || model.tasksLoading)
             }
         }
@@ -75,9 +70,9 @@ public struct RemindersBrowser: View {
             .pickerStyle(.menu)
             .labelsHidden()
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            Divider()
+            .padding(.horizontal, DietSpace.sm)
+            .padding(.vertical, DietSpace.xs)
+            DietSeamH()
             if model.tasksLoading, model.tasks.isEmpty {
                 Spacer()
                 ProgressView()
@@ -85,13 +80,12 @@ public struct RemindersBrowser: View {
             } else {
                 let visible = RemindersViewModel.visible(model.tasks, hideDone: hideDone)
                 if visible.isEmpty {
-                    Spacer()
-                    Image(systemName: "checkmark.circle")
-                        .font(.largeTitle).foregroundStyle(.secondary)
-                    Text(model.tasks.isEmpty ? "No tasks" : "All done")
-                        .font(.headline)
-                        .padding(.top, 4)
-                    Spacer()
+                    DietEmptyState(
+                        systemImage: "checkmark.circle",
+                        title: model.tasks.isEmpty ? "No tasks" : "All done",
+                        message: model.tasks.isEmpty
+                            ? "Tasks in this list will appear here."
+                            : "Completed tasks are hidden.")
                 } else {
                     List {
                         ForEach(visible) { task in
@@ -104,25 +98,34 @@ public struct RemindersBrowser: View {
                 }
             }
             if let err = model.tasksError {
-                Text(err).font(.caption).foregroundStyle(.red)
-                    .lineLimit(2)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 4)
+                DietBanner(.error, message: err)
+                    .padding(.horizontal, DietSpace.sm)
+                    .padding(.vertical, DietSpace.xs)
             }
-            Divider()
-            HStack(spacing: 8) {
+            DietSeamH()
+            HStack(spacing: DietSpace.sm) {
                 TextField("New task", text: $newTitle, onCommit: submit)
-                    .textFieldStyle(.roundedBorder)
+                    .textFieldStyle(.plain)
+                    .font(DietType.body)
+                    .padding(.horizontal, DietSpace.sm)
+                    .frame(minHeight: DietSize.controlHeight)
+                    .background(DietColor.wellColor)
+                    .clipShape(RoundedRectangle(cornerRadius: DietRadius.control))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: DietRadius.control)
+                            .stroke(DietColor.dividerColor, lineWidth: 1))
                 Button("Add", action: submit)
+                    .buttonStyle(.dietSecondary)
                     .disabled(newTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            .padding(.horizontal, DietSpace.sm)
+            .padding(.vertical, DietSpace.sm)
             Toggle("Hide completed", isOn: $hideDone)
-                .font(.caption)
+                .font(DietType.caption1)
+                .foregroundStyle(DietColor.textSecondaryColor)
                 .toggleStyle(.checkbox)
-                .padding(.horizontal, 12)
-                .padding(.bottom, 8)
+                .padding(.horizontal, DietSpace.sm)
+                .padding(.bottom, DietSpace.sm)
         }
     }
 
@@ -137,32 +140,41 @@ struct TaskRow: View {
     let onComplete: () -> Void
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: DietSpace.sm) {
             Button(action: onComplete) {
                 Image(systemName: task.completed ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(task.completed ? .green : .secondary)
-                    .font(.title3)
+                    .font(.system(size: DietSize.iconLG))
+                    .foregroundStyle(
+                        task.completed
+                            ? Color(nsColor: DietColor.success)
+                            : DietColor.textSecondaryColor)
             }
             .buttonStyle(.plain)
             .disabled(task.completed)
             .help(task.completed ? "Completed" : "Mark done")
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: DietSpace.xxs) {
                 Text(task.title)
+                    .font(DietType.body)
                     .strikethrough(task.completed)
-                    .foregroundStyle(task.completed ? .secondary : .primary)
+                    .foregroundStyle(
+                        task.completed
+                            ? DietColor.textSecondaryColor
+                            : DietColor.textPrimaryColor)
                     .lineLimit(2)
                 if let due = task.displayDue {
-                    Text("due \(due)").font(.caption)
-                        .foregroundStyle(.secondary)
+                    Text("due \(due)")
+                        .font(DietType.caption1)
+                        .foregroundStyle(DietColor.textSecondaryColor)
                 }
             }
             Spacer()
             if task.importance.lowercased() == "high", !task.completed {
                 Image(systemName: "exclamationmark.circle.fill")
-                    .foregroundStyle(.red)
+                    .font(.system(size: DietSize.iconMD))
+                    .foregroundStyle(Color(nsColor: DietColor.danger))
                     .help("High importance")
             }
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, DietSpace.xs)
     }
 }

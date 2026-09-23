@@ -50,7 +50,9 @@ public struct SidebarColumn: View {
             case .chats:
                 ChatListSidebar(model: chats, presence: presence, initialFilter: initialFilter)
             case .teams:
-                TeamsBrowser(model: teams, openChatID: openChatID, onOpen: onOpenChannel)
+                TeamsBrowser(
+                    model: teams, openChatID: openChatID,
+                    initialFilter: initialFilter, onOpen: onOpenChannel)
             case .reminders:
                 RemindersBrowser(model: reminders)
             }
