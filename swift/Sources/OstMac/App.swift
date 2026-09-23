@@ -38,6 +38,7 @@
 // filtered to the open chat (`isFor(chatID:)`). A resync gap
 // re-fetches the open chat plus the list.
 import Combine
+import DietDesign
 import Foundation
 import OstMacChatList
 import OstMacCore
@@ -107,8 +108,10 @@ struct OstMacAppMain: App {
         Window("Diet Teams Auth", id: AppIdentity.authWindowID) {
             if let cannedAuth {
                 AuthView(model: cannedAuth)
+                    .background(DietColor.windowColor)
             } else {
                 AuthView(model: state.auth)
+                    .background(DietColor.windowColor)
                     .task { await state.auth.refreshStatus() }
             }
         }
@@ -126,12 +129,18 @@ struct OstMacAppMain: App {
 
 /// App menu: About opens our About window (standard panel replaced);
 /// Settings… (from the Settings scene) and Quit stay automatic.
+/// Sign In… opens the Auth window (same shared gate model).
 private struct OstMacCommands: Commands {
     @Environment(\.openWindow) private var openWindow
 
     var body: some Commands {
         CommandGroup(replacing: .appInfo) {
             Button("About Diet Teams") { openWindow(id: AppIdentity.aboutWindowID) }
+        }
+        CommandGroup(after: .appInfo) {
+            Button("Sign In…") { openWindow(id: AppIdentity.authWindowID) }
+                .keyboardShortcut("I", modifiers: [.command, .shift])
+            Divider()
         }
         CommandMenu("Call") {
             Button("Call A/V Test") { openWindow(id: AppIdentity.avWindowID) }
@@ -527,8 +536,9 @@ struct RootView: View {
                 // Gate: the full 13-state sign-in where the chats would be.
                 AuthView(model: state.auth)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(DietColor.windowColor)
             }
-            Divider()
+            DietSeamH()
             StatusBar(call: state.call)
         }
         .frame(minWidth: 760, minHeight: 520)
@@ -579,53 +589,67 @@ struct StatusBar: View {
     @ObservedObject var call: CallStore
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: DietSpace.sm) {
             Text("core \(state.coreVersion) · init=\(state.initCode)")
-                .font(.caption).monospaced().foregroundStyle(.secondary)
+                .font(DietType.captionMono)
+                .foregroundStyle(DietColor.textSecondaryColor)
             if let c = call.call, c.isActive {
                 Text("call: \(c.state) · \(c.displayPeer)")
-                    .font(.caption).monospaced().foregroundStyle(.green)
+                    .font(DietType.captionMono)
+                    .foregroundStyle(Color(nsColor: DietColor.success))
                     .lineLimit(1)
             } else if !state.isDemo, state.signedIn == true {
                 Button("Echo test") { call.echo() }
-                    .font(.caption)
+                    .font(DietType.caption1)
                     .disabled(call.busy)
                     .help("Place the echo-bot test call (signaling only)")
                 Button("Echo live") { call.echoLive() }
-                    .font(.caption)
+                    .font(DietType.caption1)
                     .disabled(call.busy)
                     .help("Place the echo-bot test call with live audio/video")
             }
             if state.isDemo {
                 Text("DEMO · offline")
-                    .font(.caption).bold()
-                    .padding(.horizontal, 6).padding(.vertical, 2)
-                    .background(.orange.opacity(0.2))
-                    .clipShape(Capsule())
+                    .font(DietType.caption1).bold()
+                    .foregroundStyle(Color(nsColor: DietColor.warning))
+                    .padding(.horizontal, DietSpace.sm)
+                    .padding(.vertical, DietSpace.xxs)
+                    .background(
+                        Color(nsColor: DietColor.warning).opacity(0.15),
+                        in: Capsule())
                 PresencePicker(store: state.presence)
             } else {
                 Text(state.signedIn.map { $0 ? "signed in" : "signed out" } ?? "auth ?")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(DietType.caption1)
+                    .foregroundStyle(DietColor.textSecondaryColor)
                 PresencePicker(store: state.presence)
-                HStack(spacing: 4) {
-                    Circle().fill(feedColor).frame(width: 8, height: 8)
-                    Text(feedText).font(.caption).monospaced()
+                HStack(spacing: DietSpace.xs) {
+                    Circle().fill(feedColor)
+                        .frame(
+                            width: DietSpace.sm, height: DietSpace.sm)
+                    Text(feedText)
+                        .font(DietType.captionMono)
+                        .foregroundStyle(DietColor.textSecondaryColor)
                 }
                 if let err = state.feedError {
-                    Text(err).font(.caption).foregroundStyle(.red).lineLimit(1)
+                    Text(err)
+                        .font(DietType.caption1)
+                        .foregroundStyle(Color(nsColor: DietColor.danger))
+                        .lineLimit(1)
                 }
             }
             Spacer()
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+        .padding(.horizontal, DietSpace.sm)
+        .padding(.vertical, DietSpace.xs)
+        .background(DietColor.windowColor)
     }
 
     private var feedColor: Color {
         switch state.feedState {
-        case .live: .green
-        case .retryWait: .orange
-        case .stopped: .gray
+        case .live: Color(nsColor: DietColor.success)
+        case .retryWait: Color(nsColor: DietColor.warning)
+        case .stopped: DietColor.textTertiaryColor
         }
     }
 
