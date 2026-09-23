@@ -62,7 +62,7 @@ public final class ChatListViewModel: ObservableObject, ChatSelection {
         }
     }
 
-    /// Fire-and-forget reload (toolbar button, pull-to-refresh).
+    /// Fire-and-forget reload (error-state Retry, resync, sign-in).
     public func refresh(limit: Int32 = 50) {
         Task { await load(limit: limit) }
     }

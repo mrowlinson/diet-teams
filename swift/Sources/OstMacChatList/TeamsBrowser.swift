@@ -60,15 +60,6 @@ public struct TeamsBrowser: View {
                 loadedList
             }
         }
-        .navigationTitle("Teams")
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                DietIconButton("Refresh teams list", systemImage: "arrow.clockwise") {
-                    model.refresh()
-                }
-                .disabled(model.state == .loading)
-            }
-        }
     }
 
     private var loadedList: some View {

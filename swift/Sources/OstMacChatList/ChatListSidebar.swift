@@ -46,15 +46,6 @@ public struct ChatListSidebar: View {
                 loadedList
             }
         }
-        .navigationTitle("Chats")
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                DietIconButton("Refresh chat list", systemImage: "arrow.clockwise") {
-                    model.refresh()
-                }
-                .disabled(model.state == .loading)
-            }
-        }
     }
 
     private var loadedList: some View {

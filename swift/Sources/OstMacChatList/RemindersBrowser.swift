@@ -46,15 +46,6 @@ public struct RemindersBrowser: View {
                 loadedBody
             }
         }
-        .navigationTitle("Reminders")
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                DietIconButton("Refresh tasks", systemImage: "arrow.clockwise") {
-                    model.refreshTasks()
-                }
-                .disabled(model.state == .loading || model.tasksLoading)
-            }
-        }
     }
 
     private var loadedBody: some View {

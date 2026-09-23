@@ -584,11 +584,16 @@ struct RootView: View {
         .onDisappear { state.shutdown() }
     }
 
+    /// Empty detail keeps the header row so the sidebar picker seam
+    /// spans both columns (same row as the conversation header).
     private var emptyDetail: some View {
-        DietEmptyState(
-            systemImage: "bubble.left.and.bubble.right",
-            title: "Select a chat",
-            message: "Pick a conversation in the sidebar, or press ⌘K to jump.")
+        VStack(spacing: 0) {
+            DietHeaderBar { Color.clear }
+            DietEmptyState(
+                systemImage: "bubble.left.and.bubble.right",
+                title: "Select a chat",
+                message: "Pick a conversation in the sidebar, or press ⌘K to jump.")
+        }
     }
 }
 
