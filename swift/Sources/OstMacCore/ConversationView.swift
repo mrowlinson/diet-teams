@@ -1,4 +1,4 @@
-// ConversationView.swift — om-conv/om-convrich/om-shared/om-notes/om-cmdk/om-catchup/om-reactions/om-msgactions/om-replies/om-history/om-scroll/om-botposts/om-editdel/om-react-polish: SwiftUI chat window.
+// ConversationView.swift — om-conv/om-convrich/om-shared/om-notes/om-cmdk/om-catchup/om-reactions/om-msgactions/om-replies/om-history/om-scroll/om-botposts/om-editdel/om-react-polish/om-catchup-sheet-dismiss: SwiftUI chat window.
 // Rich bubbles (mentions, code spans, links), day separators, scroll-up
 // load-more paging, edited markers, failed-send retry, Shared files + Notes tabs,
 // GIF picker + thread catch-up + reaction picker/counts + copy/forward/save bubble menu,
@@ -107,10 +107,23 @@ public struct ConversationView: View {
         .frame(minWidth: 380, minHeight: 480)
         .background(DietColor.windowColor)
         .onChange(of: store.chatID) { syncShared() }
-        .sheet(isPresented: $showCatchUp) {
+        // om-catchup-sheet-dismiss: popover, not a window-modal sheet —
+        // only a popover dismisses on click-outside. Done → dismissViaDone,
+        // Esc → dismissViaEscape (explicit, works from any focus), and the
+        // onChange net → dismissViaClickOutside for click-outside + any
+        // other system dismiss. Every path closes AND resets the summary.
+        .popover(isPresented: $showCatchUp, arrowEdge: .top) {
             CatchUpView(
                 catchUp: catchUp, messages: store.messages,
-                autoRun: CommandLine.arguments.contains("--show-catchup"))
+                autoRun: CommandLine.arguments.contains("--show-catchup"),
+                onDone: { CatchUpSheet.dismissViaDone(presented: $showCatchUp, store: catchUp) })
+                .onExitCommand { CatchUpSheet.dismissViaEscape(presented: $showCatchUp, store: catchUp) }
+        }
+        .onChange(of: showCatchUp) { _, isOpen in
+            // System dismiss (click-outside, Esc): the binding is already
+            // false; the router call resets the summary state. Setting
+            // false → false never retriggers this handler.
+            if !isOpen { CatchUpSheet.dismissViaClickOutside(presented: $showCatchUp, store: catchUp) }
         }
         .sheet(item: $editingMessage) { msg in
             editSheet(for: msg)
@@ -242,8 +255,7 @@ public struct ConversationView: View {
             }
             if CatchUp.shouldOffer(messageCount: store.messages.count) {
                 Button("Catch up", systemImage: "sparkles") {
-                    catchUp.reset()
-                    showCatchUp = true
+                    CatchUpSheet.open(presented: $showCatchUp, store: catchUp)
                 }
                 .buttonStyle(.dietSecondary)
                 .help("Summarize this thread: TL;DR, key points, action items")
