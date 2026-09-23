@@ -52,14 +52,20 @@ public struct SidebarColumn: View {
             switch section {
             case .chats:
                 ChatListSidebar(model: chats, presence: presence, unread: unread, initialFilter: initialFilter)
+                    .transition(.opacity)
             case .teams:
                 TeamsBrowser(
                     model: teams, openChatID: openChatID, unread: unread,
                     initialFilter: initialFilter, onOpen: onOpenChannel)
+                    .transition(.opacity)
             case .reminders:
                 RemindersBrowser(model: reminders)
+                    .transition(.opacity)
             }
         }
+        // System-default crossfade when the segmented switcher flips
+        // sections. Standard SwiftUI only (no custom drivers).
+        .animation(.default, value: section)
     }
 }
 

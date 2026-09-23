@@ -30,11 +30,13 @@ public struct RemindersBrowser: View {
                         .foregroundStyle(DietColor.textSecondaryColor)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .transition(.opacity)
             case .empty:
                 DietEmptyState(
                     systemImage: "checklist",
                     title: "No lists",
                     message: "Your Microsoft To Do lists will appear here.")
+                    .transition(.opacity)
             case .error(let message):
                 DietEmptyState(
                     systemImage: "exclamationmark.triangle",
@@ -42,10 +44,15 @@ public struct RemindersBrowser: View {
                     message: message,
                     actionLabel: "Retry",
                     action: { model.refresh() })
+                    .transition(.opacity)
             case .loaded:
                 loadedBody
+                    .transition(.opacity)
             }
         }
+        // System-default crossfade between content states (same language
+        // as the Chats/Teams sections). Standard SwiftUI only.
+        .animation(.default, value: model.state)
     }
 
     private var loadedBody: some View {
