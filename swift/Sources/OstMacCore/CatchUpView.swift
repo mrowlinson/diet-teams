@@ -110,14 +110,35 @@ public struct CatchUpSettingsSection: View {
             .onChange(of: catchUp.config.provider) { _, provider in
                 catchUp.selectProvider(provider)
             }
-            TextField("Base URL", text: $catchUp.config.baseURL)
-                .textSelection(.enabled)
+            // Dead-row trim (om-settings-trim): the CLI transport
+            // ignores baseURL until a key switches it to direct HTTPS,
+            // so the row hides exactly when it would do nothing.
+            if CatchUp.usesBaseURL(
+                provider: catchUp.config.provider, apiKey: catchUp.config.apiKey)
+            {
+                TextField("Base URL", text: $catchUp.config.baseURL)
+                    .textSelection(.enabled)
+            }
             TextField("Model", text: $catchUp.config.model)
             SecureField("API key", text: $catchUp.config.apiKey)
             Text("The key is kept in your Mac keychain, never on disk.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            if catchUp.config.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            keyCaption
+            Text(CatchUp.privacyNote)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    /// Key-status caption, scoped per provider: the CLI note only
+    /// applies to the CLI provider; direct providers require a key.
+    @ViewBuilder
+    private var keyCaption: some View {
+        let keyEmpty = catchUp.config.apiKey
+            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if catchUp.config.provider == .openCodeCLI {
+            if keyEmpty {
                 Text("No key — the OpenCode CLI provider uses your `opencode auth login` (free tier).")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -126,7 +147,8 @@ public struct CatchUpSettingsSection: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            Text(CatchUp.privacyNote)
+        } else if keyEmpty {
+            Text("Required — direct requests fail without a key.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

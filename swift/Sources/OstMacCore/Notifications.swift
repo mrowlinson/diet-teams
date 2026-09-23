@@ -121,14 +121,34 @@ public enum NotificationRoute: Sendable, Equatable {
 /// handle from handleRealtime; tests inject the fake backend.
 @MainActor
 public final class MessageNotifications: ObservableObject {
+    /// UserDefaults key for the persisted banner toggle (Settings →
+    /// Notifications). Absent = first launch = on.
+    public static let enabledKey = "notif.enabled"
+
     private let backend: any NotificationPosting
     private let delegate = MessageNotificationDelegate()
+    private let defaults: UserDefaults
     @Published public private(set) var authorized: Bool?
-    /// User toggle seam (Settings binds here when a lane lands it).
-    @Published public var enabled = true
+    /// Banner toggle (Settings binds here; persisted). Gates `handle`;
+    /// AppState's rules path checks it too, so OFF silences all banners.
+    @Published public var enabled = true {
+        didSet { defaults.set(enabled, forKey: Self.enabledKey) }
+    }
 
-    public init(backend: (any NotificationPosting)? = nil) {
+    /// Nonisolated so views can take a default `MessageNotifications()`
+    /// in their (nonisolated) inits; all members stay main-actor-isolated.
+    public nonisolated init(
+        backend: (any NotificationPosting)? = nil,
+        defaults: UserDefaults = .standard
+    ) {
         self.backend = backend ?? SystemNotificationCenter()
+        self.defaults = defaults
+        var enabled = true
+        if defaults.object(forKey: Self.enabledKey) != nil {
+            enabled = defaults.bool(forKey: Self.enabledKey)
+        }
+        _enabled = Published(initialValue: enabled)
+        _authorized = Published(initialValue: nil)
     }
 
     /// Install the response delegate (retained here) on the real center.

@@ -58,6 +58,16 @@ public enum CatchUp {
         messageCount >= threshold
     }
 
+    /// True when the Base URL affects requests: direct providers
+    /// always use it; the CLI provider only when a key switches it to
+    /// direct HTTPS (the CLI transport ignores baseURL otherwise).
+    /// The Settings row hides exactly when this is false, so no dead
+    /// row is ever shown.
+    public static func usesBaseURL(provider: CatchUpProvider, apiKey: String) -> Bool {
+        provider != .openCodeCLI
+            || !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     /// "{base}/chat/completions" — exactly one join slash.
     public static func endpoint(baseURL: String) -> String {
         baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -677,8 +687,9 @@ public final class CatchUpStore: ObservableObject {
         }
         state = .loading
         do {
-            // CLI default; direct HTTPS when a key is configured.
-            let useDirect = config.provider != .openCodeCLI || hasKey
+            // CLI default; direct HTTPS when a key is configured (same
+            // rule drives the Settings Base URL row visibility).
+            let useDirect = CatchUp.usesBaseURL(provider: config.provider, apiKey: config.apiKey)
             let active: any CatchUpTransport = useDirect ? transport : cliTransport
             let text = try await active.complete(
                 baseURL: config.baseURL, apiKey: config.apiKey,
