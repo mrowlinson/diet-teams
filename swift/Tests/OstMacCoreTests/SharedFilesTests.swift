@@ -112,6 +112,14 @@ final class SharedFilesTests: XCTestCase {
         }
     }
 
+    /// Default opener must no-op under XCTest (regression: tests launching
+    /// the owner's real browser).
+    func testDefaultOpenURLNoopsUnderXCTest() {
+        XCTAssertNotNil(NSClassFromString("XCTestCase"))
+        XCTAssertFalse(
+            SharedFilesStore.defaultOpenURL(URL(string: "https://example.com/shared")!))
+    }
+
     /// Live FFI round-trip: empty args rejected by core before any network.
     func testLiveFFIEmptyArgsThrow() {
         XCTAssertThrowsError(try RustCore.sharedFiles(chatID: ""))

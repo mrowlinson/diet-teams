@@ -435,4 +435,12 @@ final class AuthTests: XCTestCase {
             SignOutResponse.self, from: Data(#"{"ok":true}"#.utf8))
         XCTAssertTrue(r.ok)
     }
+
+    // MARK: - Test guard (never launch the real browser under XCTest)
+
+    func testDefaultOpenURLNoopsUnderXCTest() {
+        XCTAssertNotNil(NSClassFromString("XCTestCase"))
+        XCTAssertFalse(
+            AuthViewModel.defaultOpenURL(URL(string: "https://example.com/device")!))
+    }
 }

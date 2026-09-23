@@ -153,13 +153,21 @@ public final class AuthViewModel: ObservableObject {
     private var pollTask: Task<Void, Never>?
     private var stateBeforeSignIn: AuthState?
 
+    /// Default URL opener. No-op (returns false) under XCTest so tests never
+    /// launch the owner's real browser; NSWorkspace.shared.open in production.
+    /// Public: Swift requires default-argument callees of a public init to be public.
+    public nonisolated static let defaultOpenURL: OpenURLFn = { url in
+        if NSClassFromString("XCTestCase") != nil { return false }
+        return NSWorkspace.shared.open(url)
+    }
+
     public init(
         status: @escaping StatusFn = { try RustCore.status() },
         start: @escaping StartFn = { try RustCore.deviceStart() },
         poll: @escaping PollFn = { try RustCore.devicePoll(session: $0) },
         refresh: @escaping RefreshFn = { try RustCore.refresh() },
         signOut: @escaping SignOutFn = { try RustCore.signOut() },
-        openURL: @escaping OpenURLFn = { NSWorkspace.shared.open($0) },
+        openURL: @escaping OpenURLFn = AuthViewModel.defaultOpenURL,
         copy: @escaping CopyFn = { code in
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(code, forType: .string)

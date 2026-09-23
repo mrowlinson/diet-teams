@@ -43,13 +43,21 @@ public final class SharedFilesStore: ObservableObject {
     private let openURLFn: OpenURLFn
     private var openGeneration = 0
 
+    /// Default URL opener. No-op (returns false) under XCTest so tests never
+    /// launch the owner's real browser; NSWorkspace.shared.open in production.
+    /// Public: Swift requires default-argument callees of a public init to be public.
+    public nonisolated static let defaultOpenURL: OpenURLFn = { url in
+        if NSClassFromString("XCTestCase") != nil { return false }
+        return NSWorkspace.shared.open(url)
+    }
+
     public nonisolated init(
         list: @escaping ListFetcher = { try RustCore.sharedFiles(chatID: $0, limit: $1) },
         upload: @escaping UploadFetcher = { try RustCore.sharedUpload(chatID: $0, path: $1) },
         download: @escaping DownloadFetcher = {
             try RustCore.sharedDownload(driveID: $0, itemID: $1, dest: $2)
         },
-        openURL: @escaping OpenURLFn = { NSWorkspace.shared.open($0) }
+        openURL: @escaping OpenURLFn = SharedFilesStore.defaultOpenURL
     ) {
         self.listFetcher = list
         self.uploadFetcher = upload
