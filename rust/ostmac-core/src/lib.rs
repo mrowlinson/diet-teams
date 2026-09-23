@@ -867,6 +867,7 @@ fn shared_file_to_json(f: &ost::api::SharedFile) -> serde_json::Value {
         "created": f.created,
         "modified": f.modified,
         "sender": f.sender,
+        "attachment_id": f.attachment_id,
     })
 }
 
@@ -3228,6 +3229,7 @@ mod tests {
             created: Some("2026-09-20T10:00:00Z".to_string()),
             modified: None,
             sender: Some("Priya Nair".to_string()),
+            attachment_id: Some("550E8400-E29B-41D4-A716-446655440000".to_string()),
         };
         let v = shared_file_to_json(&f);
         assert_eq!(v["id"], "item-1");
@@ -3236,6 +3238,7 @@ mod tests {
         assert_eq!(v["mime"], "application/pdf");
         assert_eq!(v["drive_id"], "D1");
         assert_eq!(v["sender"], "Priya Nair");
+        assert_eq!(v["attachment_id"], "550E8400-E29B-41D4-A716-446655440000");
         assert!(v["modified"].is_null());
     }
 

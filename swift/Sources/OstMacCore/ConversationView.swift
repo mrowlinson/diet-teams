@@ -93,7 +93,9 @@ public struct ConversationView: View {
                 // chat (see ChatTimelineView).
                 ChatTimelineView(
                     store: store, onForward: onForward,
-                    onEdit: beginEdit, onDelete: beginDelete)
+                    onEdit: beginEdit, onDelete: beginDelete,
+                    sharedFiles: shared.chatID == store.chatID ? shared.files : [],
+                    onOpenDoc: { _ = shared.open($0.file) })
                     .id("chat-\(store.chatID ?? "-")")
                 DietSeamH()
                 sendBox
@@ -107,6 +109,7 @@ public struct ConversationView: View {
         .frame(minWidth: 380, minHeight: 480)
         .background(DietColor.windowColor)
         .onChange(of: store.chatID) { syncShared() }
+        .onChange(of: store.messages.count) { syncShared() }
         .sheet(isPresented: $showCatchUp) {
             CatchUpView(
                 catchUp: catchUp, messages: store.messages,
@@ -195,9 +198,20 @@ public struct ConversationView: View {
 
     /// Lazily load the Shared tab when selected (no unsigned core calls
     /// from the Chat tab). Demo mode adopts canned files offline.
+    /// Om-inline-docs: the Chat tab also preloads the list (metadata
+    /// only, never bytes) when a visible bubble carries doc refs, so
+    /// inline rows can resolve; chats without refs never load.
     private func syncShared() {
-        guard tab == 1, let id = store.chatID else { return }
+        guard let id = store.chatID else { return }
         guard shared.chatID != id else { return }
+        if tab == 1 {
+            loadShared(id: id)
+        } else if tab == 0, InlineDocs.shouldPreload(messages: store.messages) {
+            loadShared(id: id)
+        }
+    }
+
+    private func loadShared(id: String) {
         if store.isDemo {
             shared.showDemo(chatID: id, files: DemoData.sharedFiles(for: id))
         } else {
@@ -394,6 +408,13 @@ struct MessageBubble: View {
     /// Edit/delete (om-editdel): own bubbles only, top-level menu items.
     var onEdit: () -> Void = {}
     var onDelete: () -> Void = {}
+    /// Loaded Shared-tab files for this chat (om-inline-docs): doc refs
+    /// resolve against them in memory (no fetch). Empty until the Shared
+    /// tab (or ref preload) loads — unresolved refs keep old behavior.
+    var sharedFiles: [SharedFile] = []
+    /// Doc-row Open tap (om-inline-docs): the host previews the file
+    /// (SharedFilesStore.open parity). Default opens the SharePoint page.
+    var onOpenDoc: (InlineDoc) -> Void = { InlineDocs.open($0) }
 
     var body: some View {
         HStack(spacing: DietSpace.xs) {
@@ -418,6 +439,7 @@ struct MessageBubble: View {
                     let rendered = MessageRender.bubbleText(for: message)
                     let images = MessageRender.images(fromRaw: message.raw)
                     let posts = MessageRender.botPosts(fromRaw: message.raw ?? message.content)
+                    let docs = InlineDocs.docs(for: message, files: sharedFiles)
                     if !rendered.isEmpty {
                         // Selectable AND custom-menu: the bridge's local
                         // monitor swallows bubble right-clicks (popping
@@ -445,7 +467,10 @@ struct MessageBubble: View {
                     if !posts.isEmpty {
                         BotPostRows(posts: posts)
                     }
-                    if MessageRender.showsPlaceholder(for: message) {
+                    if !docs.isEmpty {
+                        InlineDocRows(docs: docs, onOpen: onOpenDoc)
+                    }
+                    if MessageRender.showsPlaceholder(for: message), docs.isEmpty {
                         Text("Bot post unavailable")
                             .font(DietType.caption1)
                             .italic()
