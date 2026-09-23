@@ -1,7 +1,7 @@
 // ConversationStore.swift — om-conv lane: state for one open chat.
 //
 // INPUT API (what the chat-list and realtime lanes drive):
-//   store.open(chatID:chatName:) — load full history via core (replaces messages)
+//   store.open(chatID:chatName:) — load last-24h window via core (replaces messages)
 //   store.ingest(_ message:)      — upsert one realtime ChatMessage by id:
 //                                  new id appends, known id updates content
 //                                  in place (edit). THE realtime feed point.
@@ -48,44 +48,138 @@ public final class ConversationStore: ObservableObject {
 
     public init() {}
 
-    /// Open a chat: fetch newest history page via core, replace messages.
-    /// Stale completions are dropped, so fast chat-switching always
-    /// lands on the newest selection.
+    // MARK: - History window (om-history)
+
+    /// Initial load covers the last 24h: `open` pages back until the
+    /// oldest message is older than the window (or the page cap / end
+    /// of history hits). The server ignores `startTime=` (OSTMAC-PATCHES
+    /// #7), so the window is enforced client-side over the page_token
+    /// chain — no core time params needed.
+    public nonisolated static let historyWindowHours: Double = 24
+    /// Fetch bounds: one open / day-load never fires more page fetches
+    /// than this, so long threads can't churn the view unboundedly.
+    public nonisolated static let openMaxPages = 6
+    public nonisolated static let dayLoadMaxPages = 4
+
+    /// Tolerant ISO8601 parse for server stamps (fractional
+    /// "…T12:53:06.9690000Z" and plain "…T12:53:06Z"). Nil for
+    /// garbage/empty (callers stop paging — never spin on it).
+    public static func messageDate(_ iso: String) -> Date? {
+        let t = iso.trimmingCharacters(in: .whitespaces)
+        guard !t.isEmpty else { return nil }
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let d = f.date(from: t) { return d }
+        f.formatOptions = [.withInternetDateTime]
+        if let d = f.date(from: t) { return d }
+        // Last resort: "yyyy-MM-dd'T'HH:mm:ss" prefix in UTC.
+        guard t.count >= 19 else { return nil }
+        let g = DateFormatter()
+        g.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+        g.timeZone = TimeZone(secondsFromGMT: 0)
+        g.locale = Locale(identifier: "en_US_POSIX")
+        return g.date(from: String(t.prefix(19)))
+    }
+
+    /// True once the loaded slice reaches past the window: oldest
+    /// message older than `hours`, or its stamp unparseable (can't
+    /// window garbage — stop after the current page). Empty keeps
+    /// paging (blank pages cover nothing).
+    public static func windowCovered(
+        _ messages: [ChatMessage], now: Date = Date(), hours: Double = historyWindowHours
+    ) -> Bool {
+        guard let oldest = messages.first else { return false }
+        guard let d = messageDate(oldest.timestamp) else { return true }
+        return d <= now.addingTimeInterval(-hours * 3600)
+    }
+
+    /// True once a day-load chunk crossed into an earlier calendar day
+    /// than it started on (`startDayKey` = dayKey of the oldest message
+    /// before the chunk). Empty never counts as crossed.
+    public static func dayChunkDone(startDayKey: String, messages: [ChatMessage]) -> Bool {
+        guard let oldest = messages.first else { return false }
+        return MessageRender.dayKey(oldest.timestamp) != startDayKey
+    }
+
+    /// Open a chat: fetch the last-24h window via core (newest page,
+    /// published immediately, then older pages until the window is
+    /// covered), replace messages. Stale completions are dropped, so
+    /// fast chat-switching always lands on the newest selection. The
+    /// previous thread is cleared up front: a failed open shows the
+    /// error with retry, never stale bubbles under a new name.
     public func open(chatID: String, chatName: String? = nil, limit: Int32 = 50) {
         self.chatID = chatID
         if let n = chatName { self.chatName = n }
+        messages = []
+        pageToken = nil
         loading = true
+        loadingMore = false
         error = nil
         replyTarget = nil
         openGeneration += 1
         let gen = openGeneration
-        pageToken = nil
         Task {
             // Best-effort identity (core-cached after first call); a stale
             // stored name still stamps when refresh fails.
             let own: String? = try? await Task.detached {
                 try RustCore.whoami().display_name
             }.value
-            let fetched: Result<MessagesResponse, Error>
+            guard gen == self.openGeneration else { return } // superseded
+            if let own { self.ownDisplayName = own }
             do {
                 let resp = try await Task.detached {
                     try RustCore.messages(chatID: chatID, limit: limit)
                 }.value
-                fetched = .success(resp)
+                guard gen == self.openGeneration else { return }
+                self.messages = Self.stampOwnership(resp.messages, ownName: self.ownDisplayName)
+                self.pageToken = resp.page_token
+                self.didLoad = true
+                // Chain older pages until the 24h window is covered.
+                var pages = 1
+                while gen == self.openGeneration,
+                      self.pageToken != nil,
+                      !Self.windowCovered(self.messages),
+                      pages < Self.openMaxPages
+                {
+                    guard let tok = self.pageToken else { break }
+                    do {
+                        let next = try await Task.detached {
+                            try RustCore.messagesPage(chatID: chatID, pageToken: tok, limit: limit)
+                        }.value
+                        guard gen == self.openGeneration else { return }
+                        self.messages = Self.prepend(
+                            Self.stampOwnership(next.messages, ownName: self.ownDisplayName),
+                            to: self.messages)
+                        self.pageToken = next.page_token
+                        pages += 1
+                    } catch {
+                        guard gen == self.openGeneration else { return }
+                        self.error = String(describing: error)
+                        break
+                    }
+                }
+                if gen == self.openGeneration { self.loading = false }
             } catch {
-                fetched = .failure(error)
-            }
-            guard gen == openGeneration else { return } // superseded
-            loading = false
-            didLoad = true
-            switch fetched {
-            case let .success(resp):
-                if let own { ownDisplayName = own }
-                messages = Self.stampOwnership(resp.messages, ownName: ownDisplayName)
-                pageToken = resp.page_token
-            case let .failure(e): error = String(describing: e)
+                guard gen == self.openGeneration else { return }
+                self.loading = false
+                self.didLoad = true
+                self.error = String(describing: error)
             }
         }
+    }
+
+    /// Re-run `open` for the current chat (empty-state Try Again).
+    /// No-op without a chat, or in demo mode (demo never hits core).
+    public func retryOpen(limit: Int32 = 50) {
+        guard !isDemo, let id = chatID else { return }
+        open(chatID: id, limit: limit)
+    }
+
+    /// Shot hook: surface a canned fetch error in demo mode only.
+    /// Live stores ignore it (real errors come from core).
+    public func seedDemoError(_ message: String) {
+        guard isDemo else { return }
+        error = message
     }
 
     /// Adopt an identity without core (tests, sign-in completion).
@@ -113,29 +207,46 @@ public final class ConversationStore: ObservableObject {
         !isDemo && !loading && !loadingMore && pageToken != nil
     }
 
-    /// Prepend the next older history page (scroll-up load-more).
-    /// No-op without a page token or while a load is in flight.
+    /// Prepend one lazy day-chunk of older history (scroll-top load).
+    /// Pages until the oldest message crosses into an earlier calendar
+    /// day than the chunk started on (or the cap / end hits); at least
+    /// one page is always fetched. Each page applies as it arrives, so
+    /// a mid-chunk failure keeps partial progress with the error
+    /// surfaced and the token still on the next page — tapping again
+    /// retries. No-op without a page token or while a load is in
+    /// flight. Explicit taps only: the view no longer auto-fires (the
+    /// old onAppear chained the whole thread, because the spinner /
+    /// button swap re-triggers it after every page).
     public func loadMore(limit: Int32 = 50) {
-        guard canLoadMore, let id = chatID, let tok = pageToken else { return }
+        guard canLoadMore, let id = chatID else { return }
         loadingMore = true
+        error = nil
+        let gen = openGeneration
+        let startDay = MessageRender.dayKey(messages.first?.timestamp ?? "")
         Task {
-            let fetched: Result<MessagesResponse, Error>
-            do {
-                let resp = try await Task.detached {
-                    try RustCore.messagesPage(chatID: id, pageToken: tok, limit: limit)
-                }.value
-                fetched = .success(resp)
-            } catch {
-                fetched = .failure(error)
+            var pages = 0
+            var lastError: Error?
+            while pages < Self.dayLoadMaxPages, let tok = self.pageToken {
+                do {
+                    let resp = try await Task.detached {
+                        try RustCore.messagesPage(chatID: id, pageToken: tok, limit: limit)
+                    }.value
+                    guard gen == self.openGeneration else { return } // superseded
+                    self.messages = Self.prepend(
+                        Self.stampOwnership(resp.messages, ownName: self.ownDisplayName),
+                        to: self.messages)
+                    self.pageToken = resp.page_token
+                    pages += 1
+                    if Self.dayChunkDone(startDayKey: startDay, messages: self.messages) { break }
+                } catch {
+                    guard gen == self.openGeneration else { return } // superseded
+                    lastError = error
+                    break
+                }
             }
-            loadingMore = false
-            switch fetched {
-            case let .success(resp):
-                messages = Self.prepend(
-                    Self.stampOwnership(resp.messages, ownName: ownDisplayName), to: messages)
-                pageToken = resp.page_token
-            case let .failure(e): error = String(describing: e)
-            }
+            guard gen == self.openGeneration else { return } // superseded
+            self.loadingMore = false
+            if let e = lastError { self.error = String(describing: e) }
         }
     }
 
