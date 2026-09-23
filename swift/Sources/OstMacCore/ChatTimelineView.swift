@@ -1,7 +1,7 @@
-// ChatTimelineView.swift — om-scroll/om-history/om-editdel: message
-// timeline with follow/pill, prepend anchoring, armed+debounced paging,
-// history loading/error states, edit/delete passthrough, and settle
-// re-asserts.
+// ChatTimelineView.swift — om-scroll/om-history/om-editdel/om-react-polish:
+// message timeline with follow/pill, prepend anchoring, armed+debounced
+// paging, history loading/error states, edit/delete passthrough, the
+// more-picker shot hook, and settle re-asserts.
 //
 // Extracted from ConversationView so the scroll state (ChatScrollModel)
 // is owned per chat: the parent `.id()`s this view by chatID, giving
@@ -94,6 +94,13 @@ struct ChatTimelineView: View {
                         scrollTo(proxy, id: target)
                     } else {
                         settleToBottom(proxy)
+                    }
+                    // Shot hook: --show-picker pops the more-picker
+                    // on the first reacted bubble (or the first
+                    // bubble). Messages arrive after open, so the id
+                    // resolves at fire time with a few retries.
+                    if CommandLine.arguments.contains("--show-picker") {
+                        Self.postPickerShot(store: store, tries: 8)
                     }
                 }
                 if let title = ScrollPolicy.pillTitle(unseen: unseen) {
@@ -226,6 +233,21 @@ struct ChatTimelineView: View {
                 withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
             } else {
                 proxy.scrollTo(last.id, anchor: .bottom)
+            }
+        }
+    }
+
+    /// --show-picker driver: resolve the target bubble once messages
+    /// exist, then ask its anchor to open the more-picker.
+    private static func postPickerShot(store: ConversationStore, tries: Int) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            let id = store.messages.first(where: { !$0.reactions.isEmpty })?.id
+                ?? store.messages.first?.id
+            if let id {
+                NotificationCenter.default.post(
+                    name: ReactionMenuAnchorView.shotPickerNote, object: id)
+            } else if tries > 1 {
+                postPickerShot(store: store, tries: tries - 1)
             }
         }
     }

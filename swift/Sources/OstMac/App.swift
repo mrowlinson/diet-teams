@@ -33,6 +33,8 @@
 // --jump-query <q> / --filter-query <q> preseed the palette/sidebar
 // filters (shot hooks).
 // --show-gif opens the GIF picker popover at launch (shot hook).
+// --show-picker opens the reaction more-picker popover on the first
+// reacted bubble at launch (om-react-polish shot hook, offline).
 // --show-catchup stretches the demo thread past 20 messages and
 // auto-opens the catch-up sheet with a canned summary (shot hook,
 // offline, throwaway defaults — never the real ones).

@@ -1,4 +1,4 @@
-// ConversationView.swift — om-conv/om-convrich/om-shared/om-notes/om-cmdk/om-catchup/om-reactions/om-msgactions/om-replies/om-history/om-scroll/om-botposts/om-editdel: SwiftUI chat window.
+// ConversationView.swift — om-conv/om-convrich/om-shared/om-notes/om-cmdk/om-catchup/om-reactions/om-msgactions/om-replies/om-history/om-scroll/om-botposts/om-editdel/om-react-polish: SwiftUI chat window.
 // Rich bubbles (mentions, code spans, links), day separators, scroll-up
 // load-more paging, edited markers, failed-send retry, Shared files + Notes tabs,
 // GIF picker + thread catch-up + reaction picker/counts + copy/forward/save bubble menu,
@@ -419,15 +419,16 @@ struct MessageBubble: View {
                     let images = MessageRender.images(fromRaw: message.raw)
                     let posts = MessageRender.botPosts(fromRaw: message.raw ?? message.content)
                     if !rendered.isEmpty {
-                        // No .textSelection: selectable Text owns the
-                        // system menu and SwiftUI does not merge custom
-                        // items into it, so selection would hide the
-                        // picker on the words. Copy lives in the bubble
-                        // menu instead (full message; partial selection
-                        // awaits a TextKit-backed bubble).
+                        // Selectable AND custom-menu: the bridge's local
+                        // monitor swallows bubble right-clicks (popping
+                        // our menu), so selection never hides the picker;
+                        // left-drag selects, right-click reacts, Cmd+C
+                        // copies the selection, and the bubble menu's Copy
+                        // still takes the full message.
                         Text(MessageRender.attributedBody(text: rendered, raw: message.raw))
                             .font(DietType.body)
                             .tint(.accentColor)
+                            .textSelection(.enabled)
                     }
                     let emoticons = images.filter(\.isEmoticon)
                     let photos = images.filter { !$0.isEmoticon }
@@ -494,6 +495,10 @@ struct MessageBubble: View {
         }
         if !message.isOwn { Spacer(minLength: DietSpace.xxl) }
         }
+        // Badge clearance: reacted bubbles reserve the badges' overhang
+        // above (same constant the menu hit rect uses), so tapbacks never
+        // collide with the message above.
+        .padding(.top, message.reactions.isEmpty ? 0 : ReactionMenuAnchorView.badgeOverhang)
     }
 
     /// "Remove 👍" when the bubble already shows it, else "React 👍".

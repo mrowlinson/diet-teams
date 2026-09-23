@@ -1,4 +1,4 @@
-// ReactionMenuBridge.swift — om-reactions/om-msgactions/om-replies/om-editdel:
+// ReactionMenuBridge.swift — om-reactions/om-msgactions/om-replies/om-editdel/om-react-polish:
 // the bubble's ONE right-click menu (inline emoji row + Reply / Copy /
 // Forward / Save, plus Edit / Delete on own bubbles — all top-level,
 // no submenu).
@@ -9,6 +9,12 @@
 // the menu, so the row is an NSMenuItem custom view (NSStackView of
 // NSButtons), which never shows a submenu indicator. Reply/Copy/
 // Forward/Save ride the same NSMenu as plain top-level items.
+//
+// Row polish (om-react-polish): bare emoji buttons (borderless, no focus
+// halo — the .inline bezel drew grey circles) with a trailing ＋ that
+// opens the more-picker popover (search + recents + categories).
+// `allowsContextMenuPlugIns` stays off so the system never injects an
+// "Ask Siri" item above the row.
 //
 // Delivery: an NSEvent local monitor (not a covering overlay, so links
 // and badge taps are untouched). Right-clicks landing in the bubble's
@@ -98,11 +104,31 @@ final class ReactionMenuAnchorView: NSView {
     var onEdit: () -> Void = {}
     var onDelete: () -> Void = {}
 
-    /// Upward overhang of the tapback badges (matches the ZStack offset).
-    static let badgeOverhang: CGFloat = 20
+    /// Upward overhang of the tapback badges (badge half-height ~10 +
+    /// the ZStack's 16pt lift, plus 2pt breathing room). Shared by the
+    /// menu hit rect and the bubble's top clearance padding.
+    static let badgeOverhang: CGFloat = 28
+
+    /// Shot-hook note (--show-picker): object = target message id.
+    /// Only the matching bubble's anchor opens its picker.
+    static let shotPickerNote = Notification.Name("om.shot.showPicker")
+    private var shotObserver: NSObjectProtocol?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
+        shotObserver = NotificationCenter.default.addObserver(
+            forName: Self.shotPickerNote, object: nil, queue: .main
+        ) { [weak self] note in
+            guard let self, let id = note.object as? String,
+                  id == self.message.id else { return }
+            self.showPickerRetrying(tries: 12)
+        }
+    }
+
+    deinit {
+        if let o = shotObserver {
+            NotificationCenter.default.removeObserver(o)
+        }
     }
 
     @available(*, unavailable)
@@ -123,10 +149,14 @@ final class ReactionMenuAnchorView: NSView {
 
     func popMenu(with event: NSEvent) {
         let menu = NSMenu()
+        // No system-injected items (Ask Siri et al): this menu is exactly
+        // the row + the actions below, nothing else.
+        menu.allowsContextMenuPlugIns = false
         let row = NSMenuItem()
         row.view = ReactionMenuRowView(
             emojis: ConversationStore.reactionEmojis,
             menu: menu,
+            anchor: self,
             helpFor: { [message] in MessageBubble.reactHelp(emoji: $0, on: message) },
             onReact: onReact)
         menu.addItem(row)
@@ -165,6 +195,38 @@ final class ReactionMenuAnchorView: NSView {
             menu.addItem(retry)
         }
         NSMenu.popUpContextMenu(menu, with: event, for: self)
+    }
+
+    /// Retained while open (NSPopover is not retained by `show`).
+    private var picker: NSPopover?
+
+    /// More-picker popover above the bubble: search + recents +
+    /// categories. Transient (click-outside dismisses); one pick reacts
+    /// and closes. Called on the next runloop after the menu closes so
+    /// menu teardown never fights popover presentation.
+    func showPicker() {
+        let pop = NSPopover()
+        pop.behavior = .transient
+        pop.animates = true
+        pop.contentViewController = NSHostingController(rootView: ReactionPickerView(
+            onPick: { [weak self, weak pop] emoji in
+                pop?.close()
+                self?.picker = nil
+                self?.onReact(emoji)
+            }))
+        picker = pop
+        pop.show(relativeTo: bounds, of: self, preferredEdge: .maxY)
+    }
+
+    /// Shot-hook presentation: NSPopover refuses to show while the app
+    /// is hidden, so retry briefly (an unhide lands mid-retry). The
+    /// production ＋ path calls showPicker() directly, never this.
+    private func showPickerRetrying(tries: Int) {
+        showPicker()
+        guard picker?.isShown != true, tries > 1 else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            self?.showPickerRetrying(tries: tries - 1)
+        }
     }
 
     @objc private func copyAction() {
@@ -215,16 +277,34 @@ private final class ReactionMenuButtonTarget: NSObject {
     }
 }
 
-/// Horizontal emoji row for the menu item's custom view.
+/// ＋ press target: closes the menu, then opens the more-picker
+/// popover on the next runloop (menu teardown first, no fight).
+private final class ReactionMenuMoreTarget: NSObject {
+    let menu: NSMenu
+    weak var anchor: ReactionMenuAnchorView?
+
+    init(menu: NSMenu, anchor: ReactionMenuAnchorView) {
+        self.menu = menu
+        self.anchor = anchor
+    }
+
+    @objc func press() {
+        menu.cancelTracking()
+        DispatchQueue.main.async { [weak anchor] in anchor?.showPicker() }
+    }
+}
+
+/// Horizontal emoji row for the menu item's custom view: bare emoji
+/// (borderless, no focus halo) + a trailing ＋ for the more-picker.
 private final class ReactionMenuRowView: NSStackView {
-    private var targets: [ReactionMenuButtonTarget] = []
+    private var targets: [NSObject] = []
 
     init(
-        emojis: [String], menu: NSMenu,
+        emojis: [String], menu: NSMenu, anchor: ReactionMenuAnchorView,
         helpFor: @escaping (String) -> String,
         onReact: @escaping (String) -> Void
     ) {
-        super.init(frame: NSRect(x: 0, y: 0, width: 208, height: 30))
+        super.init(frame: NSRect(x: 0, y: 0, width: 238, height: 30))
         orientation = .horizontal
         alignment = .centerY
         distribution = .fill
@@ -234,16 +314,38 @@ private final class ReactionMenuRowView: NSStackView {
             let target = ReactionMenuButtonTarget(
                 emoji: emoji, menu: menu, onReact: onReact)
             targets.append(target)
-            let button = NSButton(title: emoji, target: target, action: #selector(ReactionMenuButtonTarget.press))
-            button.bezelStyle = .inline
-            button.setButtonType(.momentaryPushIn)
-            button.font = .systemFont(ofSize: 15)
-            button.toolTip = helpFor(emoji)
-            button.translatesAutoresizingMaskIntoConstraints = false
-            button.widthAnchor.constraint(equalToConstant: 28).isActive = true
-            button.heightAnchor.constraint(equalToConstant: 26).isActive = true
-            addArrangedSubview(button)
+            addArrangedSubview(Self.bareButton(
+                title: emoji, target: target,
+                action: #selector(ReactionMenuButtonTarget.press),
+                toolTip: helpFor(emoji)))
         }
+        let more = ReactionMenuMoreTarget(menu: menu, anchor: anchor)
+        targets.append(more)
+        addArrangedSubview(Self.bareButton(
+            title: "＋", target: more,
+            action: #selector(ReactionMenuMoreTarget.press),
+            toolTip: "More emoji"))
+    }
+
+    /// One bare glyph button: no bezel circle, no focus halo; the glyph
+    /// dims while pressed (momentary) for press feedback.
+    private static func bareButton(
+        title: String, target: AnyObject?,
+        action: Selector, toolTip: String
+    ) -> NSButton {
+        let button = NSButton(title: title, target: target, action: action)
+        // Borderless (no bezel circle) + no focus halo = bare glyph.
+        // The default bezel style is left untouched: with isBordered
+        // false no bezel draws, and no deprecated style is named.
+        button.isBordered = false
+        button.focusRingType = .none
+        button.setButtonType(.momentaryPushIn)
+        button.font = .systemFont(ofSize: 15)
+        button.toolTip = toolTip
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.widthAnchor.constraint(equalToConstant: 28).isActive = true
+        button.heightAnchor.constraint(equalToConstant: 26).isActive = true
+        return button
     }
 
     @available(*, unavailable)

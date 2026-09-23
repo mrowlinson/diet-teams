@@ -443,17 +443,27 @@ public final class ConversationStore: ObservableObject {
         return msg.content
     }
 
-    // MARK: - Reactions (om-reactions)
+    // MARK: - Reactions (om-reactions, extended om-react-polish)
 
     /// Picker emoji in canonical order (mirrors core REACTION_EMOJI).
+    /// The ONLY emoji with a verified Teams reaction type: live sends
+    /// accept exactly these. The more-picker's extended catalog reacts
+    /// locally (demo fully; live blocked with a clear error).
     public static let reactionEmojis = ["👍", "❤️", "😂", "😮", "😢", "😠"]
+
+    /// UI acceptance: any single grapheme cluster (covers the catalog,
+    /// flags, and modifier sequences, which all count as one Character).
+    /// Empty and multi-character strings are rejected.
+    public static func isReactable(_ emoji: String) -> Bool {
+        emoji.count == 1
+    }
 
     /// Toggle one emoji on a bubble: present → remove, absent → add.
     /// Optimistic (counts move now); demo mode stays local; live mode
-    /// reverts on core failure. Unknown ids are a no-op.
+    /// reverts on core failure. Unknown ids and non-emoji are a no-op.
     public func toggleReaction(messageID: String, emoji: String) {
         guard messages.contains(where: { $0.id == messageID }) else { return }
-        guard Self.reactionEmojis.contains(emoji) else { return }
+        guard Self.isReactable(emoji) else { return }
         let present = messages.first(where: { $0.id == messageID })?
             .reactions.contains(where: { $0.emoji == emoji }) ?? false
         if present {
@@ -463,11 +473,20 @@ public final class ConversationStore: ObservableObject {
         }
     }
 
-    /// Add one emoji reaction (optimistic). Unknown ids are a no-op.
+    /// Add one emoji reaction (optimistic). Unknown ids and non-emoji
+    /// are a no-op. Extended (non-canonical) emoji apply in demo; live
+    /// they are refused with a clear error (no verified server type),
+    /// undoing the optimistic add synchronously so nothing flashes.
     public func react(messageID: String, emoji: String) {
         guard let i = messages.firstIndex(where: { $0.id == messageID }) else { return }
-        guard Self.reactionEmojis.contains(emoji) else { return }
+        guard Self.isReactable(emoji) else { return }
         messages[i].reactions = Self.withReactionAdded(messages[i].reactions, emoji: emoji)
+        if !isDemo, !Self.reactionEmojis.contains(emoji) {
+            messages[i].reactions = Self.withReactionRemoved(messages[i].reactions, emoji: emoji)
+            error = "“\(emoji)” isn't a Teams reaction — live supports \(Self.reactionEmojis.joined(separator: " "))"
+            return
+        }
+        ReactionRecents.record(emoji)
         if isDemo { return }
         guard let id = chatID else { return }
         Task {
@@ -514,10 +533,13 @@ public final class ConversationStore: ObservableObject {
     }
 
     /// Remove one emoji reaction (optimistic). Unknown ids are a no-op.
+    /// Extended emoji remove locally only (the server never held them,
+    /// so no core call and no spurious failure).
     public func removeReaction(messageID: String, emoji: String) {
         guard let i = messages.firstIndex(where: { $0.id == messageID }) else { return }
         messages[i].reactions = Self.withReactionRemoved(messages[i].reactions, emoji: emoji)
         if isDemo { return }
+        guard Self.reactionEmojis.contains(emoji) else { return }
         guard let id = chatID else { return }
         Task {
             do {
