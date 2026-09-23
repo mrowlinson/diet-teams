@@ -56,6 +56,15 @@ char *ostmac_messages_page(const char *chat_id, const char *page_token, int limi
 // Post one message to a chat. Caller frees.
 char *ostmac_send(const char *chat_id, const char *text);
 
+// Post one quote reply to a chat message: parent_id is the quoted
+// message id, parent_sender/parent_text attribute the quote block
+// (blank sender/text fall back to "?"/parent id in core).
+// Returns {ok, chat_id}. Caller frees.
+char *ostmac_reply(
+    const char *chat_id, const char *parent_id,
+    const char *parent_sender, const char *parent_text,
+    const char *text);
+
 // Fetch one inline-image URL: {ok, data_base64, content_type?}.
 // Microsoft media hosts attach the Skype token; public hosts fetch
 // without auth. https only. Requires sign-in for auth'd hosts.

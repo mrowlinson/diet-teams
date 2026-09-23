@@ -529,6 +529,7 @@ fn message_to_json(m: &ost::api::MessageInfo) -> serde_json::Value {
         "timestamp": m.timestamp,
         "content": m.content,
         "raw": m.raw,
+        "reply_to": m.reply_to,
     })
 }
 
@@ -597,6 +598,57 @@ pub fn messages_page_json(chat_id: &str, page_token: &str, limit: usize) -> Stri
     match run() {
         Ok(s) => s,
         Err(e) => err_json("messages_page", e),
+    }
+}
+
+/// Post one quote reply to a chat message. Returns `{ok:true, chat_id}`
+/// or `{ok:false}`. The parent attribution comes from the caller (no
+/// history fetch); ost truncates `parent_text` to the quote snippet.
+/// Empty `chat_id`/`parent_id`/`text` are rejected before any network
+/// (blank sender/snippet sources fall back to `"?"`/parent id).
+pub fn reply_json(
+    chat_id: &str,
+    parent_id: &str,
+    parent_sender: &str,
+    parent_text: &str,
+    text: &str,
+) -> String {
+    if chat_id.trim().is_empty() {
+        return err_json("arg", "empty chat_id");
+    }
+    if parent_id.trim().is_empty() {
+        return err_json("arg", "empty parent_id");
+    }
+    if text.trim().is_empty() {
+        return err_json("arg", "empty text");
+    }
+    let sender = if parent_sender.trim().is_empty() {
+        "?"
+    } else {
+        parent_sender
+    };
+    let snippet_src = if parent_text.trim().is_empty() {
+        parent_id
+    } else {
+        parent_text
+    };
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            ost::api::reply_message_with_client(
+                &client, chat_id, parent_id, sender, snippet_src, text,
+            )
+            .await
+            .map_err(|e| format!("{:#}", e))?;
+            Ok(json!({"ok": true, "chat_id": chat_id}).to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("reply", e),
     }
 }
 
@@ -1556,6 +1608,37 @@ pub extern "C" fn ostmac_messages_page(
     }
 }
 
+/// Post one quote reply to a chat message. See [`reply_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_reply(
+    chat_id: *const c_char,
+    parent_id: *const c_char,
+    parent_sender: *const c_char,
+    parent_text: *const c_char,
+    text: *const c_char,
+) -> *mut c_char {
+    let id = match cstr_to_string(chat_id) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    let parent = match cstr_to_string(parent_id) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    let sender = match cstr_to_string(parent_sender) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    let snippet = match cstr_to_string(parent_text) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    match cstr_to_string(text) {
+        Ok(t) => string_to_c(reply_json(&id, &parent, &sender, &snippet, &t)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
 /// Post one message to a chat. See [`send_json`].
 #[no_mangle]
 pub extern "C" fn ostmac_send(chat_id: *const c_char, text: *const c_char) -> *mut c_char {
@@ -1981,6 +2064,7 @@ mod tests {
             timestamp: "2026-09-22T12:00:00Z".to_string(),
             content: "hi".to_string(),
             raw: "<p>hi</p>".to_string(),
+            reply_to: None,
         };
         let v = message_to_json(&m);
         assert_eq!(v["id"], "m1");
@@ -1988,6 +2072,67 @@ mod tests {
         assert_eq!(v["timestamp"], "2026-09-22T12:00:00Z");
         assert_eq!(v["content"], "hi");
         assert_eq!(v["raw"], "<p>hi</p>");
+        assert!(v["reply_to"].is_null());
+    }
+
+    #[test]
+    fn message_json_shape_carries_reply_to() {
+        let m = ost::api::MessageInfo {
+            id: "m2".to_string(),
+            sender: "B".to_string(),
+            timestamp: "t".to_string(),
+            content: "On it!".to_string(),
+            raw: "<quote guid=\"m1\">hi</quote><p>On it!</p>".to_string(),
+            reply_to: Some("m1".to_string()),
+        };
+        let v = message_to_json(&m);
+        assert_eq!(v["reply_to"], "m1");
+        assert_eq!(v["content"], "On it!");
+    }
+
+    #[test]
+    fn reply_rejects_bad_args_without_network() {
+        for (id, parent, sender, ptext, text) in [
+            ("", "m1", "A", "hi", "yo"),
+            ("   ", "m1", "A", "hi", "yo"),
+            ("19:x", "", "A", "hi", "yo"),
+            ("19:x", "  ", "A", "hi", "yo"),
+            ("19:x", "m1", "A", "hi", ""),
+            ("19:x", "m1", "A", "hi", "  "),
+        ] {
+            let v: serde_json::Value =
+                serde_json::from_str(&reply_json(id, parent, sender, ptext, text)).unwrap();
+            assert_eq!(
+                v["ok"], false,
+                "id={:?} parent={:?} text={:?}",
+                id, parent, text
+            );
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
+    fn ffi_reply_null_is_arg_error() {
+        let id = CString::new("19:x").unwrap();
+        let parent = CString::new("m1").unwrap();
+        let sender = CString::new("A").unwrap();
+        let ptext = CString::new("hi").unwrap();
+        let text = CString::new("yo").unwrap();
+        // Each position null in turn; every one is an arg error, never a crash.
+        let ptrs = [id.as_ptr(), parent.as_ptr(), sender.as_ptr(), ptext.as_ptr(), text.as_ptr()];
+        for i in 0..5 {
+            let mut a = ptrs;
+            a[i] = std::ptr::null();
+            unsafe {
+                let p = ostmac_reply(a[0], a[1], a[2], a[3], a[4]);
+                assert!(!p.is_null());
+                let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+                ostmac_free(p);
+                let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+                assert_eq!(v["ok"], false, "null at {}", i);
+                assert_eq!(v["error"], "arg");
+            }
+        }
     }
 
     #[test]
@@ -2091,6 +2236,7 @@ mod tests {
                 timestamp: "2026-09-22T12:00:00Z".to_string(),
                 content: "hi Bob".to_string(),
                 raw: "<p>hi <at>Bob</at></p>".to_string(),
+                reply_to: None,
             }],
             backward_link: Some(
                 "https://h/v1/conversations/19:x/messages?page=2".to_string(),

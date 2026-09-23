@@ -103,6 +103,21 @@ needing maintainer buy-in. Minor PRs stand alone; majors are separate PRs.
     existing Graph `/.default` exchange covers OneNote (delegated perms ride
     the first-party client); no new consent requested.
 
+17. [minor] `src/api/chat.rs` + `src/api/mod.rs` + `src/main.rs` —
+    **quote replies (om-replies lane)**. `MessageInfo` gains `reply_to`
+    (parent id mined from the first `<quote guid>` block; `content` is the
+    reply body only, `raw` keeps the full HTML). Pure helpers
+    `reply_snippet` (one-line, 140 chars + `…`), `build_reply_html`
+    (Skype-style `<quote author guid>` + `<p>` body, all fields escaped),
+    `split_reply_quote` (malformed quotes keep content, never drop it),
+    re-exported in `src/api/mod.rs`. Send path:
+    `reply_message_with_client` posts `RichText/Html` with the quote block
+    (official clients render it as a quote); `reply_message` resolves the
+    parent from the newest history page for attribution. CLI: `send
+    --reply-to <id>`; `read` marks replies `(reply to <id>)`. Unit tests:
+    snippet collapse/truncate (incl. multibyte boundary), build→split
+    round-trip with escaping, malformed-quote cases.
+
 ## Upstream PRs (2026-09-22, base 0892144; main red on sdp E0308 until #5)
 
 Minor (standalone modulo #5-first; merge in any order after):

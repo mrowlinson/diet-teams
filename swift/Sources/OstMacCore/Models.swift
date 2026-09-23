@@ -303,15 +303,20 @@ public struct ChatMessage: Decodable, Sendable, Identifiable, Equatable {
     public var raw: String?
     /// Host-side: set when a realtime edit rewrites `content`.
     public var edited: Bool
+    /// Parent message id for quote replies (om-replies): mined by core
+    /// from the `<quote guid>` block; absent on old payloads and
+    /// non-reply bubbles.
+    public var reply_to: String?
 
     enum CodingKeys: String, CodingKey {
-        case id, sender, timestamp, content, raw
+        case id, sender, timestamp, content, raw, reply_to
     }
 
     public init(
         id: String, sender: String, timestamp: String,
         content: String, isOwn: Bool = false,
-        raw: String? = nil, edited: Bool = false
+        raw: String? = nil, edited: Bool = false,
+        reply_to: String? = nil
     ) {
         self.id = id
         self.sender = sender
@@ -320,6 +325,7 @@ public struct ChatMessage: Decodable, Sendable, Identifiable, Equatable {
         self.isOwn = isOwn
         self.raw = raw
         self.edited = edited
+        self.reply_to = reply_to
     }
 
     public init(from decoder: Decoder) throws {
@@ -329,6 +335,7 @@ public struct ChatMessage: Decodable, Sendable, Identifiable, Equatable {
         timestamp = try c.decode(String.self, forKey: .timestamp)
         content = try c.decode(String.self, forKey: .content)
         raw = try c.decodeIfPresent(String.self, forKey: .raw)
+        reply_to = try c.decodeIfPresent(String.self, forKey: .reply_to)
         isOwn = false
         edited = false
     }

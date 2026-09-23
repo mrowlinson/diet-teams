@@ -29,7 +29,9 @@ pub use teams::ChannelInfo;
 
 // Re-export data-returning functions for TUI integration
 pub use chat::{
-    list_chats_data, read_messages_data, read_messages_page, send_message_with_client,
+    build_reply_html, list_chats_data, read_messages_data, read_messages_page,
+    reply_message_with_client, reply_snippet, send_message_with_client, split_reply_quote,
+    REPLY_SNIPPET_MAX,
 };
 pub use files::{download_file_data, list_chat_files_data, upload_file_data};
 pub use media::{fetch_media_data, MediaBytes, MAX_BYTES};
@@ -58,6 +60,11 @@ pub async fn read_messages(chat_id: &str, limit: usize) -> Result<()> {
 /// Send a message to a chat (native Teams API)
 pub async fn send_message(to: &str, message: &str) -> Result<()> {
     chat::send_message(to, message).await
+}
+
+/// Reply to one message in a chat (quote reply, native Teams API)
+pub async fn reply_message(chat_id: &str, parent_id: &str, message: &str) -> Result<()> {
+    chat::reply_message(chat_id, parent_id, message).await
 }
 
 /// Get current presence status

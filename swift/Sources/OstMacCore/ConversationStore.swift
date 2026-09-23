@@ -19,6 +19,10 @@ public final class ConversationStore: ObservableObject {
     @Published public private(set) var error: String?
     @Published public private(set) var didLoad = false
     @Published public private(set) var failedIDs: Set<String> = []
+    /// Armed quote-reply target (om-replies): set by the bubble Reply
+    /// action, cleared by send/cancel/chat-switch. `send(text:)` posts
+    /// through the reply path while set.
+    @Published public private(set) var replyTarget: ChatMessage?
     public private(set) var chatID: String?
     public private(set) var chatName: String?
     public private(set) var isDemo = false
@@ -40,6 +44,7 @@ public final class ConversationStore: ObservableObject {
         if let n = chatName { self.chatName = n }
         loading = true
         error = nil
+        replyTarget = nil
         openGeneration += 1
         let gen = openGeneration
         pageToken = nil
@@ -169,34 +174,78 @@ public final class ConversationStore: ObservableObject {
         self.chatName = chatName
         self.messages = messages
         failedIDs = failed
+        replyTarget = nil
         isDemo = true
         loading = false
         error = nil
         didLoad = true
     }
 
+    /// Arm a quote reply to `message` (bubble Reply action / shot hook).
+    /// Unknown ids still arm (the quote block carries the attribution),
+    /// but the bubble quote preview needs the parent in `messages`.
+    public func beginReply(to message: ChatMessage) {
+        replyTarget = message
+    }
+
+    /// Disarm the pending reply (chip ✕ / after send / chat switch).
+    public func cancelReply() {
+        replyTarget = nil
+    }
+
+    /// Parent bubble for a reply's `reply_to` id, if still in history.
+    /// Nil id or evicted parent → nil (caller shows the fallback quote).
+    public func quotedParent(for message: ChatMessage) -> ChatMessage? {
+        guard let parentID = message.reply_to else { return nil }
+        return messages.first(where: { $0.id == parentID })
+    }
+
+    /// One-line quote preview: collapsed whitespace, 120 chars + `…`.
+    /// Pure so the bubble, chip, and tests share it.
+    public static func quotePreview(_ text: String, max: Int = 120) -> String {
+        let oneLine = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        guard oneLine.count > max else { return oneLine }
+        let end = oneLine.index(oneLine.startIndex, offsetBy: max)
+        return "\(oneLine[..<end])…"
+    }
+
     /// Post via core; appends an optimistic own-bubble immediately.
     /// Demo mode appends locally without touching core.
+    /// With `replyTarget` armed, posts through the reply path (quote
+    /// block) and disarms; the optimistic bubble already shows the quote.
     /// Core failure marks the bubble failed (per-message state + retry).
     public func send(text: String) {
         let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !body.isEmpty else { return }
+        let parent = replyTarget
+        replyTarget = nil
         if isDemo {
             messages.append(ChatMessage(
                 id: "demo-local-\(messages.count + 1)",
-                sender: "Me", timestamp: Self.nowISO(), content: body, isOwn: true))
+                sender: "Me", timestamp: Self.nowISO(), content: body, isOwn: true,
+                reply_to: parent?.id))
             return
         }
         guard let id = chatID else { return }
         let pendingID = "pending-\(UUID().uuidString)"
         messages.append(ChatMessage(
             id: pendingID,
-            sender: "Me", timestamp: Self.nowISO(), content: body, isOwn: true))
+            sender: "Me", timestamp: Self.nowISO(), content: body, isOwn: true,
+            reply_to: parent?.id))
         Task {
             do {
-                _ = try await Task.detached {
-                    try RustCore.send(chatID: id, text: body)
-                }.value
+                if let parent {
+                    let p = parent
+                    _ = try await Task.detached {
+                        try RustCore.reply(
+                            chatID: id, parentID: p.id,
+                            parentSender: p.sender, parentText: p.content, text: body)
+                    }.value
+                } else {
+                    _ = try await Task.detached {
+                        try RustCore.send(chatID: id, text: body)
+                    }.value
+                }
             } catch {
                 self.noteSendFailed(id: pendingID)
                 self.error = "send failed: \(error)"
