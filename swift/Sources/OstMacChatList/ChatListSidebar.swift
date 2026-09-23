@@ -52,7 +52,7 @@ public struct ChatListSidebar: View {
     }
 
     private var loadedList: some View {
-        let visible = ChatListFormat.filter(model.chats, query: searchText)
+        let visible = ChatListFormat.filter(model.displayChats, query: searchText)
         return VStack(spacing: 0) {
             DietSearchField("Filter chats", text: $searchText)
                 .padding(.horizontal, DietSpace.sm)
