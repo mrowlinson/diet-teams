@@ -35,6 +35,9 @@
 // offline, throwaway defaults — never the real ones).
 // --show-reply opens the demo replies thread with the compose-reply
 // chip armed on Tom's question (shot hook, offline).
+// --show-sidebarchurn swaps the demo list for the churn dataset
+// (meeting + bot + system rows) and folds a beacon burst after load,
+// so the sidebar shows the stable result (shot hook, offline).
 // --auth-state <name> opens the Auth window with a canned state, never
 // touching core/network (names: signed-out, starting, code, polling,
 // browser, browser-working, signed-in, expired, refreshing,
@@ -195,6 +198,8 @@ final class AppState: ObservableObject {
     @Published var forwardMessage: ChatMessage?
     /// --show-reply: demo replies thread + armed compose-reply chip.
     let showReply: Bool
+    /// --show-sidebarchurn: churn dataset + post-load beacon burst.
+    let showSidebarChurn: Bool
     @Published var openChatID: String?
     @Published var signedIn: Bool?
     @Published var coreVersion = "?"
@@ -223,13 +228,14 @@ final class AppState: ObservableObject {
 
     init(args: [String]) {
         isDemo = args.contains("--demo") || args.contains("--demo-rich")
-            || args.contains("--demo-reactions")
+            || args.contains("--demo-reactions") || args.contains("--show-sidebarchurn")
         showNotes = args.contains("--show-notes")
         showJump = args.contains("--show-jump") // shot hook: palette open at launch
         call = CallStore(demo: isDemo)
         showCatchUp = args.contains("--show-catchup")
         showForward = args.contains("--show-forward")
         showReply = args.contains("--show-reply")
+        showSidebarChurn = args.contains("--show-sidebarchurn")
         if showCatchUp {
             // Shot hook only: throwaway defaults (never the real ones),
             // canned summary, no network.
@@ -269,7 +275,11 @@ final class AppState: ObservableObject {
             autoSay = nil
         }
         if isDemo {
-            chats = ChatListViewModel(fetcher: { _ in DemoData.chatsResponse() })
+            // Shot hook: the churn dataset swaps the whole list (the
+            // standard demo rows + count assertions stay untouched).
+            let seed = showSidebarChurn
+                ? DemoData.churnChatsResponse() : DemoData.chatsResponse()
+            chats = ChatListViewModel(fetcher: { _ in seed })
             teams = TeamsViewModel(fetcher: { DemoData.teamsResponse() })
             reminders = RemindersViewModel(
                 listsFetcher: { DemoData.remindersResponse() },
@@ -342,6 +352,11 @@ final class AppState: ObservableObject {
         guard !contentOpened, isDemo || auth.state.allowsContent else { return }
         contentOpened = true
         await chats.load()
+        if showSidebarChurn {
+            // Shot hook: fold the beacon burst once the list lands; the
+            // sidebar (not the thread) shows the stable result.
+            chats.ingest(batch: DemoData.churnBurst())
+        }
         await teams.load()
         await reminders.load()
         if chats.state == .loaded {

@@ -102,7 +102,7 @@ public struct WhoamiResponse: Decodable, Sendable {
     public let mail: String?
 }
 
-public struct ChatItem: Decodable, Sendable, Identifiable {
+public struct ChatItem: Decodable, Sendable, Identifiable, Equatable {
     public var id: String { chatId }
     public let chatId: String
     public let name: String
