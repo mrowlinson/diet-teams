@@ -22,6 +22,8 @@
 // --show-reminders opens the sidebar on the Reminders browser (shot hook).
 // --show-notes opens the conversation on the Notes tab (shot hook).
 // --show-jump opens the Cmd+K jump palette at launch (shot hook).
+// --show-forward opens the forward sheet (jump palette re-targeted at a
+// demo bubble) at launch (om-msgactions shot hook, offline).
 // --jump-query <q> / --filter-query <q> preseed the palette/sidebar
 // filters (shot hooks).
 // --show-gif opens the GIF picker popover at launch (shot hook).
@@ -181,6 +183,10 @@ final class AppState: ObservableObject {
     let catchUp: CatchUpStore
     /// --show-catchup: long demo thread + canned summary, sheet auto-opens.
     let showCatchUp: Bool
+    /// --show-forward: forward sheet opens for a demo bubble at launch.
+    let showForward: Bool
+    /// Bubble being forwarded (om-msgactions): set sheets the palette.
+    @Published var forwardMessage: ChatMessage?
     @Published var openChatID: String?
     @Published var signedIn: Bool?
     @Published var coreVersion = "?"
@@ -207,6 +213,7 @@ final class AppState: ObservableObject {
         showJump = args.contains("--show-jump") // shot hook: palette open at launch
         call = CallStore(demo: isDemo)
         showCatchUp = args.contains("--show-catchup")
+        showForward = args.contains("--show-forward")
         if showCatchUp {
             // Shot hook only: throwaway defaults (never the real ones),
             // canned summary, no network.
@@ -364,6 +371,20 @@ final class AppState: ObservableObject {
         open(chatID: id, chatName: channelName)
     }
 
+    /// Bubble Forward tap (om-msgactions): arm the forward sheet (the
+    /// palette opens for this bubble; picking sends via conv.forward).
+    func beginForward(_ message: ChatMessage) {
+        forwardMessage = message
+    }
+
+    /// Forward palette pick: send the armed bubble's text to the
+    /// destination, then disarm. No-op without an armed bubble.
+    func forwardPicked(destID: String, destName: String) {
+        guard let msg = forwardMessage else { return }
+        forwardMessage = nil
+        conv.forward(msg, toChatID: destID, destName: destName)
+    }
+
     /// Jump palette: chats route through the sidebar selection (keeps the
     /// list highlight in sync); channels/teams open directly by id.
     func jump(chatID id: String, chatName: String) {
@@ -385,6 +406,12 @@ final class AppState: ObservableObject {
             conv.showDemo(
                 chatID: id, chatName: name, messages: msgs,
                 failed: DemoData.failedIDs(for: id))
+            // Shot hook: arm the forward sheet on a mid-thread bubble
+            // (Tom's mocks note in the default thread), once.
+            if showForward, forwardMessage == nil {
+                let pick = msgs.count > 1 ? msgs[1] : msgs.first
+                if let pick { forwardMessage = pick }
+            }
             notes.showDemo()
         } else {
             conv.open(chatID: id, chatName: chatName)
@@ -540,7 +567,8 @@ struct RootView: View {
                             isGroup: state.chats.selectedChat?.is_group ?? true,
                             initialTab: CommandLine.arguments.contains("--show-shared") ? 1
                                 : (state.showNotes ? 2 : 0),
-                            catchUpOpen: state.showCatchUp)
+                            catchUpOpen: state.showCatchUp,
+                            onForward: { state.beginForward($0) })
                     }
                 }
             } else {
@@ -563,6 +591,15 @@ struct RootView: View {
             ) { id, name in
                 state.showJump = false
                 state.jump(chatID: id, chatName: name)
+            }
+        }
+        .sheet(item: $state.forwardMessage) { msg in
+            ForwardSheet(
+                message: msg,
+                targets: JumpTargets.build(chats: state.chats.chats, teams: state.teams.teams),
+                initialQuery: OstMacAppMain.jumpQuery(args: CommandLine.arguments)
+            ) { id, name in
+                state.forwardPicked(destID: id, destName: name)
             }
         }
         .onAppear {
@@ -589,6 +626,41 @@ struct RootView: View {
             systemImage: "bubble.left.and.bubble.right",
             title: "Select a chat",
             message: "Pick a conversation in the sidebar, or press ⌘K to jump.")
+    }
+}
+
+/// Forward sheet (om-msgactions): the jump palette re-targeted — same
+/// fuzzy rows + keys, with a quote header naming the bubble being sent.
+/// Picking sends the bubble text to that chat (conv.forward).
+struct ForwardSheet: View {
+    let message: ChatMessage
+    let targets: [JumpTarget]
+    let initialQuery: String
+    let onPick: (String, String) -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: DietSpace.sm) {
+                Image(systemName: "arrowshape.turn.up.right")
+                    .font(.system(size: DietSize.iconMD))
+                    .foregroundStyle(DietColor.textSecondaryColor)
+                VStack(alignment: .leading, spacing: DietSpace.xxs) {
+                    Text("Forward to…")
+                        .font(DietType.headline)
+                        .foregroundStyle(DietColor.textPrimaryColor)
+                    Text("\(message.sender): \(MessageActions.forwardPreview(for: message))")
+                        .font(DietType.caption1)
+                        .foregroundStyle(DietColor.textSecondaryColor)
+                        .lineLimit(2)
+                }
+                Spacer(minLength: DietSpace.sm)
+            }
+            .padding(DietSpace.md)
+            DietDividerH()
+            JumpPaletteView(
+                targets: targets, initialQuery: initialQuery,
+                verb: "forward", onPick: onPick)
+        }
     }
 }
 

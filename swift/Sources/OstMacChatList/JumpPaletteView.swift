@@ -6,16 +6,23 @@ import SwiftUI
 /// Fuzzy jump-to palette. `targets` is the full row set (chats, channels,
 /// teams); filtering + ranking is live via ``FuzzyMatch``. `onPick` fires
 /// with the chosen target's open id + name; the host dismisses + opens.
+/// `verb` retitles the Return hint when the palette is re-targeted
+/// (om-msgactions forwards through this same view).
 public struct JumpPaletteView: View {
     private let targets: [JumpTarget]
     private let onPick: (String, String) -> Void
+    private let verb: String
     @State private var query = ""
     @State private var highlight = 0
     @FocusState private var fieldFocused: Bool
 
-    public init(targets: [JumpTarget], initialQuery: String = "", onPick: @escaping (String, String) -> Void) {
+    public init(
+        targets: [JumpTarget], initialQuery: String = "", verb: String = "jump",
+        onPick: @escaping (String, String) -> Void
+    ) {
         self.targets = targets
         _query = State(initialValue: initialQuery)
+        self.verb = verb
         self.onPick = onPick
     }
 
@@ -93,7 +100,7 @@ public struct JumpPaletteView: View {
                 .frame(height: Self.listHeight(for: matches.count))
             }
             DietDividerH()
-            Text("↑↓ move · ⏎ jump · esc close")
+            Text("↑↓ move · ⏎ \(verb) · esc close")
                 .font(DietType.caption1)
                 .foregroundStyle(DietColor.textSecondaryColor)
                 .padding(DietSpace.sm)

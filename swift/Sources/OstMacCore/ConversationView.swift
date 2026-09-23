@@ -1,9 +1,11 @@
-// ConversationView.swift — om-conv/om-convrich/om-shared/om-notes/om-cmdk/om-catchup: SwiftUI chat window.
+// ConversationView.swift — om-conv/om-convrich/om-shared/om-notes/om-cmdk/om-catchup/om-msgactions: SwiftUI chat window.
 // Rich bubbles (mentions, code spans, links), day separators, scroll-up
 // load-more paging, edited markers, failed-send retry, Shared files + Notes tabs,
-// GIF picker + thread catch-up.
+// GIF picker + thread catch-up + copy/forward/save bubble menu.
+import AppKit
 import DietDesign
 import SwiftUI
+import UniformTypeIdentifiers
 
 public struct ConversationView: View {
     @ObservedObject public var store: ConversationStore
@@ -22,14 +24,19 @@ public struct ConversationView: View {
     @State private var showCatchUp: Bool
     @FocusState private var boxFocused: Bool
     @State private var gifHovering = false
+    /// Forward tap (om-msgactions): the host opens its jump-palette sheet
+    /// (OstMac target owns JumpPaletteView; this module cannot import it).
+    private let onForward: (ChatMessage) -> Void
 
     /// - catchUpOpen: open the catch-up sheet at launch (the
     ///   --show-catchup shot hook only).
+    /// - onForward: bubble Forward tap → host sheets the jump palette.
     public init(
         store: ConversationStore, presence: PresenceStore = PresenceStore(),
         call: CallStore = CallStore(), shared: SharedFilesStore = SharedFilesStore(),
         notes: NotesStore = NotesStore(), catchUp: CatchUpStore = CatchUpStore(),
-        isGroup: Bool = true, initialTab: Int = 0, catchUpOpen: Bool = false
+        isGroup: Bool = true, initialTab: Int = 0, catchUpOpen: Bool = false,
+        onForward: @escaping (ChatMessage) -> Void = { _ in }
     ) {
         self.store = store
         self.presence = presence
@@ -38,6 +45,7 @@ public struct ConversationView: View {
         self.notes = notes
         self.catchUp = catchUp
         self.isGroup = isGroup
+        self.onForward = onForward
         _tab = State(initialValue: initialTab)
         _showCatchUp = State(initialValue: catchUpOpen)
     }
@@ -79,7 +87,8 @@ public struct ConversationView: View {
                                     MessageBubble(
                                         message: msg,
                                         failed: store.failedIDs.contains(msg.id),
-                                        onRetry: { _ = store.retry(id: msg.id) }
+                                        onRetry: { _ = store.retry(id: msg.id) },
+                                        onForward: { onForward(msg) }
                                     )
                                     .id(msg.id)
                                 }
@@ -293,6 +302,8 @@ struct MessageBubble: View {
     let message: ChatMessage
     var failed: Bool = false
     var onRetry: () -> Void = {}
+    /// Forward tap (om-msgactions): the host sheets the jump palette.
+    var onForward: () -> Void = {}
 
     var body: some View {
         HStack(spacing: DietSpace.xs) {
@@ -354,7 +365,35 @@ struct MessageBubble: View {
                     .stroke(Color(nsColor: DietColor.danger), lineWidth: 1) : nil)
             .foregroundStyle(DietColor.textPrimaryColor)
             .opacity(failed ? 0.85 : 1)
+            // TOP-LEVEL ONLY: Copy / Forward / Save (+ Retry when failed)
+            // are direct items — never nested in a submenu.
+            .contextMenu {
+                Button("Copy", systemImage: "doc.on.doc") { copyBody() }
+                Button("Forward…", systemImage: "arrowshape.turn.up.right", action: onForward)
+                Button("Save…", systemImage: "square.and.arrow.down") { saveBody() }
+                if failed {
+                    Button("Retry send", systemImage: "arrow.clockwise", action: onRetry)
+                }
+            }
             if !message.isOwn { Spacer(minLength: DietSpace.xxl) }
         }
+    }
+
+    /// Copy the bubble text (what the bubble shows) to the pasteboard.
+    private func copyBody() {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(MessageActions.copyText(for: message), forType: .string)
+    }
+
+    /// Save the bubble (sender + timestamp header + text) via a save panel.
+    private func saveBody() {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = MessageActions.saveFilename(for: message)
+        panel.allowedContentTypes = [.plainText]
+        panel.canCreateDirectories = true
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        try? MessageActions.saveBody(for: message).write(
+            to: url, atomically: true, encoding: .utf8)
     }
 }

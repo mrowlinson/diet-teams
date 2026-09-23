@@ -204,6 +204,39 @@ public final class ConversationStore: ObservableObject {
         }
     }
 
+    /// Last forward from this store (om-msgactions). Set in demo mode
+    /// synchronously; in live mode on send success. Powers tests + shots.
+    @Published public private(set) var lastForward: MessageActions.ForwardRecord?
+    /// Destination chat of the last forward (demo preview + tests).
+    @Published public private(set) var lastForwardDestName: String?
+
+    /// Forward one bubble's text to another chat (om-msgactions). Reuses
+    /// the plain send path (no new FFI): the destination bubble stamps
+    /// its own sender/time. Demo mode records without touching core.
+    /// Empty destination or empty body is a no-op.
+    public func forward(_ message: ChatMessage, toChatID destChatID: String, destName: String? = nil) {
+        let dest = destChatID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !dest.isEmpty else { return }
+        let body = MessageActions.forwardBody(for: message)
+        guard !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        if isDemo {
+            lastForward = MessageActions.ForwardRecord(messageID: message.id, destChatID: dest, body: body)
+            lastForwardDestName = destName
+            return
+        }
+        Task {
+            do {
+                _ = try await Task.detached {
+                    try RustCore.send(chatID: dest, text: body)
+                }.value
+                self.lastForward = MessageActions.ForwardRecord(messageID: message.id, destChatID: dest, body: body)
+                self.lastForwardDestName = destName
+            } catch {
+                self.error = "forward failed: \(error)"
+            }
+        }
+    }
+
     /// Record a failed optimistic send (test seam + retry bookkeeping).
     func noteSendFailed(id: String) {
         failedIDs.insert(id)
