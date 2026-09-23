@@ -13,6 +13,7 @@ public enum DemoData {
     public static let mediaID = "demo-media"
     public static let reactionsID = "demo-react"
     public static let repliesID = "demo-replies"
+    public static let historyID = "demo-history"
 
     /// Sidebar rows. [0] is "demo" (matches ConversationStore.demo()).
     /// The rich row derives from the rich thread's last message, so its
@@ -37,6 +38,7 @@ public enum DemoData {
         mediaChat(),
         reactionsChat(),
         repliesChat(),
+        historyChat(),
     ]
 
     /// Rich sidebar row: preview/sender/time from the rich thread's tail.
@@ -78,6 +80,17 @@ public enum DemoData {
         let last = msgs.last
         return ChatItem(
             chatId: repliesID, name: "Demo — Threaded Replies", is_group: true,
+            last_message_time: last?.timestamp,
+            last_message_sender: last?.sender,
+            last_message_preview: last?.content)
+    }
+
+    /// History sidebar row: preview/sender/time from the long tail.
+    public static func historyChat(now: Date = Date()) -> ChatItem {
+        let msgs = historyMessages(now: now)
+        let last = msgs.last
+        return ChatItem(
+            chatId: historyID, name: "Demo — Long History", is_group: true,
             last_message_time: last?.timestamp,
             last_message_sender: last?.sender,
             last_message_preview: last?.content)
@@ -161,6 +174,7 @@ public enum DemoData {
         case mediaID: return mediaMessages()
         case reactionsID: return reactionsMessages()
         case repliesID: return repliesMessages()
+        case historyID: return historyMessages()
         default: break
         }
         if chatID.hasPrefix("demo-chan-") { return channelMessages }
@@ -363,6 +377,71 @@ public enum DemoData {
                 content: "Following up on last week's thread — build is green now.",
                 reply_to: "rep-0-evicted"),
         ]
+    }
+
+    /// History thread (om-history): a 3-day release-review conversation
+    /// (38 bubbles) exercising the 24h window + day separators at every
+    /// scroll state. Fully offline. Timestamps float off now so the
+    /// separators always read <date>/Yesterday/Today.
+    public static func historyMessages(now: Date = Date()) -> [ChatMessage] {
+        func iso(_ d: Date) -> String {
+            let f = ISO8601DateFormatter()
+            f.formatOptions = [.withInternetDateTime]
+            return f.string(from: d)
+        }
+        func at(dayOffset: Int, h: Int, m: Int) -> Date {
+            var cal = Calendar.current
+            cal.timeZone = TimeZone.current
+            let base = cal.date(byAdding: .day, value: dayOffset, to: now) ?? now
+            return cal.date(bySettingHour: h, minute: m, second: 0, of: base) ?? base
+        }
+        // (dayOffset, hour, minute, sender, text, isOwn)
+        let script: [(Int, Int, Int, String, String, Bool)] = [
+            (-2, 9, 2, "Priya Nair", "Kicking off the release review thread — three days of notes live here.", false),
+            (-2, 9, 5, "Tom Becker", "Agenda: window load, day paging, then the blank-state fixes.", false),
+            (-2, 9, 9, "Priya Nair", "First up: opening a long thread should show the last day, not everything.", false),
+            (-2, 9, 14, "Me", "Agreed — a 24h window keeps the initial load fast.", true),
+            (-2, 9, 21, "Tom Becker", "And older days load lazily from the top of the scroll.", false),
+            (-2, 10, 3, "Priya Nair", "What about threads that went quiet for a week?", false),
+            (-2, 10, 11, "Me", "Then the newest page still shows — the window never blanks the view.", true),
+            (-2, 11, 26, "Tom Becker", "Right: bound the fetch, not the display.", false),
+            (-2, 13, 2, "Priya Nair", "Lunch break. Back with the paging sketches.", false),
+            (-2, 14, 40, "Priya Nair", "Sketches are up: one tap loads one more day back.", false),
+            (-2, 14, 47, "Tom Becker", "Love it. No more auto-chaining the whole history.", false),
+            (-2, 15, 12, "Me", "That auto-chain was the churn bug — spinner swap refires the loader.", true),
+            (-2, 16, 5, "Tom Becker", "Explicit taps only from now on.", false),
+            (-2, 16, 58, "Priya Nair", "Day one notes done. Tomorrow: error states.", false),
+            (-1, 9, 1, "Priya Nair", "Day two: what does a failed history fetch look like?", false),
+            (-1, 9, 6, "Tom Becker", "A banner over the messages we already have — never a blank pane.", false),
+            (-1, 9, 13, "Me", "And when nothing loaded at all, an empty state with retry.", true),
+            (-1, 9, 29, "Priya Nair", "Retry re-runs the open, right? Not just the failed page?", false),
+            (-1, 9, 34, "Me", "Exactly — Try Again re-opens the chat.", true),
+            (-1, 10, 15, "Tom Becker", "Mid-chain failures keep partial pages too.", false),
+            (-1, 10, 22, "Priya Nair", "Good. Partial progress plus a visible error.", false),
+            (-1, 11, 48, "Tom Becker", "Switching chats mid-load drops the stale work?", false),
+            (-1, 11, 55, "Me", "Yes — generation guard on every page, open and day-load alike.", true),
+            (-1, 13, 20, "Priya Nair", "Edge case: a page that arrives empty but points further back.", false),
+            (-1, 13, 31, "Tom Becker", "Keep paging — blank pages don't cover the window.", false),
+            (-1, 15, 2, "Priya Nair", "And garbage timestamps stop the window after the current page.", false),
+            (-1, 15, 19, "Me", "Right, we can't window what we can't parse.", true),
+            (-1, 16, 44, "Tom Becker", "Day two notes done. Tomorrow we ship it.", false),
+            (0, 9, 0, "Priya Nair", "Ship day. Final pass over the scroll states.", false),
+            (0, 9, 4, "Tom Becker", "Top of thread: oldest day separator plus the load-more button.", false),
+            (0, 9, 9, "Me", "Middle: day separators between the three days.", true),
+            (0, 9, 15, "Priya Nair", "Bottom: the tail of the last 24 hours.", false),
+            (0, 9, 28, "Tom Becker", "Screenshots at every state, all viewed.", false),
+            (0, 9, 41, "Priya Nair", "One more check: the error state with its Try Again.", false),
+            (0, 10, 2, "Me", "Covered — canned fetch failure, fully offline.", true),
+            (0, 10, 20, "Tom Becker", "Then we're green. Merging the lane.", false),
+            (0, 10, 35, "Priya Nair", "Release review complete. Great thread, everyone.", false),
+            (0, 10, 41, "Me", "Archiving these notes — see you at the next review.", true),
+        ]
+        return script.enumerated().map { i, line in
+            ChatMessage(
+                id: "hist-\(i + 1)", sender: line.3,
+                timestamp: iso(at(dayOffset: line.0, h: line.1, m: line.2)),
+                content: line.4, isOwn: line.5)
+        }
     }
 
     /// Shared offline thread shown when a demo channel opens.

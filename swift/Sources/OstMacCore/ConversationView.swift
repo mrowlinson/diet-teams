@@ -1,4 +1,4 @@
-// ConversationView.swift — om-conv/om-convrich/om-shared/om-notes/om-cmdk/om-catchup/om-reactions/om-msgactions/om-replies: SwiftUI chat window.
+// ConversationView.swift — om-conv/om-convrich/om-shared/om-notes/om-cmdk/om-catchup/om-reactions/om-msgactions/om-replies/om-history: SwiftUI chat window.
 // Rich bubbles (mentions, code spans, links), day separators, scroll-up
 // load-more paging, edited markers, failed-send retry, Shared files + Notes tabs,
 // GIF picker + thread catch-up + reaction picker/counts + copy/forward/save bubble menu,
@@ -56,7 +56,10 @@ public struct ConversationView: View {
             DietHeaderBar {
                 headerContent
             }
-            if let err = store.error {
+            // The empty-state already carries the error on the Chat tab
+            // (with retry), so the banner stands down there — everywhere
+            // else it surfaces the failure without blanking the view.
+            if let err = store.error, tab != 0 || !store.messages.isEmpty || store.loading {
                 DietBanner(.error, message: err)
                     .padding(.horizontal, DietSpace.md)
                     .padding(.vertical, DietSpace.sm)
@@ -76,11 +79,30 @@ public struct ConversationView: View {
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: DietSpace.sm) {
                             loadMoreRow
-                            if store.messages.isEmpty, !store.loading {
-                                DietEmptyState(
-                                    systemImage: "bubble.left.and.bubble.right",
-                                    title: "No messages yet",
-                                    message: "Start the conversation below — your message appears here.")
+                            if store.loading, store.messages.isEmpty {
+                                HStack {
+                                    Spacer()
+                                    ProgressView().controlSize(.small)
+                                    Text("Loading recent messages…")
+                                        .font(DietType.caption1)
+                                        .foregroundStyle(DietColor.textSecondaryColor)
+                                    Spacer()
+                                }
+                                .padding(.vertical, DietSpace.xl)
+                            } else if store.messages.isEmpty, !store.loading {
+                                if let err = store.error {
+                                    DietEmptyState(
+                                        systemImage: "wifi.exclamationmark",
+                                        title: "Couldn't load messages",
+                                        message: err,
+                                        actionLabel: "Try Again",
+                                        action: { store.retryOpen() })
+                                } else {
+                                    DietEmptyState(
+                                        systemImage: "bubble.left.and.bubble.right",
+                                        title: "No messages yet",
+                                        message: "Start the conversation below — your message appears here.")
+                                }
                             }
                             ForEach(sections, id: \.key) { section in
                                 DietDaySeparator(section.label)
@@ -106,7 +128,11 @@ public struct ConversationView: View {
                     }
                     .onAppear {
                         store.openIfNeeded()
-                        scrollToBottom(proxy, animated: false)
+                        if let target = Self.scrollTarget(args: CommandLine.arguments) {
+                            scrollTo(proxy, id: target)
+                        } else {
+                            scrollToBottom(proxy, animated: false)
+                        }
                         lastSeenID = store.messages.last?.id
                     }
                 }
@@ -148,12 +174,22 @@ public struct ConversationView: View {
     private var loadMoreRow: some View {
         Group {
             if store.loadingMore {
-                HStack { Spacer(); ProgressView().controlSize(.small); Spacer() }
+                HStack {
+                    Spacer()
+                    ProgressView().controlSize(.small)
+                    Text("Loading older messages…")
+                        .font(DietType.caption1)
+                        .foregroundStyle(DietColor.textSecondaryColor)
+                    Spacer()
+                }
             } else if store.canLoadMore {
+                // Explicit tap only (om-history): the old .onAppear
+                // auto-fire chained the whole thread, because the
+                // spinner/button swap re-triggers it after every page.
+                // Each tap loads one lazy day-chunk.
                 Button("Load older messages") { store.loadMore() }
                     .buttonStyle(.dietSecondary)
                     .frame(maxWidth: .infinity)
-                    .onAppear { store.loadMore() }
             }
         }
     }
@@ -340,6 +376,21 @@ public struct ConversationView: View {
             } else {
                 proxy.scrollTo(last.id, anchor: .bottom)
             }
+        }
+    }
+
+    /// Shot hook: `--scroll-to <message-id>` lands the initial scroll
+    /// on that bubble (scroll-state shots) instead of the tail.
+    /// Unknown ids are ignored (ScrollViewProxy.scrollTo is a no-op).
+    static func scrollTarget(args: [String]) -> String? {
+        guard let i = args.firstIndex(of: "--scroll-to"), i + 1 < args.count else { return nil }
+        let id = args[i + 1].trimmingCharacters(in: .whitespacesAndNewlines)
+        return id.isEmpty ? nil : id
+    }
+
+    private func scrollTo(_ proxy: ScrollViewProxy, id: String) {
+        DispatchQueue.main.async {
+            proxy.scrollTo(id, anchor: .top)
         }
     }
 }

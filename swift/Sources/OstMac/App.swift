@@ -35,6 +35,11 @@
 // offline, throwaway defaults — never the real ones).
 // --show-reply opens the demo replies thread with the compose-reply
 // chip armed on Tom's question (shot hook, offline).
+// --show-history preselects the 3-day history thread (with --demo;
+// shot hook, offline). --show-history-error opens it empty with a
+// canned fetch failure + Try Again (shot hook, offline).
+// --scroll-to <message-id> lands the initial scroll on that bubble
+// (scroll-state shots; consumed by ConversationView).
 // --auth-state <name> opens the Auth window with a canned state, never
 // touching core/network (names: signed-out, starting, code, polling,
 // browser, browser-working, signed-in, expired, refreshing,
@@ -195,6 +200,11 @@ final class AppState: ObservableObject {
     @Published var forwardMessage: ChatMessage?
     /// --show-reply: demo replies thread + armed compose-reply chip.
     let showReply: Bool
+    /// --show-history-error: demo history thread, empty + canned fetch error.
+    let showHistoryError: Bool
+    /// History shot launch (--show-history*): memory key store, so the
+    /// shot never touches the real keychain (no SecurityAgent prompt).
+    let showHistory: Bool
     @Published var openChatID: String?
     @Published var signedIn: Bool?
     @Published var coreVersion = "?"
@@ -230,6 +240,8 @@ final class AppState: ObservableObject {
         showCatchUp = args.contains("--show-catchup")
         showForward = args.contains("--show-forward")
         showReply = args.contains("--show-reply")
+        showHistoryError = args.contains("--show-history-error")
+        showHistory = args.contains("--show-history") || showHistoryError
         if showCatchUp {
             // Shot hook only: throwaway defaults (never the real ones),
             // canned summary, no network.
@@ -240,6 +252,10 @@ final class AppState: ObservableObject {
                 keyStore: CatchUpMemoryKeyStore())
             store.adopt(CatchUpConfig(enabled: true, apiKey: "demo"))
             catchUp = store
+        } else if showHistory {
+            // Shot hook only: memory key store, never the real keychain
+            // (--show-catchup precedent; no SecurityAgent prompt).
+            catchUp = CatchUpStore(keyStore: CatchUpMemoryKeyStore())
         } else {
             catchUp = CatchUpStore()
         }
@@ -249,6 +265,8 @@ final class AppState: ObservableObject {
         }
         if let i = args.firstIndex(of: "--chat"), i + 1 < args.count {
             preselectID = args[i + 1]
+        } else if showHistory {
+            preselectID = DemoData.historyID
         } else if args.contains("--show-reply") {
             preselectID = DemoData.repliesID
         } else if args.contains("--demo-rich") {
@@ -445,9 +463,16 @@ final class AppState: ObservableObject {
             let name = chatName ?? DemoData.name(for: id) ?? id
             var msgs = DemoData.messages(for: id)
             if showCatchUp { msgs = Self.longThread(from: msgs) }
-            conv.showDemo(
-                chatID: id, chatName: name, messages: msgs,
-                failed: DemoData.failedIDs(for: id))
+            // Shot hook: empty thread + canned fetch failure (offline).
+            if showHistoryError {
+                msgs = []
+                conv.showDemo(chatID: id, chatName: name, messages: msgs)
+                conv.seedDemoError("failed(\"messages: network unreachable\")")
+            } else {
+                conv.showDemo(
+                    chatID: id, chatName: name, messages: msgs,
+                    failed: DemoData.failedIDs(for: id))
+            }
             // Shot hook: arm the forward sheet on a mid-thread bubble
             // (Tom's mocks note in the default thread), once.
             if showForward, forwardMessage == nil {
