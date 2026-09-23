@@ -1,10 +1,11 @@
-// ConversationView.swift — om-conv/om-convrich/om-shared/om-notes/om-cmdk/om-catchup/om-reactions: SwiftUI chat window.
+// ConversationView.swift — om-conv/om-convrich/om-shared/om-notes/om-cmdk/om-catchup/om-reactions/om-msgactions: SwiftUI chat window.
 // Rich bubbles (mentions, code spans, links), day separators, scroll-up
 // load-more paging, edited markers, failed-send retry, Shared files + Notes tabs,
-// GIF picker + thread catch-up + reaction picker/counts.
+// GIF picker + thread catch-up + reaction picker/counts + copy/forward/save bubble menu.
 import AppKit
 import DietDesign
 import SwiftUI
+import UniformTypeIdentifiers
 
 public struct ConversationView: View {
     @ObservedObject public var store: ConversationStore
@@ -23,14 +24,19 @@ public struct ConversationView: View {
     @State private var showCatchUp: Bool
     @FocusState private var boxFocused: Bool
     @State private var gifHovering = false
+    /// Forward tap (om-msgactions): the host opens its jump-palette sheet
+    /// (OstMac target owns JumpPaletteView; this module cannot import it).
+    private let onForward: (ChatMessage) -> Void
 
     /// - catchUpOpen: open the catch-up sheet at launch (the
     ///   --show-catchup shot hook only).
+    /// - onForward: bubble Forward tap → host sheets the jump palette.
     public init(
         store: ConversationStore, presence: PresenceStore = PresenceStore(),
         call: CallStore = CallStore(), shared: SharedFilesStore = SharedFilesStore(),
         notes: NotesStore = NotesStore(), catchUp: CatchUpStore = CatchUpStore(),
-        isGroup: Bool = true, initialTab: Int = 0, catchUpOpen: Bool = false
+        isGroup: Bool = true, initialTab: Int = 0, catchUpOpen: Bool = false,
+        onForward: @escaping (ChatMessage) -> Void = { _ in }
     ) {
         self.store = store
         self.presence = presence
@@ -39,6 +45,7 @@ public struct ConversationView: View {
         self.notes = notes
         self.catchUp = catchUp
         self.isGroup = isGroup
+        self.onForward = onForward
         _tab = State(initialValue: initialTab)
         _showCatchUp = State(initialValue: catchUpOpen)
     }
@@ -81,7 +88,8 @@ public struct ConversationView: View {
                                         message: msg,
                                         failed: store.failedIDs.contains(msg.id),
                                         onRetry: { _ = store.retry(id: msg.id) },
-                                        onReact: { store.toggleReaction(messageID: msg.id, emoji: $0) }
+                                        onReact: { store.toggleReaction(messageID: msg.id, emoji: $0) },
+                                        onForward: { onForward(msg) }
                                     )
                                     .id(msg.id)
                                 }
@@ -297,6 +305,8 @@ struct MessageBubble: View {
     var onRetry: () -> Void = {}
     /// Picker tap (om-reactions): the host toggles this emoji on the bubble.
     var onReact: (String) -> Void = { _ in }
+    /// Forward tap (om-msgactions): the host sheets the jump palette.
+    var onForward: () -> Void = {}
 
     var body: some View {
         HStack(spacing: DietSpace.xs) {
@@ -367,12 +377,16 @@ struct MessageBubble: View {
                     .stroke(Color(nsColor: DietColor.danger), lineWidth: 1) : nil)
             .foregroundStyle(DietColor.textPrimaryColor)
             .opacity(failed ? 0.85 : 1)
-            // Right-click menu via AppKit bridge (inline emoji row, no
-            // submenu — see ReactionMenuBridge). A covering overlay is
-            // deliberately NOT used: the monitor approach leaves links
-            // and badge taps untouched.
+            // Right-click menu via AppKit bridge: ONE menu (inline emoji
+            // row + Copy / Forward / Save, all top-level, no submenu —
+            // see ReactionMenuBridge). A covering overlay is deliberately
+            // NOT used: the monitor approach leaves links and badge taps
+            // untouched.
             .background(
-                ReactionMenuBridge(message: message, onReact: onReact))
+                ReactionMenuBridge(
+                    message: message, onReact: onReact, failed: failed,
+                    onCopy: { copyBody() }, onForward: onForward,
+                    onSave: { saveBody() }, onRetry: onRetry))
             if !message.reactions.isEmpty {
                 ReactionTapbacks(reactions: message.reactions, onTap: onReact)
                     .offset(x: message.isOwn ? DietSpace.sm : -DietSpace.sm, y: -DietSpace.md)
@@ -392,6 +406,24 @@ struct MessageBubble: View {
     static func copyMessage(_ message: ChatMessage) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(message.content, forType: .string)
+    }
+
+    /// Copy the bubble text (what the bubble shows) to the pasteboard.
+    private func copyBody() {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(MessageActions.copyText(for: message), forType: .string)
+    }
+
+    /// Save the bubble (sender + timestamp header + text) via a save panel.
+    private func saveBody() {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = MessageActions.saveFilename(for: message)
+        panel.allowedContentTypes = [.plainText]
+        panel.canCreateDirectories = true
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        try? MessageActions.saveBody(for: message).write(
+            to: url, atomically: true, encoding: .utf8)
     }
 }
 
@@ -429,3 +461,4 @@ struct ReactionTapbacks: View {
         }
     }
 }
+

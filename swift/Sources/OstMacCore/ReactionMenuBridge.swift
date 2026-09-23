@@ -1,11 +1,13 @@
-// ReactionMenuBridge.swift — om-reactions: right-click menu with an
-// inline emoji row and no submenu.
+// ReactionMenuBridge.swift — om-reactions/om-msgactions: the bubble's ONE
+// right-click menu (inline emoji row + Copy / Forward / Save, all
+// top-level, no submenu).
 //
 // Why AppKit: SwiftUI renders ControlGroup-in-menu as a submenu with an
 // inline preview (verified by screenshot: the row carries a ">" that
 // opens a vertical submenu). The merge gate needs reacts directly in
 // the menu, so the row is an NSMenuItem custom view (NSStackView of
-// NSButtons), which never shows a submenu indicator.
+// NSButtons), which never shows a submenu indicator. Copy/Forward/Save
+// ride the same NSMenu as plain top-level items.
 //
 // Delivery: an NSEvent local monitor (not a covering overlay, so links
 // and badge taps are untouched). Right-clicks landing in the bubble's
@@ -20,11 +22,21 @@ import SwiftUI
 struct ReactionMenuBridge: NSViewRepresentable {
     let message: ChatMessage
     let onReact: (String) -> Void
+    var failed: Bool = false
+    var onCopy: () -> Void = {}
+    var onForward: () -> Void = {}
+    var onSave: () -> Void = {}
+    var onRetry: () -> Void = {}
 
     func makeNSView(context: Context) -> ReactionMenuAnchorView {
         let view = ReactionMenuAnchorView()
         view.message = message
         view.onReact = onReact
+        view.failed = failed
+        view.onCopy = onCopy
+        view.onForward = onForward
+        view.onSave = onSave
+        view.onRetry = onRetry
         context.coordinator.monitor = NSEvent.addLocalMonitorForEvents(
             matching: .rightMouseDown
         ) { [weak view] event in
@@ -40,6 +52,11 @@ struct ReactionMenuBridge: NSViewRepresentable {
     func updateNSView(_ view: ReactionMenuAnchorView, context _: Context) {
         view.message = message
         view.onReact = onReact
+        view.failed = failed
+        view.onCopy = onCopy
+        view.onForward = onForward
+        view.onSave = onSave
+        view.onRetry = onRetry
     }
 
     func dismantleNSView(_: ReactionMenuAnchorView, coordinator: Coordinator) {
@@ -62,6 +79,11 @@ struct ReactionMenuBridge: NSViewRepresentable {
 final class ReactionMenuAnchorView: NSView {
     var message: ChatMessage = ChatMessage(id: "", sender: "", timestamp: "", content: "")
     var onReact: (String) -> Void = { _ in }
+    var failed: Bool = false
+    var onCopy: () -> Void = {}
+    var onForward: () -> Void = {}
+    var onSave: () -> Void = {}
+    var onRetry: () -> Void = {}
 
     /// Upward overhang of the tapback badges (matches the ZStack offset).
     static let badgeOverhang: CGFloat = 20
@@ -96,15 +118,42 @@ final class ReactionMenuAnchorView: NSView {
             onReact: onReact)
         menu.addItem(row)
         menu.addItem(.separator())
+        // TOP-LEVEL ONLY: every action is a direct item, never a submenu.
         let copy = NSMenuItem(
             title: "Copy", action: #selector(copyAction), keyEquivalent: "c")
         copy.target = self
         menu.addItem(copy)
+        let forward = NSMenuItem(
+            title: "Forward…", action: #selector(forwardAction), keyEquivalent: "")
+        forward.target = self
+        menu.addItem(forward)
+        let save = NSMenuItem(
+            title: "Save…", action: #selector(saveAction), keyEquivalent: "")
+        save.target = self
+        menu.addItem(save)
+        if failed {
+            let retry = NSMenuItem(
+                title: "Retry send", action: #selector(retryAction), keyEquivalent: "")
+            retry.target = self
+            menu.addItem(retry)
+        }
         NSMenu.popUpContextMenu(menu, with: event, for: self)
     }
 
     @objc private func copyAction() {
-        MessageBubble.copyMessage(message)
+        onCopy()
+    }
+
+    @objc private func forwardAction() {
+        onForward()
+    }
+
+    @objc private func saveAction() {
+        onSave()
+    }
+
+    @objc private func retryAction() {
+        onRetry()
     }
 }
 
