@@ -173,6 +173,7 @@ final class AppState: ObservableObject {
     let conv = ConversationStore()
     let shared = SharedFilesStore()
     let feed = RealtimeFeed()
+    let notifs = MessageNotifications()
     let auth = AuthViewModel()
     let presence = PresenceStore()
     let call: CallStore
@@ -273,6 +274,24 @@ final class AppState: ObservableObject {
                 Task { @MainActor [weak self] in self?.authChanged(s) }
             }
             .store(in: &cancellables)
+        // om-notif: banner click opens the chat; inline reply sends.
+        _ = NotificationCenter.default.addObserver(
+            forName: .omNotifOpenChat, object: nil, queue: nil
+        ) { [weak self] note in
+            guard let id = note.userInfo?["chatID"] as? String else { return }
+            Task { @MainActor [weak self] in
+                let name = self?.chats.chats.first(where: { $0.id == id })?.name
+                self?.jump(chatID: id, chatName: name ?? id)
+            }
+        }
+        _ = NotificationCenter.default.addObserver(
+            forName: .omNotifReply, object: nil, queue: nil
+        ) { [weak self] note in
+            guard let id = note.userInfo?["chatID"] as? String,
+                  let text = note.userInfo?["text"] as? String
+            else { return }
+            Task { @MainActor [weak self] in self?.sendFromNotification(chatID: id, text: text) }
+        }
     }
 
     func startup() async {
@@ -324,6 +343,8 @@ final class AppState: ObservableObject {
             feed.onCall { [weak self] ev in
                 Task { @MainActor [weak self] in self?.call.ingest(ev) }
             }
+            notifs.attach()
+            await notifs.requestAuthorization()
             feed.start()
             refreshFeedStatus()
             stateTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
@@ -442,6 +463,14 @@ final class AppState: ObservableObject {
         feedEvents += 1
         refreshFeedStatus()
         chats.ingest(realtime: msg)
+        // om-notif: banner for non-open, non-own, non-edit events.
+        Task {
+            await notifs.handle(
+                msg,
+                chatName: chats.chats.first(where: { $0.id == msg.chatID })?.name,
+                openChatID: openChatID,
+                ownDisplayName: conv.ownDisplayName)
+        }
         if let mri = msg.senderID,
            msg.sender != conv.ownDisplayName,
            chats.chats.first(where: { $0.id == msg.chatID })?.is_group == false
@@ -450,6 +479,18 @@ final class AppState: ObservableObject {
         }
         guard msg.isFor(chatID: openChatID) else { return }
         conv.ingest(realtime: msg)
+    }
+
+    /// Inline reply from a notification: optimistic bubble when the chat
+    /// is open, direct core send otherwise (no chat switch).
+    private func sendFromNotification(chatID id: String, text: String) {
+        if openChatID == id {
+            conv.send(text: text)
+            return
+        }
+        Task.detached {
+            _ = try? RustCore.send(chatID: id, text: text)
+        }
     }
 
     /// Push had a gap: re-fetch the open chat plus the list.
