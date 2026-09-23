@@ -7,6 +7,10 @@
 //                                  in place (edit). THE realtime feed point.
 //   store.ingestEdited(id:content:) — edit event carrying only new text
 //   store.send(text:)             — post via core, optimistic own-bubble
+//   store.toggleReaction(messageID:emoji:) — picker tap: add/remove one
+//                                  emoji, optimistic, reverts on failure
+//   store.applyReactions(id:reactions:) — realtime counts patch (no-op
+//                                  on unknown ids, never appends)
 // Shared model: ChatMessage (Models.swift) — history, send-echo, and
 // realtime all use it; `id` is the match key for edits.
 import Foundation
@@ -154,9 +158,24 @@ public final class ConversationStore: ObservableObject {
     /// Realtime feed: typed event → upsert by id (edits collapse onto
     /// the edited id, so bubbles update in place; unknown edit ids
     /// append, so nothing is lost). Callers filter by chat first via
-    /// `RealtimeMessage.isFor(chatID:)`.
+    /// `RealtimeMessage.isFor(chatID:)`. Counts ride along: events
+    /// carrying `reactions` patch the bubble's counts; reaction-only
+    /// events (empty text) patch counts without touching the bubble.
     public func ingest(realtime message: RealtimeMessage) {
+        let targetID: String
+        if message.isEdit, let edited = message.editedID {
+            targetID = edited
+        } else {
+            targetID = message.msgId
+        }
+        if message.text.isEmpty, let r = message.reactions {
+            applyReactions(id: targetID, reactions: r)
+            return
+        }
         ingest(message.asChatMessage)
+        if let r = message.reactions {
+            applyReactions(id: targetID, reactions: r)
+        }
     }
 
     /// Demo mode: show canned messages for a chat (offline, no core).
@@ -219,6 +238,104 @@ public final class ConversationStore: ObservableObject {
         failedIDs.remove(id)
         send(text: msg.content)
         return msg.content
+    }
+
+    // MARK: - Reactions (om-reactions)
+
+    /// Picker emoji in canonical order (mirrors core REACTION_EMOJI).
+    public static let reactionEmojis = ["👍", "❤️", "😂", "😮", "😢", "😠"]
+
+    /// Toggle one emoji on a bubble: present → remove, absent → add.
+    /// Optimistic (counts move now); demo mode stays local; live mode
+    /// reverts on core failure. Unknown ids are a no-op.
+    public func toggleReaction(messageID: String, emoji: String) {
+        guard messages.contains(where: { $0.id == messageID }) else { return }
+        guard Self.reactionEmojis.contains(emoji) else { return }
+        let present = messages.first(where: { $0.id == messageID })?
+            .reactions.contains(where: { $0.emoji == emoji }) ?? false
+        if present {
+            removeReaction(messageID: messageID, emoji: emoji)
+        } else {
+            react(messageID: messageID, emoji: emoji)
+        }
+    }
+
+    /// Add one emoji reaction (optimistic). Unknown ids are a no-op.
+    public func react(messageID: String, emoji: String) {
+        guard let i = messages.firstIndex(where: { $0.id == messageID }) else { return }
+        guard Self.reactionEmojis.contains(emoji) else { return }
+        messages[i].reactions = Self.withReactionAdded(messages[i].reactions, emoji: emoji)
+        if isDemo { return }
+        guard let id = chatID else { return }
+        Task {
+            do {
+                _ = try await Task.detached {
+                    try RustCore.react(chatID: id, messageID: messageID, emoji: emoji)
+                }.value
+            } catch {
+                self.revertReaction(messageID: messageID, emoji: emoji, added: true)
+                self.error = "react failed: \(error)"
+            }
+        }
+    }
+
+    /// Remove one emoji reaction (optimistic). Unknown ids are a no-op.
+    public func removeReaction(messageID: String, emoji: String) {
+        guard let i = messages.firstIndex(where: { $0.id == messageID }) else { return }
+        messages[i].reactions = Self.withReactionRemoved(messages[i].reactions, emoji: emoji)
+        if isDemo { return }
+        guard let id = chatID else { return }
+        Task {
+            do {
+                _ = try await Task.detached {
+                    try RustCore.removeReaction(chatID: id, messageID: messageID, emoji: emoji)
+                }.value
+            } catch {
+                self.revertReaction(messageID: messageID, emoji: emoji, added: false)
+                self.error = "react failed: \(error)"
+            }
+        }
+    }
+
+    /// Undo one optimistic reaction change after a core failure.
+    private func revertReaction(messageID: String, emoji: String, added: Bool) {
+        guard let i = messages.firstIndex(where: { $0.id == messageID }) else { return }
+        messages[i].reactions = added
+            ? Self.withReactionRemoved(messages[i].reactions, emoji: emoji)
+            : Self.withReactionAdded(messages[i].reactions, emoji: emoji)
+    }
+
+    /// Replace one bubble's counts (realtime patch, server truth).
+    /// Unknown ids are a no-op — counts never conjure a bubble.
+    public func applyReactions(id: String, reactions: [ReactionCount]) {
+        guard let i = messages.firstIndex(where: { $0.id == id }) else { return }
+        messages[i].reactions = reactions
+    }
+
+    /// Pure add: bump the emoji bucket, or append it (picker order kept).
+    public static func withReactionAdded(_ list: [ReactionCount], emoji: String) -> [ReactionCount] {
+        var out = list
+        if let i = out.firstIndex(where: { $0.emoji == emoji }) {
+            out[i] = ReactionCount(emoji: emoji, count: out[i].count + 1)
+        } else {
+            out.append(ReactionCount(emoji: emoji, count: 1))
+            let order = reactionEmojis
+            out.sort { (order.firstIndex(of: $0.emoji) ?? Int.max) < (order.firstIndex(of: $1.emoji) ?? Int.max) }
+        }
+        return out
+    }
+
+    /// Pure remove: decrement the emoji bucket; drop it at zero.
+    /// Missing emoji leaves the list untouched.
+    public static func withReactionRemoved(_ list: [ReactionCount], emoji: String) -> [ReactionCount] {
+        var out = list
+        guard let i = out.firstIndex(where: { $0.emoji == emoji }) else { return out }
+        if out[i].count > 1 {
+            out[i] = ReactionCount(emoji: emoji, count: out[i].count - 1)
+        } else {
+            out.remove(at: i)
+        }
+        return out
     }
 
     /// Pure upsert: new id appends; known id rewrites content in place and

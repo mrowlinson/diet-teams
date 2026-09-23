@@ -37,6 +37,9 @@ public struct RealtimeMessage: Decodable, Sendable, Identifiable {
     /// Unstripped server HTML (om-richmedia: streaming `<img>` mining).
     /// Nil on old core builds — treat as text-only.
     public let raw: String?
+    /// Grouped reaction counts (om-reactions). Nil on old core builds
+    /// and on events without counts — leave the bubble's counts alone.
+    public let reactions: [ReactionCount]?
 
     enum CodingKeys: String, CodingKey {
         case chatID = "chat_id"
@@ -44,15 +47,17 @@ public struct RealtimeMessage: Decodable, Sendable, Identifiable {
         case sender, senderID = "sender_id", text, time
         case isEdit = "is_edit"
         case editedID = "edited_id"
-        case raw
+        case raw, reactions
     }
 
-    /// Host-side construction (tests, mock feeds). `senderID`/`raw`
-    /// default to nil (old core builds omit them); wire decoding untouched.
+    /// Host-side construction (tests, mock feeds). `senderID`/`raw`/
+    /// `reactions` default to nil (old core builds omit them); wire
+    /// decoding untouched.
     public init(
         chatID: String, msgId: String, sender: String,
         senderID: String? = nil, text: String, time: String,
-        isEdit: Bool, editedID: String? = nil, raw: String? = nil
+        isEdit: Bool, editedID: String? = nil, raw: String? = nil,
+        reactions: [ReactionCount]? = nil
     ) {
         self.chatID = chatID
         self.msgId = msgId
@@ -63,6 +68,7 @@ public struct RealtimeMessage: Decodable, Sendable, Identifiable {
         self.isEdit = isEdit
         self.editedID = editedID
         self.raw = raw
+        self.reactions = reactions
     }
 
     public init(from decoder: Decoder) throws {
@@ -76,6 +82,7 @@ public struct RealtimeMessage: Decodable, Sendable, Identifiable {
         isEdit = try c.decode(Bool.self, forKey: .isEdit)
         editedID = try c.decodeIfPresent(String.self, forKey: .editedID)
         raw = try c.decodeIfPresent(String.self, forKey: .raw)
+        reactions = try c.decodeIfPresent([ReactionCount].self, forKey: .reactions)
     }
 
     /// True when this event belongs to the given open chat.
@@ -87,12 +94,14 @@ public struct RealtimeMessage: Decodable, Sendable, Identifiable {
     /// Host model: edits collapse onto the edited id so
     /// `ConversationStore.ingest` updates the bubble in place.
     /// `raw` rides along so streaming image bubbles render (same key as
-    /// history, so the cache never refetches on resync).
+    /// history, so the cache never refetches on resync). `reactions`
+    /// ride along too (empty when the event carried none).
     public var asChatMessage: ChatMessage {
+        let r = reactions ?? []
         if isEdit, let edited = editedID {
-            return ChatMessage(id: edited, sender: sender, timestamp: time, content: text, raw: raw)
+            return ChatMessage(id: edited, sender: sender, timestamp: time, content: text, raw: raw, reactions: r)
         }
-        return ChatMessage(id: msgId, sender: sender, timestamp: time, content: text, raw: raw)
+        return ChatMessage(id: msgId, sender: sender, timestamp: time, content: text, raw: raw, reactions: r)
     }
 }
 

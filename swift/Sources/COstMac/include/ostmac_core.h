@@ -56,6 +56,12 @@ char *ostmac_messages_page(const char *chat_id, const char *page_token, int limi
 // Post one message to a chat. Caller frees.
 char *ostmac_send(const char *chat_id, const char *text);
 
+// Add one emoji reaction to a message. Caller frees.
+char *ostmac_react(const char *chat_id, const char *message_id, const char *emoji);
+
+// Remove one emoji reaction from a message. Caller frees.
+char *ostmac_react_remove(const char *chat_id, const char *message_id, const char *emoji);
+
 // Fetch one inline-image URL: {ok, data_base64, content_type?}.
 // Microsoft media hosts attach the Skype token; public hosts fetch
 // without auth. https only. Requires sign-in for auth'd hosts.

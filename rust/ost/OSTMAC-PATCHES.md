@@ -103,6 +103,20 @@ needing maintainer buy-in. Minor PRs stand alone; majors are separate PRs.
     existing Graph `/.default` exchange covers OneNote (delegated perms ride
     the first-party client); no new consent requested.
 
+17. [minor] `src/api/chat.rs` + `src/api/client.rs` (`chat_delete`) +
+    `src/api/mod.rs` + `src/main.rs` (`React` cmd) — **message reactions
+    (om-reactions lane)**. Emoji↔type map (`REACTION_EMOJI`, the six Teams
+    types), `reaction_add_url/body` + `reaction_remove_url` builders,
+    `send/remove_reaction_with_client` (POST/DELETE
+    `.../messages/{id}/reactions` with skypetoken auth, Graph-mirrored
+    shape), `MessageInfo.reactions` grouped counts parsed from top-level
+    or `properties.reactions` (unknown types dropped). CLI: `react --to
+    --message-id <emoji> [--remove]`. NOT YET VERIFIED LIVE: the add/
+    remove wire shape is best-effort (Graph resource layout over the
+    native chat service); confirm with `react` against a signed-in box
+    before upstreaming. Unit tests: emoji map, endpoint shapes, grouping
+    order, nested/unknown/missing reaction payloads.
+
 ## Upstream PRs (2026-09-22, base 0892144; main red on sdp E0308 until #5)
 
 Minor (standalone modulo #5-first; merge in any order after):

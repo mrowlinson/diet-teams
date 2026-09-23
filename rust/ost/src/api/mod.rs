@@ -14,7 +14,7 @@ mod todo;
 use anyhow::Result;
 
 // Re-export data types for TUI integration
-pub use chat::{ChatInfo, MessageInfo, MessagesPage};
+pub use chat::{ChatInfo, MessageInfo, MessagesPage, ReactionCount, REACTION_EMOJI};
 pub use files::SharedFile;
 pub use me::UserInfo;
 pub use notes::{NotePage, NotebookInfo, PageInfo, SectionInfo};
@@ -29,7 +29,9 @@ pub use teams::ChannelInfo;
 
 // Re-export data-returning functions for TUI integration
 pub use chat::{
-    list_chats_data, read_messages_data, read_messages_page, send_message_with_client,
+    emoji_for_reaction_type, list_chats_data, reaction_add_body, reaction_add_url,
+    reaction_remove_url, reaction_type_for_emoji, read_messages_data, read_messages_page,
+    remove_reaction_with_client, send_message_with_client, send_reaction_with_client,
 };
 pub use files::{download_file_data, list_chat_files_data, upload_file_data};
 pub use media::{fetch_media_data, MediaBytes, MAX_BYTES};
@@ -58,6 +60,11 @@ pub async fn read_messages(chat_id: &str, limit: usize) -> Result<()> {
 /// Send a message to a chat (native Teams API)
 pub async fn send_message(to: &str, message: &str) -> Result<()> {
     chat::send_message(to, message).await
+}
+
+/// Add (or with `remove`, remove) an emoji reaction on one message.
+pub async fn react(chat_id: &str, message_id: &str, emoji: &str, remove: bool) -> Result<()> {
+    chat::react(chat_id, message_id, emoji, remove).await
 }
 
 /// Get current presence status

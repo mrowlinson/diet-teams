@@ -45,6 +45,24 @@ struct NativeMessage {
     content: Option<String>,
     messagetype: Option<String>,
     from: Option<String>,
+    /// OstMac om-reactions: per-message reactions when the server sends
+    /// them (Graph-like list). Absent on old payloads → no counts.
+    reactions: Option<Vec<NativeReaction>>,
+    /// Alternate nesting some payloads use (`properties.reactions`).
+    properties: Option<MessageProperties>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MessageProperties {
+    reactions: Option<Vec<NativeReaction>>,
+}
+
+/// One raw reaction entry. Only the type is aggregated; user/count
+/// variants ride along unparsed so unknown shapes still deserialize.
+#[derive(Debug, Deserialize)]
+struct NativeReaction {
+    #[serde(rename = "reactionType")]
+    reaction_type: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -191,6 +209,117 @@ pub async fn send_message_with_client(
 }
 
 // ---------------------------------------------------------------------------
+// Reactions (OstMac om-reactions lane)
+// ---------------------------------------------------------------------------
+//
+// Wire shape mirrors the Graph chatMessageReaction resource
+// (`POST .../messages/{id}/reactions`, `{"reactionType": "like"}`) against
+// the native chat service with skypetoken auth. Best-effort: NOT yet
+// verified live against the server (see OSTMAC-PATCHES.md §17).
+
+/// Picker emoji → Teams reaction type, in picker order.
+/// (like, heart, laugh, surprised, sad, angry — the Graph-supported six.)
+pub const REACTION_EMOJI: &[(&str, &str)] = &[
+    ("👍", "like"),
+    ("❤️", "heart"),
+    ("😂", "laugh"),
+    ("😮", "surprised"),
+    ("😢", "sad"),
+    ("😠", "angry"),
+];
+
+/// Reaction type for a picker emoji, or None when unsupported.
+pub fn reaction_type_for_emoji(emoji: &str) -> Option<&'static str> {
+    REACTION_EMOJI
+        .iter()
+        .find(|(e, _)| *e == emoji)
+        .map(|(_, t)| *t)
+}
+
+/// Picker emoji for a server reaction type (case-insensitive), or None
+/// when unknown. Unknown types are dropped from counts, never fatal.
+pub fn emoji_for_reaction_type(reaction_type: &str) -> Option<&'static str> {
+    REACTION_EMOJI
+        .iter()
+        .find(|(_, t)| t.eq_ignore_ascii_case(reaction_type))
+        .map(|(e, _)| *e)
+}
+
+/// POST target for adding a reaction to one message.
+pub fn reaction_add_url(base: &str, chat_id: &str, message_id: &str) -> String {
+    format!(
+        "{}/v1/users/ME/conversations/{}/messages/{}/reactions",
+        base, chat_id, message_id
+    )
+}
+
+/// POST body for adding a reaction.
+pub fn reaction_add_body(reaction_type: &str) -> serde_json::Value {
+    serde_json::json!({ "reactionType": reaction_type })
+}
+
+/// DELETE target for removing one reaction type from a message.
+pub fn reaction_remove_url(
+    base: &str,
+    chat_id: &str,
+    message_id: &str,
+    reaction_type: &str,
+) -> String {
+    format!(
+        "{}/v1/users/ME/conversations/{}/messages/{}/reactions/{}",
+        base, chat_id, message_id, reaction_type
+    )
+}
+
+/// Add one emoji reaction to a message. Unknown emoji is rejected before
+/// any network.
+pub async fn send_reaction_with_client(
+    client: &TeamsClient,
+    chat_id: &str,
+    message_id: &str,
+    emoji: &str,
+) -> Result<()> {
+    let reaction_type = reaction_type_for_emoji(emoji)
+        .with_context(|| format!("unsupported reaction emoji: {}", emoji))?;
+    let base = client.chat_service_url();
+    let url = reaction_add_url(&base, chat_id, message_id);
+    let body = reaction_add_body(reaction_type);
+    tracing::debug!("Adding {} reaction to {}", reaction_type, url);
+    client.chat_post(&url, &body).await?;
+    Ok(())
+}
+
+/// Remove one emoji reaction from a message. Unknown emoji is rejected
+/// before any network.
+pub async fn remove_reaction_with_client(
+    client: &TeamsClient,
+    chat_id: &str,
+    message_id: &str,
+    emoji: &str,
+) -> Result<()> {
+    let reaction_type = reaction_type_for_emoji(emoji)
+        .with_context(|| format!("unsupported reaction emoji: {}", emoji))?;
+    let base = client.chat_service_url();
+    let url = reaction_remove_url(&base, chat_id, message_id, reaction_type);
+    tracing::debug!("Removing {} reaction from {}", reaction_type, url);
+    client.chat_delete(&url, None).await?;
+    Ok(())
+}
+
+/// Add or remove a reaction (prints to stdout). CLI entry point.
+pub async fn react(chat_id: &str, message_id: &str, emoji: &str, remove: bool) -> Result<()> {
+    let client = TeamsClient::new().await?;
+    if remove {
+        remove_reaction_with_client(&client, chat_id, message_id, emoji).await?;
+        println!("Reaction removed.");
+    } else {
+        send_reaction_with_client(&client, chat_id, message_id, emoji).await?;
+        println!("Reaction added.");
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Data-returning API functions for TUI integration
 // ---------------------------------------------------------------------------
 
@@ -216,6 +345,56 @@ pub struct MessageInfo {
     /// Unstripped server HTML (om-convrich: embedders mine `<at>` mentions
     /// and `<pre>` code blocks from it; `content` stays the stripped text).
     pub raw: String,
+    /// Grouped reaction counts (om-reactions). Empty when the server sent
+    /// none; unknown reaction types are dropped, never fatal.
+    pub reactions: Vec<ReactionCount>,
+}
+
+/// One grouped reaction count: picker emoji + number of reactors.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReactionCount {
+    pub emoji: String,
+    pub count: usize,
+}
+
+/// Group raw reaction entries into per-emoji counts in canonical picker
+/// order. Entries with missing/unknown types are skipped.
+fn aggregate_reactions(entries: &[NativeReaction]) -> Vec<ReactionCount> {
+    let mut counts = vec![0usize; REACTION_EMOJI.len()];
+    for e in entries {
+        let Some(t) = e.reaction_type.as_deref() else {
+            continue;
+        };
+        if let Some(i) = REACTION_EMOJI
+            .iter()
+            .position(|(_, known)| known.eq_ignore_ascii_case(t))
+        {
+            counts[i] += 1;
+        }
+    }
+    REACTION_EMOJI
+        .iter()
+        .zip(counts)
+        .filter(|(_, c)| *c > 0)
+        .map(|((emoji, _), count)| ReactionCount {
+            emoji: emoji.to_string(),
+            count,
+        })
+        .collect()
+}
+
+/// Reaction entries for one message: top-level `reactions` wins, then
+/// `properties.reactions`. Neither present → empty.
+fn message_reactions(msg: &NativeMessage) -> Vec<ReactionCount> {
+    if let Some(list) = msg.reactions.as_deref() {
+        return aggregate_reactions(list);
+    }
+    if let Some(props) = msg.properties.as_ref() {
+        if let Some(list) = props.reactions.as_deref() {
+            return aggregate_reactions(list);
+        }
+    }
+    Vec::new()
 }
 
 /// One page of history plus the cursor for the next older page.
@@ -402,12 +581,14 @@ pub async fn read_messages_page(
         // OstMac: keep the server id so embedders can match realtime edits.
         let id = msg.id.as_deref().filter(|s| !s.is_empty()).map(String::from);
         let id = id.unwrap_or_else(|| format!("{}@{}", time, sender));
+        let reactions = message_reactions(msg);
         result.push(MessageInfo {
             id,
             sender,
             timestamp: time,
             content: text.trim().to_string(),
             raw: content.to_string(),
+            reactions,
         });
     }
 
@@ -481,5 +662,95 @@ src="x">"#));
         );
         let bare: MessagesResponse = serde_json::from_str(r#"{"messages":[]}"#).unwrap();
         assert!(bare.metadata.is_none());
+    }
+
+    #[test]
+    fn reaction_emoji_round_trip() {
+        assert_eq!(REACTION_EMOJI.len(), 6);
+        for (emoji, rtype) in REACTION_EMOJI {
+            assert_eq!(reaction_type_for_emoji(emoji), Some(*rtype));
+            assert_eq!(emoji_for_reaction_type(rtype), Some(*emoji));
+        }
+        assert_eq!(reaction_type_for_emoji("🎉"), None);
+        assert_eq!(reaction_type_for_emoji(""), None);
+        assert_eq!(emoji_for_reaction_type("party"), None);
+        assert_eq!(emoji_for_reaction_type("LIKE"), Some("👍"));
+    }
+
+    #[test]
+    fn reaction_endpoint_shapes() {
+        let base = "https://h";
+        assert_eq!(
+            reaction_add_url(base, "19:thread", "42"),
+            "https://h/v1/users/ME/conversations/19:thread/messages/42/reactions"
+        );
+        assert_eq!(
+            reaction_add_body("like"),
+            serde_json::json!({ "reactionType": "like" })
+        );
+        assert_eq!(
+            reaction_remove_url(base, "19:thread", "42", "like"),
+            "https://h/v1/users/ME/conversations/19:thread/messages/42/reactions/like"
+        );
+    }
+
+    fn reacted(content: &str, reactions_json: &str, via_properties: bool) -> NativeMessage {
+        let payload = if via_properties {
+            format!(
+                r#"{{"id":"1","messagetype":"RichText/Html","content":{},"properties":{{"reactions":{}}}}}"#,
+                serde_json::to_string(content).unwrap(),
+                reactions_json
+            )
+        } else {
+            format!(
+                r#"{{"id":"1","messagetype":"RichText/Html","content":{},"reactions":{}}}"#,
+                serde_json::to_string(content).unwrap(),
+                reactions_json
+            )
+        };
+        serde_json::from_str(&payload).unwrap()
+    }
+
+    #[test]
+    fn reactions_group_in_picker_order() {
+        let msg = reacted(
+            "<p>hi</p>",
+            r#"[{"reactionType":"laugh"},{"reactionType":"like"},{"reactionType":"like"}]"#,
+            false,
+        );
+        assert_eq!(
+            message_reactions(&msg),
+            vec![
+                ReactionCount {
+                    emoji: "👍".to_string(),
+                    count: 2
+                },
+                ReactionCount {
+                    emoji: "😂".to_string(),
+                    count: 1
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn reactions_nested_and_unknown_shapes() {
+        // properties.reactions nesting works; unknown/missing types drop.
+        let msg = reacted(
+            "<p>hi</p>",
+            r#"[{"reactionType":"Heart"},{"reactionType":"party"},{"reactionType":null},{}]"#,
+            true,
+        );
+        assert_eq!(
+            message_reactions(&msg),
+            vec![ReactionCount {
+                emoji: "❤️".to_string(),
+                count: 1
+            }]
+        );
+        // No reactions key at all → empty, old payloads unaffected.
+        let bare: NativeMessage =
+            serde_json::from_str(r#"{"id":"1","content":"<p>hi</p>"}"#).unwrap();
+        assert!(message_reactions(&bare).is_empty());
     }
 }

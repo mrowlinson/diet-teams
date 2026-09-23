@@ -523,12 +523,18 @@ pub fn teams_json() -> String {
 // ---------------------------------------------------------------------------
 
 fn message_to_json(m: &ost::api::MessageInfo) -> serde_json::Value {
+    let reactions: Vec<_> = m
+        .reactions
+        .iter()
+        .map(|r| json!({"emoji": r.emoji, "count": r.count}))
+        .collect();
     json!({
         "id": m.id,
         "sender": m.sender,
         "timestamp": m.timestamp,
         "content": m.content,
         "raw": m.raw,
+        "reactions": reactions,
     })
 }
 
@@ -624,6 +630,67 @@ pub fn send_json(chat_id: &str, text: &str) -> String {
     match run() {
         Ok(s) => s,
         Err(e) => err_json("send", e),
+    }
+}
+
+/// Add one emoji reaction to a message. Returns
+/// `{ok:true, chat_id, message_id}` or `{ok:false}`. Empty ids and
+/// unsupported emoji are rejected before any network.
+pub fn react_json(chat_id: &str, message_id: &str, emoji: &str) -> String {
+    if chat_id.trim().is_empty() {
+        return err_json("arg", "empty chat_id");
+    }
+    if message_id.trim().is_empty() {
+        return err_json("arg", "empty message_id");
+    }
+    if ost::api::reaction_type_for_emoji(emoji.trim()).is_none() {
+        return err_json("arg", "unsupported reaction emoji");
+    }
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            ost::api::send_reaction_with_client(&client, chat_id, message_id, emoji.trim())
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            Ok(json!({"ok": true, "chat_id": chat_id, "message_id": message_id}).to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("react", e),
+    }
+}
+
+/// Remove one emoji reaction from a message. Same arg validation and
+/// envelope as [`react_json`].
+pub fn react_remove_json(chat_id: &str, message_id: &str, emoji: &str) -> String {
+    if chat_id.trim().is_empty() {
+        return err_json("arg", "empty chat_id");
+    }
+    if message_id.trim().is_empty() {
+        return err_json("arg", "empty message_id");
+    }
+    if ost::api::reaction_type_for_emoji(emoji.trim()).is_none() {
+        return err_json("arg", "unsupported reaction emoji");
+    }
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            ost::api::remove_reaction_with_client(&client, chat_id, message_id, emoji.trim())
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            Ok(json!({"ok": true, "chat_id": chat_id, "message_id": message_id}).to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("react_remove", e),
     }
 }
 
@@ -1569,6 +1636,48 @@ pub extern "C" fn ostmac_send(chat_id: *const c_char, text: *const c_char) -> *m
     }
 }
 
+/// Add one emoji reaction to a message. See [`react_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_react(
+    chat_id: *const c_char,
+    message_id: *const c_char,
+    emoji: *const c_char,
+) -> *mut c_char {
+    let id = match cstr_to_string(chat_id) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    let mid = match cstr_to_string(message_id) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    match cstr_to_string(emoji) {
+        Ok(e) => string_to_c(react_json(&id, &mid, &e)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
+/// Remove one emoji reaction from a message. See [`react_remove_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_react_remove(
+    chat_id: *const c_char,
+    message_id: *const c_char,
+    emoji: *const c_char,
+) -> *mut c_char {
+    let id = match cstr_to_string(chat_id) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    let mid = match cstr_to_string(message_id) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    match cstr_to_string(emoji) {
+        Ok(e) => string_to_c(react_remove_json(&id, &mid, &e)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
 /// Fetch one inline-image URL. See [`media_fetch_json`]. Caller frees.
 #[no_mangle]
 pub extern "C" fn ostmac_media_fetch(url: *const c_char) -> *mut c_char {
@@ -1981,6 +2090,7 @@ mod tests {
             timestamp: "2026-09-22T12:00:00Z".to_string(),
             content: "hi".to_string(),
             raw: "<p>hi</p>".to_string(),
+            reactions: vec![],
         };
         let v = message_to_json(&m);
         assert_eq!(v["id"], "m1");
@@ -1988,6 +2098,7 @@ mod tests {
         assert_eq!(v["timestamp"], "2026-09-22T12:00:00Z");
         assert_eq!(v["content"], "hi");
         assert_eq!(v["raw"], "<p>hi</p>");
+        assert_eq!(v["reactions"].as_array().unwrap().len(), 0);
     }
 
     #[test]
@@ -2052,6 +2163,40 @@ mod tests {
     }
 
     #[test]
+    fn react_rejects_bad_args_without_network() {
+        for (id, mid, emoji) in [
+            ("", "m1", "👍"),
+            ("19:x", "", "👍"),
+            ("19:x", "m1", ""),
+            ("19:x", "m1", "🎉"), // unsupported emoji
+        ] {
+            for (label, out) in [
+                ("react", react_json(id, mid, emoji)),
+                ("react_remove", react_remove_json(id, mid, emoji)),
+            ] {
+                let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+                assert_eq!(v["ok"], false, "{} id={:?} mid={:?} e={:?}", label, id, mid, emoji);
+                assert_eq!(v["error"], "arg");
+            }
+        }
+    }
+
+    #[test]
+    fn ffi_react_null_is_arg_error() {
+        let id = CString::new("19:x").unwrap();
+        let mid = CString::new("m1").unwrap();
+        unsafe {
+            let p = ostmac_react(id.as_ptr(), mid.as_ptr(), std::ptr::null());
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
     fn messages_page_rejects_bad_args_without_network() {
         for (id, tok) in [
             ("", "https://h/conversations/x"),
@@ -2091,6 +2236,10 @@ mod tests {
                 timestamp: "2026-09-22T12:00:00Z".to_string(),
                 content: "hi Bob".to_string(),
                 raw: "<p>hi <at>Bob</at></p>".to_string(),
+                reactions: vec![ost::api::ReactionCount {
+                    emoji: "👍".to_string(),
+                    count: 2,
+                }],
             }],
             backward_link: Some(
                 "https://h/v1/conversations/19:x/messages?page=2".to_string(),
@@ -2102,6 +2251,8 @@ mod tests {
         assert_eq!(v["chat_id"], "19:x");
         assert_eq!(v["messages"].as_array().unwrap().len(), 1);
         assert_eq!(v["messages"][0]["raw"], "<p>hi <at>Bob</at></p>");
+        assert_eq!(v["messages"][0]["reactions"][0]["emoji"], "👍");
+        assert_eq!(v["messages"][0]["reactions"][0]["count"], 2);
         assert_eq!(
             v["page_token"],
             "https://h/v1/conversations/19:x/messages?page=2"

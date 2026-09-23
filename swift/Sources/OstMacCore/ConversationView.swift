@@ -1,7 +1,8 @@
-// ConversationView.swift — om-conv/om-convrich/om-shared/om-notes/om-cmdk/om-catchup: SwiftUI chat window.
+// ConversationView.swift — om-conv/om-convrich/om-shared/om-notes/om-cmdk/om-catchup/om-reactions: SwiftUI chat window.
 // Rich bubbles (mentions, code spans, links), day separators, scroll-up
 // load-more paging, edited markers, failed-send retry, Shared files + Notes tabs,
-// GIF picker + thread catch-up.
+// GIF picker + thread catch-up + reaction picker/counts.
+import AppKit
 import DietDesign
 import SwiftUI
 
@@ -79,7 +80,8 @@ public struct ConversationView: View {
                                     MessageBubble(
                                         message: msg,
                                         failed: store.failedIDs.contains(msg.id),
-                                        onRetry: { _ = store.retry(id: msg.id) }
+                                        onRetry: { _ = store.retry(id: msg.id) },
+                                        onReact: { store.toggleReaction(messageID: msg.id, emoji: $0) }
                                     )
                                     .id(msg.id)
                                 }
@@ -293,57 +295,68 @@ struct MessageBubble: View {
     let message: ChatMessage
     var failed: Bool = false
     var onRetry: () -> Void = {}
+    /// Picker tap (om-reactions): the host toggles this emoji on the bubble.
+    var onReact: (String) -> Void = { _ in }
 
     var body: some View {
         HStack(spacing: DietSpace.xs) {
             if message.isOwn { Spacer(minLength: DietSpace.xxl) }
-            VStack(alignment: .leading, spacing: DietSpace.xxs) {
-                HStack(spacing: DietSpace.xs) {
-                    Text("\(message.sender) · \(message.displayTime)")
-                        .font(DietType.caption1)
-                        .foregroundStyle(DietColor.textSecondaryColor)
-                    if message.edited {
-                        Text("(edited)")
-                            .font(DietType.caption2)
-                            .italic()
-                            .foregroundStyle(DietColor.textTertiaryColor)
-                    }
-                }
-                let rendered = MessageRender.renderText(for: message)
-                let images = MessageRender.images(fromRaw: message.raw)
-                if !rendered.isEmpty {
-                    Text(MessageRender.attributedBody(for: message))
-                        .font(DietType.body)
-                        .tint(.accentColor)
-                        .textSelection(.enabled)
-                }
-                let emoticons = images.filter(\.isEmoticon)
-                let photos = images.filter { !$0.isEmoticon }
-                if !emoticons.isEmpty {
+            // Tapback badges overlap the bubble's top outer corner
+            // (iMessage-style); later rows paint above, so the badge
+            // straddling upward stays visible.
+            ZStack(alignment: message.isOwn ? .topTrailing : .topLeading) {
+                VStack(alignment: .leading, spacing: DietSpace.xxs) {
                     HStack(spacing: DietSpace.xs) {
-                        ForEach(Array(emoticons.enumerated()), id: \.offset) { _, img in
-                            RemoteEmoticon(url: img.url, messageID: message.id, alt: img.alt)
+                        Text("\(message.sender) · \(message.displayTime)")
+                            .font(DietType.caption1)
+                            .foregroundStyle(DietColor.textSecondaryColor)
+                        if message.edited {
+                            Text("(edited)")
+                                .font(DietType.caption2)
+                                .italic()
+                                .foregroundStyle(DietColor.textTertiaryColor)
                         }
                     }
-                }
-                ForEach(Array(photos.enumerated()), id: \.offset) { _, img in
-                    RemoteImage(url: img.url, messageID: message.id, alt: img.alt)
-                }
-                if failed {
-                    HStack(spacing: DietSpace.xs) {
-                        Image(systemName: "exclamationmark.circle.fill")
-                            .font(.system(size: DietSize.iconMD))
-                            .foregroundStyle(Color(nsColor: DietColor.danger))
-                            .accessibilityLabel("Send failed")
-                        Text("Not delivered")
-                            .font(DietType.caption1)
-                            .foregroundStyle(Color(nsColor: DietColor.danger))
-                        Button("Retry", action: onRetry)
-                            .font(DietType.caption1)
-                            .buttonStyle(.link)
-                            .tint(Color(nsColor: DietColor.danger))
+                    let rendered = MessageRender.renderText(for: message)
+                    let images = MessageRender.images(fromRaw: message.raw)
+                    if !rendered.isEmpty {
+                        // No .textSelection: selectable Text owns the
+                        // system menu and SwiftUI does not merge custom
+                        // items into it, so selection would hide the
+                        // picker on the words. Copy lives in the bubble
+                        // menu instead (full message; partial selection
+                        // awaits a TextKit-backed bubble).
+                        Text(MessageRender.attributedBody(for: message))
+                            .font(DietType.body)
+                            .tint(.accentColor)
                     }
-                }
+                    let emoticons = images.filter(\.isEmoticon)
+                    let photos = images.filter { !$0.isEmoticon }
+                    if !emoticons.isEmpty {
+                        HStack(spacing: DietSpace.xs) {
+                            ForEach(Array(emoticons.enumerated()), id: \.offset) { _, img in
+                                RemoteEmoticon(url: img.url, messageID: message.id, alt: img.alt)
+                            }
+                        }
+                    }
+                    ForEach(Array(photos.enumerated()), id: \.offset) { _, img in
+                        RemoteImage(url: img.url, messageID: message.id, alt: img.alt)
+                    }
+                    if failed {
+                        HStack(spacing: DietSpace.xs) {
+                            Image(systemName: "exclamationmark.circle.fill")
+                                .font(.system(size: DietSize.iconMD))
+                                .foregroundStyle(Color(nsColor: DietColor.danger))
+                                .accessibilityLabel("Send failed")
+                            Text("Not delivered")
+                                .font(DietType.caption1)
+                                .foregroundStyle(Color(nsColor: DietColor.danger))
+                            Button("Retry", action: onRetry)
+                                .font(DietType.caption1)
+                                .buttonStyle(.link)
+                                .tint(Color(nsColor: DietColor.danger))
+                        }
+                    }
             }
             .padding(DietSpace.sm + DietSpace.xs)
             .background(
@@ -354,7 +367,65 @@ struct MessageBubble: View {
                     .stroke(Color(nsColor: DietColor.danger), lineWidth: 1) : nil)
             .foregroundStyle(DietColor.textPrimaryColor)
             .opacity(failed ? 0.85 : 1)
-            if !message.isOwn { Spacer(minLength: DietSpace.xxl) }
+            // Right-click menu via AppKit bridge (inline emoji row, no
+            // submenu — see ReactionMenuBridge). A covering overlay is
+            // deliberately NOT used: the monitor approach leaves links
+            // and badge taps untouched.
+            .background(
+                ReactionMenuBridge(message: message, onReact: onReact))
+            if !message.reactions.isEmpty {
+                ReactionTapbacks(reactions: message.reactions, onTap: onReact)
+                    .offset(x: message.isOwn ? DietSpace.sm : -DietSpace.sm, y: -DietSpace.md)
+            }
+        }
+        if !message.isOwn { Spacer(minLength: DietSpace.xxl) }
+        }
+    }
+
+    /// "Remove 👍" when the bubble already shows it, else "React 👍".
+    static func reactHelp(emoji: String, on message: ChatMessage) -> String {
+        message.reactions.contains(where: { $0.emoji == emoji })
+            ? "Remove \(emoji)" : "React \(emoji)"
+    }
+
+    /// Full-message copy for the bubble menu (Auth.swift precedent).
+    static func copyMessage(_ message: ChatMessage) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(message.content, forType: .string)
+    }
+}
+
+/// iMessage-style tapback badges (om-reactions): one capsule per emoji
+/// with its count (count shown past 1), overlapping the bubble's top
+/// corner via the caller's ZStack. Tapping a badge toggles that emoji,
+/// same as the context-menu picker.
+struct ReactionTapbacks: View {
+    let reactions: [ReactionCount]
+    var onTap: (String) -> Void = { _ in }
+
+    var body: some View {
+        HStack(spacing: DietSpace.xxs) {
+            ForEach(reactions, id: \.emoji) { r in
+                Button { onTap(r.emoji) } label: {
+                    HStack(spacing: DietSpace.xxs) {
+                        Text(r.emoji)
+                            .font(DietType.caption1)
+                        if r.count > 1 {
+                            Text("\(r.count)")
+                                .font(DietType.caption1)
+                                .foregroundStyle(DietColor.textSecondaryColor)
+                        }
+                    }
+                    .padding(.horizontal, DietSpace.xs)
+                    .padding(.vertical, DietSpace.xxs)
+                    .background(DietColor.cardColor, in: Capsule())
+                    .overlay(
+                        Capsule().stroke(DietColor.dividerColor, lineWidth: 1))
+                    .shadow(color: .black.opacity(0.12), radius: 2, y: 1)
+                }
+                .buttonStyle(.plain)
+                .help(r.count > 1 ? "\(r.count) reactions" : "1 reaction")
+            }
         }
     }
 }
