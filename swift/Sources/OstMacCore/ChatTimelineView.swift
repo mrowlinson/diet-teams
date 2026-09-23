@@ -14,6 +14,10 @@ struct ChatTimelineView: View {
     var onForward: (ChatMessage) -> Void = { _ in }
     var onEdit: (ChatMessage) -> Void = { _ in }
     var onDelete: (ChatMessage) -> Void = { _ in }
+    /// Loaded Shared-tab files for this chat (om-inline-docs passthrough).
+    var sharedFiles: [SharedFile] = []
+    /// Doc-row Open tap (om-inline-docs passthrough).
+    var onOpenDoc: (InlineDoc) -> Void = { InlineDocs.open($0) }
     @StateObject private var scroll = ChatScrollModel()
 
     var body: some View {
@@ -61,7 +65,9 @@ struct ChatTimelineView: View {
                                     onForward: { onForward(msg) },
                                     onReply: { store.beginReply(to: msg) },
                                     onEdit: { onEdit(msg) },
-                                    onDelete: { onDelete(msg) }
+                                    onDelete: { onDelete(msg) },
+                                    sharedFiles: sharedFiles,
+                                    onOpenDoc: onOpenDoc
                                 )
                                 .id(msg.id)
                                 .onAppear { scroll.visibleIDs.insert(msg.id) }
