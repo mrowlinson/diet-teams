@@ -12,16 +12,19 @@ import SwiftUI
 /// list); loading/empty/error/no-matches are `DietEmptyState`.
 public struct TeamsBrowser: View {
     @ObservedObject private var model: TeamsViewModel
+    @ObservedObject private var unread: UnreadStore
     private let openChatID: String?
     private let onOpen: (String, String) -> Void
     @State private var searchText = ""
 
     public init(
         model: TeamsViewModel, openChatID: String? = nil,
+        unread: UnreadStore = UnreadStore(),
         initialFilter: String = "",
         onOpen: @escaping (String, String) -> Void
     ) {
         self.model = model
+        self.unread = unread
         self.openChatID = openChatID
         _searchText = State(initialValue: initialFilter)
         self.onOpen = onOpen
@@ -91,6 +94,7 @@ public struct TeamsBrowser: View {
                                         teamName: team.name,
                                         isOpen: channel.id == openChatID,
                                         onOpen: onOpen)
+                                        .unreadBadge(unread.count(for: channel.id))
                                 }
                             }
                         } header: {

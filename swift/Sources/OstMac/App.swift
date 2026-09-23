@@ -181,6 +181,7 @@ final class AppState: ObservableObject {
     let shared = SharedFilesStore()
     let feed = RealtimeFeed()
     let notifs = MessageNotifications()
+    let unread = UnreadStore()
     let auth = AuthViewModel()
     let presence = PresenceStore()
     let call: CallStore
@@ -441,6 +442,7 @@ final class AppState: ObservableObject {
     private func open(chatID id: String, chatName: String?) {
         openChatID = id
         persistedSelection = id
+        unread.markRead(chatID: id) // om-notifbadge: opening marks read
         if isDemo {
             let name = chatName ?? DemoData.name(for: id) ?? id
             var msgs = DemoData.messages(for: id)
@@ -531,23 +533,32 @@ final class AppState: ObservableObject {
         {
             Task { await presence.refreshChatPeerMri(chatID: msg.chatID, mri: mri) }
         }
-        maybeNotify(msg) // om-rules: all chats, open one included (TN parity)
+        // om-rules + om-notifbadge: ONE rules decision per event drives
+        // both the banner (all chats, open one included — TN parity) and
+        // the unread counts (skips and the open chat never accrue).
+        let chatName = chats.chats.first(where: { $0.id == msg.chatID })?.name ?? ""
+        let decision = rulesDecision(for: msg, chatName: chatName)
+        unread.ingest(decision: decision, chatID: msg.chatID, openChatID: openChatID)
+        maybeNotify(msg, chatName: chatName, decision: decision)
         guard msg.isFor(chatID: openChatID) else { return }
         conv.ingest(realtime: msg)
     }
 
-    /// Rules-based banner for one live event (om-rules: TN ChatFilter
-    /// port). Pure filter; posts through Notifier only on .notify.
-    /// Owner identity prefers configured/learned MRI with a live
-    /// display-name backup; chat names come from the loaded list.
-    private func maybeNotify(_ msg: RealtimeMessage) {
-        let chatName = chats.chats.first(where: { $0.id == msg.chatID })?.name ?? ""
+    /// One rules decision for a live event (owns the meeting-start
+    /// window claim). Owner identity prefers configured/learned MRI with
+    /// a live display-name backup.
+    private func rulesDecision(for msg: RealtimeMessage, chatName: String) -> ChatFilter.Decision {
         var cfg = rulesConfig
         if let own = conv.ownDisplayName, !own.isEmpty { cfg.owner.displayName = own }
         let mri: String? = cfg.owner.mri.isEmpty ? ownerMRI : cfg.owner.mri
-        let decision = ChatFilter.decide(
+        return ChatFilter.decide(
             message: msg, chatDisplayName: chatName, ownerMRI: mri,
             rules: cfg, meetingDedup: &meetingDedup, now: Date())
+    }
+
+    /// Rules-based banner for one live event (om-rules: TN ChatFilter
+    /// port). Posts through Notifier only on .notify.
+    private func maybeNotify(_ msg: RealtimeMessage, chatName: String, decision: ChatFilter.Decision) {
         guard case .notify(let reason) = decision else { return }
         let title: String
         let body: String
@@ -660,6 +671,7 @@ final class AppState: ObservableObject {
             signedIn = false
             feed.stop()
             presence.clear()
+            unread.markAllRead() // om-notifbadge: dock clears on sign-out
             refreshFeedStatus()
         default:
             break
@@ -689,6 +701,7 @@ struct RootView: View {
                         chats: state.chats, teams: state.teams,
                         reminders: state.reminders,
                         presence: state.presence,
+                        unread: state.unread,
                         openChatID: state.openChatID,
                         initialSection: RootView.initialSection,
                         initialFilter: OstMacAppMain.filterQuery(args: CommandLine.arguments),
