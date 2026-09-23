@@ -21,10 +21,12 @@ public struct ConversationView: View {
     @State private var draft = ""
     @State private var tab: Int
     @State private var showGIFs = false
+    @State private var showMentions = false
     @AppStorage("tenorAPIKey") private var tenorAPIKey = ""
     @State private var showCatchUp: Bool
     @FocusState private var boxFocused: Bool
     @State private var gifHovering = false
+    @State private var mentionHovering = false
     /// Forward tap (om-msgactions): the host opens its jump-palette sheet
     /// (OstMac target owns JumpPaletteView; this module cannot import it).
     private let onForward: (ChatMessage) -> Void
@@ -299,6 +301,33 @@ public struct ConversationView: View {
             replyChip
             HStack(spacing: DietSpace.sm) {
                 Button {
+                    showMentions = true
+                } label: {
+                    Image(systemName: "at")
+                        .font(.system(size: DietSize.iconMD))
+                        .foregroundStyle(DietColor.textSecondaryColor)
+                        .padding(.horizontal, DietSpace.xs)
+                        .padding(.vertical, DietSpace.xxs)
+                        .background(
+                            mentionHovering ? DietColor.wellColor : .clear,
+                            in: RoundedRectangle(cornerRadius: DietRadius.control))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: DietRadius.control)
+                                .stroke(DietColor.dividerColor, lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .onHover { mentionHovering = $0 }
+                .help("Mention someone (@)")
+                .popover(isPresented: $showMentions, arrowEdge: .top) {
+                    MentionPickerView(
+                        roster: MentionCompose.roster(
+                            from: store.messages, excluding: store.ownDisplayName)
+                    ) { name in
+                        insertMention(name)
+                        showMentions = false
+                    }
+                }
+                Button {
                     showGIFs = true
                 } label: {
                 Text("GIF")
@@ -366,6 +395,14 @@ public struct ConversationView: View {
         boxFocused = true
     }
 
+    /// Append a picked @-mention to the draft (`@Name `, MentionCompose
+    /// spacing); the user still hits Send. Plain text — the send path
+    /// is untouched.
+    private func insertMention(_ name: String) {
+        draft = MentionCompose.insert(name, into: draft)
+        boxFocused = true
+    }
+
     static func appendGIF(_ url: String, to draft: String) -> String {
         draft.isEmpty ? url : "\(draft) \(url)"
     }
@@ -382,6 +419,9 @@ public struct ConversationView: View {
 struct MessageBubble: View {
     let message: ChatMessage
     var failed: Bool = false
+    /// Own display name for the mine wash (om-mentions): mention spans
+    /// matching it get the accent highlight. Nil disables the wash.
+    var highlightName: String? = nil
     /// Resolved quote parent (om-replies); nil for plain bubbles and
     /// evicted parents (the fallback line covers the latter).
     var quoted: ChatMessage?
@@ -425,7 +465,7 @@ struct MessageBubble: View {
                         // left-drag selects, right-click reacts, Cmd+C
                         // copies the selection, and the bubble menu's Copy
                         // still takes the full message.
-                        Text(MessageRender.attributedBody(text: rendered, raw: message.raw))
+                        Text(MessageRender.attributedBody(text: rendered, raw: message.raw, highlighting: highlightName))
                             .font(DietType.body)
                             .tint(.accentColor)
                             .textSelection(.enabled)

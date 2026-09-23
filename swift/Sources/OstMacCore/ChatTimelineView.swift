@@ -54,6 +54,7 @@ struct ChatTimelineView: View {
                                 MessageBubble(
                                     message: msg,
                                     failed: store.failedIDs.contains(msg.id),
+                                    highlightName: store.ownDisplayName,
                                     quoted: store.quotedParent(for: msg),
                                     onRetry: { _ = store.retry(id: msg.id) },
                                     onReact: { store.toggleReaction(messageID: msg.id, emoji: $0) },

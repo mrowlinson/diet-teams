@@ -40,6 +40,16 @@ public enum ChatListFormat {
         }
     }
 
+    /// Mentions-only filter (om-mentions): keep chats whose id is in
+    /// `mentionedIDs` (the MentionStore flag set). Order is preserved
+    /// exactly — filtering never re-sorts (pin-top owns the comparator).
+    /// Empty set → no chats (the row shows its "no mentions" state).
+    /// Unknown ids are ignored.
+    public static func filterMentions(_ chats: [ChatItem], mentionedIDs: Set<String>) -> [ChatItem] {
+        guard !mentionedIDs.isEmpty else { return [] }
+        return chats.filter { mentionedIDs.contains($0.id) }
+    }
+
     /// One-line `sender: preview` summary. Missing parts are dropped;
     /// both missing → `""` (view shows a placeholder).
     public static func previewLine(sender: String?, preview: String?) -> String {

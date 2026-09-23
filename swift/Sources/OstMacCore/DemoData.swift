@@ -204,6 +204,11 @@ public enum DemoData {
         chatID == richID ? ["rich-fail"] : []
     }
 
+    /// Demo threads flagging an owner mention (om-mentions): the rich
+    /// thread's edited bubble mines `@Me` from its `<at>` tag. Adopted
+    /// by the app's MentionStore at demo launch (offline, no feed).
+    public static let mentionedChatIDs: Set<String> = [richID]
+
     /// Canned shared files for `--demo` (om-shared lane). Design Sync has
     /// three (pdf + image + sheet, one with a sender); Ava has one; the
     /// rich thread and channels share the design set; standup is empty.
