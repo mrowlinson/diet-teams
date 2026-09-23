@@ -200,6 +200,12 @@ final class AppState: ObservableObject {
     private var stateTimer: Timer?
     private var started = false
     private var contentOpened = false
+    // om-rules: notify/skip rules over the live feed (file-loaded once at
+    // launch; edits need a relaunch). meetingDedup collapses meeting
+    // bursts; ownerMRI is learned async (name backup covers the gap).
+    private var meetingDedup = MeetingStartDedup()
+    private var rulesConfig = RulesConfig.loadBestEffort()
+    private var ownerMRI: String?
 
     init(args: [String]) {
         isDemo = args.contains("--demo") || args.contains("--demo-rich")
@@ -315,6 +321,8 @@ final class AppState: ObservableObject {
         }
         if !isDemo {
             presence.refreshOwnSoon() // own dot; non-critical on failure
+            setupNotifier() // om-rules: banners for filtered live events
+            resolveOwnerMRI() // async; name backup covers the gap
             feed.subscribe { [weak self] msg in
                 Task { @MainActor [weak self] in self?.handleRealtime(msg) }
             }
@@ -448,8 +456,79 @@ final class AppState: ObservableObject {
         {
             Task { await presence.refreshChatPeerMri(chatID: msg.chatID, mri: mri) }
         }
+        maybeNotify(msg) // om-rules: all chats, open one included (TN parity)
         guard msg.isFor(chatID: openChatID) else { return }
         conv.ingest(realtime: msg)
+    }
+
+    /// Rules-based banner for one live event (om-rules: TN ChatFilter
+    /// port). Pure filter; posts through Notifier only on .notify.
+    /// Owner identity prefers configured/learned MRI with a live
+    /// display-name backup; chat names come from the loaded list.
+    private func maybeNotify(_ msg: RealtimeMessage) {
+        let chatName = chats.chats.first(where: { $0.id == msg.chatID })?.name ?? ""
+        var cfg = rulesConfig
+        if let own = conv.ownDisplayName, !own.isEmpty { cfg.owner.displayName = own }
+        let mri: String? = cfg.owner.mri.isEmpty ? ownerMRI : cfg.owner.mri
+        let decision = ChatFilter.decide(
+            message: msg, chatDisplayName: chatName, ownerMRI: mri,
+            rules: cfg, meetingDedup: &meetingDedup, now: Date())
+        guard case .notify(let reason) = decision else { return }
+        let title: String
+        let body: String
+        if reason == ChatFilter.meetingStartingReason {
+            // Synthesized body (raw beacons/blobs never shown).
+            if chatName.isEmpty || chatName == msg.chatID {
+                title = "Teams meeting"
+                body = "Meeting starting"
+            } else {
+                title = chatName
+                body = "Meeting starting: \(chatName)"
+            }
+        } else if chatName.isEmpty || chatName == msg.chatID {
+            title = msg.sender.isEmpty ? "Teams message" : msg.sender
+            body = msg.text
+        } else {
+            title = msg.sender.isEmpty ? chatName : "\(msg.sender) in \(chatName)"
+            body = msg.text
+        }
+        Notifier.shared.post(
+            title: title, body: body,
+            id: msg.msgId.isEmpty ? nil : msg.msgId, chatID: msg.chatID)
+    }
+
+    /// Wire the notifier: Reply posts through core send, Open chat jumps.
+    /// Live mode only (demo never starts the feed, so never notifies).
+    private func setupNotifier() {
+        Notifier.shared.setup()
+        Notifier.shared.onOpenChat = { [weak self] chatID in
+            guard let strongSelf = self else { return }
+            await MainActor.run {
+                let name = strongSelf.chats.chats.first(where: { $0.id == chatID })?.name ?? chatID
+                strongSelf.jump(chatID: chatID, chatName: name)
+            }
+        }
+        Notifier.shared.onReply = { chatID, text in
+            do {
+                _ = try RustCore.send(chatID: chatID, text: text)
+                return .success(())
+            } catch {
+                return .failure(error)
+            }
+        }
+        Task { _ = await Notifier.shared.requestAuthorization() }
+    }
+
+    /// Learn the owner MRI (`8:orgid:{oid}`) from Graph /me for
+    /// MRI-preferred own/mention matching. Off-main (first call may hit
+    /// network); the display-name backup covers messages until it lands.
+    private func resolveOwnerMRI() {
+        Task.detached { [weak self] in
+            guard let me = try? RustCore.whoami(), !me.id.isEmpty else { return }
+            let mri = "8:orgid:\(me.id)"
+            guard let strongSelf = self else { return }
+            await MainActor.run { strongSelf.ownerMRI = mri }
+        }
     }
 
     /// Push had a gap: re-fetch the open chat plus the list.

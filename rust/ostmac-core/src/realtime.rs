@@ -2,7 +2,8 @@
 //!
 //! `trouter_poll_json` yields opaque socket.io payloads. This module turns them
 //! into typed chat message/edit events the conversation view can apply:
-//! `{chat_id, id, sender, sender_id?, text, time, is_edit, edited_id?}`.
+//! `{chat_id, id, sender, sender_id?, text, time, is_edit, edited_id?,
+//! message_type, raw}`.
 //! `sender_id` is the raw `from` MRI (e.g. `8:orgid:<oid>`) when present —
 //! the presence lane resolves it to a Graph user for live chatmate dots.
 //!
@@ -53,6 +54,10 @@ pub struct RealtimeMessage {
     pub edited_id: Option<String>,
     /// Unstripped server HTML (om-richmedia: streaming `<img>` mining).
     pub raw: String,
+    /// Raw `messagetype` field (e.g. `Text`, `RichText/Html`). Empty when
+    /// the event carried none — the rules filter treats that as
+    /// unclassifiable (type gate passes) for old-core tolerance.
+    pub message_type: String,
 }
 
 /// Result of parsing one batch of raw events.
@@ -244,6 +249,7 @@ fn message_from_object(
         is_edit,
         edited_id,
         raw: content,
+        message_type: msgtype,
     })
 }
 
@@ -312,4 +318,31 @@ fn strip_html(html: &str) -> String {
         .replace("&quot;", "\"")
         .replace("&#39;", "'")
         .replace("&nbsp;", " ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn message_type_carried_through() {
+        let v = json!({
+            "content": "hi",
+            "messagetype": "RichText/Html",
+            "from": "8:orgid:abc",
+            "conversationlink": "https://x/conversations/19:abc/messages/1",
+        });
+        let b = parse_batch(&[v]);
+        assert_eq!(b.messages.len(), 1);
+        assert_eq!(b.messages[0].message_type, "RichText/Html");
+    }
+
+    #[test]
+    fn message_type_defaults_empty() {
+        let v = json!({"content": "hi", "from": "Bob"});
+        let b = parse_batch(&[v]);
+        assert_eq!(b.messages.len(), 1);
+        assert_eq!(b.messages[0].message_type, "");
+    }
 }

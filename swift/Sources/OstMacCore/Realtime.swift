@@ -37,6 +37,10 @@ public struct RealtimeMessage: Decodable, Sendable, Identifiable {
     /// Unstripped server HTML (om-richmedia: streaming `<img>` mining).
     /// Nil on old core builds — treat as text-only.
     public let raw: String?
+    /// Raw `messagetype` (e.g. `Text`, `RichText/Html`). Nil on old core
+    /// builds — the rules filter treats that as unclassifiable (the type
+    /// gate passes) rather than skipping.
+    public let messageType: String?
 
     enum CodingKeys: String, CodingKey {
         case chatID = "chat_id"
@@ -45,14 +49,17 @@ public struct RealtimeMessage: Decodable, Sendable, Identifiable {
         case isEdit = "is_edit"
         case editedID = "edited_id"
         case raw
+        case messageType = "message_type"
     }
 
-    /// Host-side construction (tests, mock feeds). `senderID`/`raw`
-    /// default to nil (old core builds omit them); wire decoding untouched.
+    /// Host-side construction (tests, mock feeds). `senderID`/`raw`/
+    /// `messageType` default to nil (old core builds omit them); wire
+    /// decoding untouched.
     public init(
         chatID: String, msgId: String, sender: String,
         senderID: String? = nil, text: String, time: String,
-        isEdit: Bool, editedID: String? = nil, raw: String? = nil
+        isEdit: Bool, editedID: String? = nil, raw: String? = nil,
+        messageType: String? = nil
     ) {
         self.chatID = chatID
         self.msgId = msgId
@@ -63,6 +70,7 @@ public struct RealtimeMessage: Decodable, Sendable, Identifiable {
         self.isEdit = isEdit
         self.editedID = editedID
         self.raw = raw
+        self.messageType = messageType
     }
 
     public init(from decoder: Decoder) throws {
@@ -76,6 +84,7 @@ public struct RealtimeMessage: Decodable, Sendable, Identifiable {
         isEdit = try c.decode(Bool.self, forKey: .isEdit)
         editedID = try c.decodeIfPresent(String.self, forKey: .editedID)
         raw = try c.decodeIfPresent(String.self, forKey: .raw)
+        messageType = try c.decodeIfPresent(String.self, forKey: .messageType)
     }
 
     /// True when this event belongs to the given open chat.
