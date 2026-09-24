@@ -133,6 +133,40 @@ final class BotPostsTests: XCTestCase {
         XCTAssertEqual(MessageRender.bubbleText(for: m), "answer")
     }
 
+    // MARK: - Title-dup dedupe (om-lt3-titlededupe)
+
+    func testBubbleTextDedupesTitleDup() {
+        // Live RSS Media_Card: body prose repeats the attachment title
+        // ("Digest"/"Digest" glued into content by core strip). The row
+        // carries the title, so the bubble text renders nothing (once).
+        let m = msg(
+            id: "td-1",
+            content: "DigestDigest",
+            raw: #"<p>Digest</p><attachment><p><a href="https://h/d">Digest</a></p></attachment>"#)
+        XCTAssertEqual(
+            MessageRender.botPosts(fromRaw: m.raw),
+            [MessageRender.BotPost(title: "Digest", url: "https://h/d")])
+        XCTAssertEqual(MessageRender.bubbleText(for: m), "")
+        XCTAssertFalse(MessageRender.showsPlaceholder(for: m))
+    }
+
+    func testTitleDedupeIgnoresCaseAndWhitespace() {
+        let m = msg(
+            id: "td-2",
+            content: "digest Digest",
+            raw: "<p>  digest </p>" + #"<attachment><a href="https://h/d">Digest</a></attachment>"#)
+        XCTAssertEqual(MessageRender.bubbleText(for: m), "")
+    }
+
+    func testTitleDedupeKeepsDistinctProse() {
+        // Equality only: prose merely containing the title still shows.
+        let m = msg(
+            id: "td-3",
+            content: "Today's Digest is outDigest",
+            raw: "<p>Today's Digest is out</p>" + #"<attachment><a href="https://h/d">Digest</a></attachment>"#)
+        XCTAssertEqual(MessageRender.bubbleText(for: m), "Today's Digest is out")
+    }
+
     // MARK: - Rows view + copy text
 
     func testLinkTargetAllowsOnlyHTTP() {
