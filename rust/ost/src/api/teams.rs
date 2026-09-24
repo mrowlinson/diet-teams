@@ -388,6 +388,242 @@ pub async fn remove_team_member(team_id: &str, member_id: &str) -> Result<()> {
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Team CREATE (om-jf-teamcreate): async Graph POST /teams
+// ---------------------------------------------------------------------------
+
+/// Seconds between async-operation polls.
+pub const TEAM_CREATE_POLL_SECS: u64 = 3;
+/// Give up polling after this many seconds (40 polls at 3s).
+pub const TEAM_CREATE_TIMEOUT_SECS: u64 = 120;
+
+/// POST path for template-based team creation.
+pub fn create_team_path() -> &'static str {
+    "/teams"
+}
+
+/// `teamsTemplates` binding for a plain standard team.
+pub fn standard_team_template() -> &'static str {
+    "https://graph.microsoft.com/v1.0/teamsTemplates('standard')"
+}
+
+/// POST body for team creation: template bind + `displayName`,
+/// `description` only when non-blank, caller (`owner` user id) as the
+/// owning member. Pure so tests pin it.
+pub fn create_team_body(
+    name: &str,
+    description: Option<&str>,
+    owner: &str,
+) -> serde_json::Value {
+    let mut body = serde_json::json!({
+        "template@odata.bind": standard_team_template(),
+        "displayName": name,
+        "members": [{
+            "@odata.type": "#microsoft.graph.aadUserConversationMember",
+            "roles": ["owner"],
+            "user@odata.bind": format!(
+                "https://graph.microsoft.com/v1.0/users('{}')",
+                owner.trim()
+            ),
+        }],
+    });
+    if let Some(d) = description {
+        if !d.trim().is_empty() {
+            body["description"] = serde_json::Value::String(d.to_string());
+        }
+    }
+    body
+}
+
+/// One Graph `teamsAsyncOperation` poll response (only the fields the
+/// create loop reads).
+#[derive(Debug, Deserialize)]
+pub struct TeamsAsyncOperation {
+    pub status: String,
+    #[serde(rename = "targetResourceId")]
+    pub target_resource_id: Option<String>,
+    #[serde(rename = "targetResourceLocation")]
+    pub target_resource_location: Option<String>,
+    pub error: Option<serde_json::Value>,
+}
+
+/// Terminal success (`succeeded`, case-insensitive).
+pub fn operation_succeeded(status: &str) -> bool {
+    status.eq_ignore_ascii_case("succeeded")
+}
+
+/// Terminal failure (`failed`, case-insensitive). Anything else
+/// (`notStarted`/`inProgress`/unknown) keeps polling.
+pub fn operation_failed(status: &str) -> bool {
+    status.eq_ignore_ascii_case("failed")
+}
+
+/// Team id from a finished operation: `targetResourceId` first, else
+/// the last segment of `targetResourceLocation` (`/teams('guid')` or
+/// `/teams/guid` forms). `None` when neither is present.
+pub fn operation_team_id(op: &TeamsAsyncOperation) -> Option<String> {
+    if let Some(id) = op.target_resource_id.as_deref() {
+        if !id.trim().is_empty() {
+            return Some(id.trim().to_string());
+        }
+    }
+    let loc = op.target_resource_location.as_deref()?.trim();
+    if loc.is_empty() {
+        return None;
+    }
+    // OData key form `/teams('guid')`: the id sits between quotes.
+    if let Some(start) = loc.find('\'') {
+        if let Some(end) = loc.rfind('\'') {
+            if end > start + 1 {
+                return Some(loc[start + 1..end].to_string());
+            }
+            return None;
+        }
+    }
+    // Plain `/teams/guid` form: last path segment.
+    let last = loc.rsplit('/').next()?.trim();
+    let id = last.trim_matches(|c| c == '(' || c == ')');
+    if id.is_empty() {
+        None
+    } else {
+        Some(id.to_string())
+    }
+}
+
+/// Absolute poll URL from a `Content-Location` header value: absolute
+/// values pass through, relative paths expand under Graph v1.0.
+pub fn operation_url(content_location: &str) -> String {
+    let h = content_location.trim();
+    if h.starts_with("http://") || h.starts_with("https://") {
+        h.to_string()
+    } else {
+        format!("https://graph.microsoft.com/v1.0{}", h)
+    }
+}
+
+/// Created team plus poll telemetry (`polls` operation GETs,
+/// `elapsed_ms` wall time incl. POST).
+pub struct TeamCreateResult {
+    pub team: TeamInfo,
+    pub polls: u32,
+    pub elapsed_ms: u64,
+}
+
+/// Fetch one team + its channels (channel errors degrade to an empty
+/// list, same as [`list_teams_data`]). `fallback_name` covers a missing
+/// `displayName`.
+async fn fetch_team_with_channels(
+    client: &TeamsClient,
+    team_id: &str,
+    fallback_name: &str,
+) -> Result<TeamInfo> {
+    let team: Team = client
+        .graph_get(&format!("/teams/{}", team_id))
+        .await?
+        .json()
+        .await
+        .context("Failed to parse created team response")?;
+    let channels = match client
+        .graph_get(&format!("/teams/{}/channels", team_id))
+        .await
+    {
+        Ok(resp) => resp
+            .json::<ChannelsResponse>()
+            .await
+            .map(|r| r.value.into_iter().map(channel_info).collect())
+            .unwrap_or_default(),
+        Err(e) => {
+            tracing::warn!("Failed to fetch channels for new team: {:#}", e);
+            Vec::new()
+        }
+    };
+    Ok(TeamInfo {
+        id: team.id,
+        name: team
+            .display_name
+            .filter(|n| !n.trim().is_empty())
+            .unwrap_or_else(|| fallback_name.trim().to_string()),
+        channels,
+    })
+}
+
+/// Create one standard team and wait for it (`POST /teams` answers 202
+/// + `Content-Location`; the operation is polled every
+/// [`TEAM_CREATE_POLL_SECS`]s until `succeeded`/`failed` or
+/// [`TEAM_CREATE_TIMEOUT_SECS`]s elapse). The caller joins as owner.
+/// Empty names are rejected before any network.
+pub async fn create_team_data(
+    client: &TeamsClient,
+    name: &str,
+    description: Option<&str>,
+) -> Result<TeamCreateResult> {
+    if name.trim().is_empty() {
+        bail!("empty name");
+    }
+    let started = std::time::Instant::now();
+    let me = super::me::whoami_data(client).await?;
+    let body = create_team_body(name.trim(), description, &me.id);
+    let resp = client.graph_post(create_team_path(), &body).await?;
+    if resp.status() != reqwest::StatusCode::ACCEPTED {
+        // Sync fallback: answer already carries the team.
+        let team: Team = resp
+            .json()
+            .await
+            .context("Failed to parse created team response")?;
+        let id = team.id.clone();
+        let team = fetch_team_with_channels(client, &id, name).await?;
+        return Ok(TeamCreateResult {
+            team,
+            polls: 0,
+            elapsed_ms: started.elapsed().as_millis() as u64,
+        });
+    }
+    let header = resp
+        .headers()
+        .get(reqwest::header::CONTENT_LOCATION)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    if header.trim().is_empty() {
+        bail!("202 without Content-Location");
+    }
+    let url = operation_url(&header);
+    let mut polls = 0u32;
+    loop {
+        if started.elapsed().as_secs() >= TEAM_CREATE_TIMEOUT_SECS {
+            bail!(
+                "team create timed out after {}s ({} polls); the team may still be creating",
+                TEAM_CREATE_TIMEOUT_SECS,
+                polls
+            );
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(TEAM_CREATE_POLL_SECS)).await;
+        let op: TeamsAsyncOperation = client
+            .graph_get_url(&url)
+            .await?
+            .json()
+            .await
+            .context("Failed to parse team operation response")?;
+        polls += 1;
+        if operation_succeeded(&op.status) {
+            let id = operation_team_id(&op).context("operation succeeded without team id")?;
+            let team = fetch_team_with_channels(client, &id, name).await?;
+            return Ok(TeamCreateResult {
+                team,
+                polls,
+                elapsed_ms: started.elapsed().as_millis() as u64,
+            });
+        }
+        if operation_failed(&op.status) {
+            let detail = op
+                .error
+                .map(|e| e.to_string())
+                .unwrap_or_else(|| "failed".to_string());
+            bail!("team create failed: {}", detail);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -461,6 +697,94 @@ mod tests {
         let unnamed: Channel =
             serde_json::from_str(r#"{"id":"19:anon@thread.tacv2"}"#).unwrap();
         assert_eq!(channel_info(unnamed).name, "19:anon@thread.tacv2");
+    }
+
+    #[test]
+    fn team_create_pins_path_body_and_template() {
+        assert_eq!(create_team_path(), "/teams");
+        assert_eq!(
+            standard_team_template(),
+            "https://graph.microsoft.com/v1.0/teamsTemplates('standard')"
+        );
+        let body = create_team_body("  Squad  ", Some("Ship it"), "oid-1");
+        assert_eq!(body["template@odata.bind"], standard_team_template());
+        assert_eq!(body["displayName"], "  Squad  ");
+        assert_eq!(body["description"], "Ship it");
+        let members = body["members"].as_array().unwrap();
+        assert_eq!(members.len(), 1);
+        assert_eq!(
+            members[0]["@odata.type"],
+            "#microsoft.graph.aadUserConversationMember"
+        );
+        assert_eq!(members[0]["roles"], serde_json::json!(["owner"]));
+        assert_eq!(
+            members[0]["user@odata.bind"],
+            "https://graph.microsoft.com/v1.0/users('oid-1')"
+        );
+        // Blank description is dropped, never sent as "".
+        let bare = create_team_body("Squad", Some("   "), "oid-1");
+        assert!(bare.get("description").is_none());
+        let none = create_team_body("Squad", None, "oid-1");
+        assert!(none.get("description").is_none());
+    }
+
+    #[test]
+    fn team_create_poll_timing_constants() {
+        assert_eq!(TEAM_CREATE_POLL_SECS, 3);
+        assert_eq!(TEAM_CREATE_TIMEOUT_SECS, 120);
+        assert!(TEAM_CREATE_TIMEOUT_SECS > TEAM_CREATE_POLL_SECS);
+    }
+
+    #[test]
+    fn operation_status_classes_pin_terminal_states() {
+        assert!(operation_succeeded("succeeded"));
+        assert!(operation_succeeded("Succeeded"));
+        assert!(!operation_succeeded("inProgress"));
+        assert!(!operation_succeeded("failed"));
+        assert!(operation_failed("failed"));
+        assert!(operation_failed("Failed"));
+        assert!(!operation_failed("inProgress"));
+        assert!(!operation_failed("succeeded"));
+        // Non-terminal polls continue.
+        assert!(!operation_succeeded("notStarted"));
+        assert!(!operation_failed("notStarted"));
+        assert!(!operation_succeeded("inProgress"));
+        assert!(!operation_failed("inProgress"));
+    }
+
+    #[test]
+    fn operation_team_id_prefers_resource_id_then_location() {
+        let op: TeamsAsyncOperation = serde_json::from_str(
+            r#"{"status":"succeeded","targetResourceId":"guid-1",
+                "targetResourceLocation":"/teams('guid-2')"}"#,
+        )
+        .unwrap();
+        assert_eq!(operation_team_id(&op).as_deref(), Some("guid-1"));
+        let loc: TeamsAsyncOperation = serde_json::from_str(
+            r#"{"status":"succeeded","targetResourceLocation":"/teams('guid-9')"}"#,
+        )
+        .unwrap();
+        assert_eq!(operation_team_id(&loc).as_deref(), Some("guid-9"));
+        let bare: TeamsAsyncOperation = serde_json::from_str(
+            r#"{"status":"succeeded","targetResourceLocation":"/teams/guid-7"}"#,
+        )
+        .unwrap();
+        assert_eq!(operation_team_id(&bare).as_deref(), Some("guid-7"));
+        let missing: TeamsAsyncOperation =
+            serde_json::from_str(r#"{"status":"succeeded"}"#).unwrap();
+        assert_eq!(operation_team_id(&missing), None);
+    }
+
+    #[test]
+    fn operation_url_keeps_absolute_and_expands_relative() {
+        assert_eq!(
+            operation_url("https://graph.microsoft.com/v1.0/teams('t')/operations('o')"),
+            "https://graph.microsoft.com/v1.0/teams('t')/operations('o')"
+        );
+        assert_eq!(
+            operation_url("  /teams('t')/operations('o') "),
+            "https://graph.microsoft.com/v1.0/teams('t')/operations('o')"
+        );
     }
 
     #[test]

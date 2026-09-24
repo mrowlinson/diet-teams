@@ -104,6 +104,21 @@ public enum RustCore {
         }
     }
 
+    /// Create one standard team (async Graph POST + poll, blocking FFI:
+    /// call off the main thread; waits up to ~120s for the operation).
+    /// Nil/blank description is dropped by core.
+    public static func teamCreate(
+        name: String, description: String? = nil
+    ) throws -> TeamCreateResponse {
+        try name.withCString { namePtr in
+            try withOptionalCString(description) { descPtr in
+                try call(
+                    ostmac_team_create(namePtr, descPtr),
+                    as: TeamCreateResponse.self)
+            }
+        }
+    }
+
     /// One channel's pinned tabs, read-only (blocking FFI + network:
     /// call off the main thread).
     public static func tabs(channelID: String) throws -> TabsResponse {

@@ -60,6 +60,11 @@ char *ostmac_channel_create(
 // Join one team by id (self-enroll): {ok, team_id}. Caller frees.
 char *ostmac_team_join(const char *team_id);
 
+// Create one standard team (async Graph POST, requires sign-in):
+// {ok,team:{id,name,channels},polls,elapsed_ms}. description may be
+// NULL (no description). Caller frees.
+char *ostmac_team_create(const char *name, const char *description);
+
 // One channel's pinned tabs JSON, read-only: {ok, channel_id, tabs}. Caller frees.
 char *ostmac_tabs(const char *channel_id);
 

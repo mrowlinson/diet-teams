@@ -67,8 +67,12 @@ pub use presence::get_presence_data;
 pub use tabs::list_tabs_data;
 pub use teams::{
     add_member_body, add_team_member_data, create_channel_body, create_channel_data,
-    create_channel_path, join_team_data, list_team_members_data, list_teams_data,
-    member_path, members_path, remove_team_member_data,
+    create_channel_path, create_team_body, create_team_data, create_team_path,
+    join_team_data, list_team_members_data, list_teams_data,
+    member_path, members_path, operation_failed, operation_succeeded,
+    operation_team_id, operation_url, remove_team_member_data,
+    standard_team_template, TeamCreateResult, TeamsAsyncOperation,
+    TEAM_CREATE_POLL_SECS, TEAM_CREATE_TIMEOUT_SECS,
 };
 pub use todo::{
     complete_todo_task_data, create_todo_task_data, list_todo_lists_data,

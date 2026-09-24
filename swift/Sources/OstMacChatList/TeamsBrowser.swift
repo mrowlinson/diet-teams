@@ -20,6 +20,8 @@ public struct TeamsBrowser: View {
     @State private var collapsedTeamIDs: Set<String> = []
     /// New-channel sheet visibility (om-h3-create).
     @State private var showCreate = false
+    /// New-team sheet visibility (om-jf-teamcreate).
+    @State private var showTeamCreate = false
     /// Join-sheet visibility + the typed team id.
     @State private var showJoin = false
     @State private var joinTeamID = ""
@@ -139,6 +141,14 @@ public struct TeamsBrowser: View {
                 .buttonStyle(DietSecondaryButtonStyle())
                 .accessibilityLabel("Join a team")
                 .help("Join a team by ID")
+                Button {
+                    showTeamCreate = true
+                } label: {
+                    Image(systemName: "person.3.fill")
+                }
+                .buttonStyle(DietSecondaryButtonStyle())
+                .accessibilityLabel("New team")
+                .help("Create a team")
             }
             .padding(.horizontal, DietSpace.sm)
             .padding(.vertical, DietSpace.sm)
@@ -217,6 +227,11 @@ public struct TeamsBrowser: View {
         .sheet(isPresented: $showCreate) {
             ChannelCreateSheet(model: model) {
                 showCreate = false
+            }
+        }
+        .sheet(isPresented: $showTeamCreate) {
+            TeamCreateSheet(model: model) {
+                showTeamCreate = false
             }
         }
     }

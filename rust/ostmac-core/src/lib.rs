@@ -598,6 +598,40 @@ pub fn team_join_json(team_id: &str) -> String {
     }
 }
 
+/// Create one standard team and wait for the async operation
+/// (`POST /teams` -> 202 + `Content-Location` poll, 3s x 120s cap).
+/// Returns `{ok:true, team:{id,name,channels}, polls, elapsed_ms}` or
+/// `{ok:false}`. Blank `name` is rejected before any network; a blank
+/// description is dropped (never sent).
+pub fn team_create_json(name: &str, description: Option<&str>) -> String {
+    if name.trim().is_empty() {
+        return err_json("arg", "empty name");
+    }
+    let desc = description.filter(|d| !d.trim().is_empty());
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let created = ost::api::create_team_data(&client, name.trim(), desc)
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            Ok(json!({
+                "ok": true,
+                "team": team_to_json(&created.team),
+                "polls": created.polls,
+                "elapsed_ms": created.elapsed_ms,
+            })
+            .to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("team_create", e),
+    }
+}
+
 fn tab_to_json(t: &ost::api::TabInfo) -> serde_json::Value {
     json!({
         "id": t.id,
@@ -2592,6 +2626,24 @@ pub extern "C" fn ostmac_team_join(team_id: *const c_char) -> *mut c_char {
     }
 }
 
+/// Create one standard team (async Graph POST, requires sign-in).
+/// `description` may be NULL (no description). See
+/// [`team_create_json`]. Caller frees.
+#[no_mangle]
+pub extern "C" fn ostmac_team_create(
+    name: *const c_char,
+    description: *const c_char,
+) -> *mut c_char {
+    let nm = match cstr_to_string(name) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    match opt_cstr_to_string(description) {
+        Ok(d) => string_to_c(team_create_json(&nm, d.as_deref())),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
 /// One team's roster JSON (requires sign-in). See [`team_members_json`].
 #[no_mangle]
 pub extern "C" fn ostmac_team_members(team_id: *const c_char) -> *mut c_char {
@@ -3548,6 +3600,16 @@ mod tests {
     }
 
     #[test]
+    fn team_create_rejects_bad_args_without_network() {
+        for (name, desc) in [("", None), ("   ", None), ("   ", Some("d"))] {
+            let v: serde_json::Value =
+                serde_json::from_str(&team_create_json(name, desc)).unwrap();
+            assert_eq!(v["ok"], false, "name {:?}", name);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
     fn team_member_json_shape() {
         let m = ost::api::TeamMemberInfo {
             id: "M1".to_string(),
@@ -3934,6 +3996,19 @@ mod tests {
     fn ffi_team_join_null_is_arg_error() {
         unsafe {
             let p = ostmac_team_join(std::ptr::null());
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
+    fn ffi_team_create_null_name_is_arg_error() {
+        unsafe {
+            let p = ostmac_team_create(std::ptr::null(), std::ptr::null());
             assert!(!p.is_null());
             let s = CStr::from_ptr(p).to_string_lossy().into_owned();
             ostmac_free(p);
