@@ -173,7 +173,7 @@ struct ChatTimelineView: View {
                     }
                     noteVisible()
                     // Shot hook: --show-picker pops the more-picker
-                    // on the first reacted bubble (or the first
+                    // on the bottom-most reacted bubble (or the last
                     // bubble). Messages arrive after open, so the id
                     // resolves at fire time with a few retries.
                     if CommandLine.arguments.contains("--show-picker") {
@@ -421,18 +421,24 @@ struct ChatTimelineView: View {
         }
     }
 
-    /// --show-picker driver: resolve the target bubble once messages
-    /// exist, then ask its anchor to open the more-picker.
+    /// --show-picker driver: ask the target bubble's anchor to open
+    /// the more-picker. Re-posts until tries run out: the notified
+    /// anchor can be a stale copy (SwiftUI replaces representable
+    /// views during load), so a late-created anchor catches a later
+    /// post. The anchor dedups via isPickerShown.
     private static func postPickerShot(store: ConversationStore, tries: Int) {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-            let id = store.messages.first(where: { !$0.reactions.isEmpty })?.id
-                ?? store.messages.first?.id
+            guard tries > 0 else { return }
+            // Bottom-most: settle-to-bottom keeps the tail on-screen,
+            // and LazyVStack detaches off-screen rows (their anchors
+            // have no window, so the picker can never show on them).
+            let id = store.messages.last(where: { !$0.reactions.isEmpty })?.id
+                ?? store.messages.last?.id
             if let id {
                 NotificationCenter.default.post(
                     name: ReactionMenuAnchorView.shotPickerNote, object: id)
-            } else if tries > 1 {
-                postPickerShot(store: store, tries: tries - 1)
             }
+            postPickerShot(store: store, tries: tries - 1)
         }
     }
 
