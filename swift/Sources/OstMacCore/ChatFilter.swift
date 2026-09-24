@@ -16,17 +16,34 @@ import Foundation
 
 /// Notify/skip decision. Pure; every branch covered by tests.
 ///
-/// - Muted: everything skipped (reason "muted"). The app sets
-///   `rules.muted` to the effective value before calling decide.
+/// - Do-Not-Disturb: everything skipped (reason "dnd") — own Teams
+///   presence is DoNotDisturb. Beats every gate below, mentions
+///   included (no breakthrough). The app passes the live state.
+/// - Quiet hours: everything skipped (reason "quiet-hours") inside the
+///   local quiet state (schedule or manual DND via QuietHoursStore).
+///   Beats every gate below except DND, mentions included (no
+///   breakthrough). The app passes the live state.
+/// - Muted: everything skipped (reason "muted") EXCEPT elevated
+///   @me/@team mentions in otherwise-notifiable bodies, which notify
+///   (reason "mention-breakthrough"). The app sets `rules.muted` to
+///   the effective value before calling decide.
 /// - Teams per-chat mute: chats muted in the Teams client skip with
-///   reason "teams-muted". Beats everything below (keywords, meeting
-///   signals, mentions); only the global mute above keeps its reason.
-///   (OstMac passes an empty set today — no Teams-side source yet.)
+///   reason "teams-muted" — except elevated mentions, which break
+///   through like the global mute. Beats everything below (keywords,
+///   meeting signals, plain mentions); only DND, quiet hours, and the
+///   global mute above keep their reason. (OstMac passes an empty set
+///   today — no Teams-side source yet; the gate is ready for one.)
 /// - OstMac per-chat mute: chats muted in Settings skip with reason
 ///   "chat-muted". Same level as the Teams mute (which keeps its
 ///   reason when both apply): beats keywords, meeting signals and
-///   mentions; a muted skip claims no meeting window, so unmuting
-///   later still fires meeting-starting for that meeting.
+///   mentions — mentions do NOT break through here (a Settings mute
+///   is absolute: never banners, never unread). A muted skip claims
+///   no meeting window, so unmuting later still fires
+///   meeting-starting for that meeting.
+/// - Breakthrough limits: blocked words, structural bodies, meeting
+///   signals, unlisted types, and skipped edits never break through
+///   (the unmuted path would skip them too); own messages never break
+///   through (self-mentions notify nobody).
 /// - Keyword block: a block word in the message plain text forces SKIP
 ///   (reason "keyword-block"), through any filter notify. Checked first
 ///   after mute, so it beats the keyword allow below.
@@ -95,12 +112,15 @@ public enum ChatFilter {
         chatDisplayName: String,
         ownerMRI: String?,
         rules: RulesConfig,
-        teamsMutedChatIDs: Set<String> = []
+        teamsMutedChatIDs: Set<String> = [],
+        dndActive: Bool = false,
+        quietActive: Bool = false
     ) -> Decision {
         decideCore(
             message: message, chatDisplayName: chatDisplayName,
             ownerMRI: ownerMRI, eff: rules.effective(forChat: chatDisplayName),
             teamsMutedChatIDs: teamsMutedChatIDs,
+            dndActive: dndActive, quietActive: quietActive,
             claimMeetingStart: { _ in true },
             noteMeetingActivity: { _ in }
         )
@@ -118,12 +138,15 @@ public enum ChatFilter {
         rules: RulesConfig,
         meetingDedup: inout MeetingStartDedup,
         now: Date,
-        teamsMutedChatIDs: Set<String> = []
+        teamsMutedChatIDs: Set<String> = [],
+        dndActive: Bool = false,
+        quietActive: Bool = false
     ) -> Decision {
         decideCore(
             message: message, chatDisplayName: chatDisplayName,
             ownerMRI: ownerMRI, eff: rules.effective(forChat: chatDisplayName),
             teamsMutedChatIDs: teamsMutedChatIDs,
+            dndActive: dndActive, quietActive: quietActive,
             claimMeetingStart: { chatID in meetingDedup.shouldNotify(chatID: chatID, date: now) },
             noteMeetingActivity: { chatID in meetingDedup.observe(chatID: chatID, date: now) }
         )
@@ -135,18 +158,51 @@ public enum ChatFilter {
         ownerMRI: String?,
         eff: EffectiveRules,
         teamsMutedChatIDs: Set<String>,
+        dndActive: Bool,
+        quietActive: Bool,
         claimMeetingStart: (String) -> Bool,
         noteMeetingActivity: (String) -> Void
     ) -> Decision {
-        // Mute gate first: suppresses all message notifications.
+        // DND + quiet hours first: suppress everything, mentions
+        // included (no breakthrough — stronger than mute).
+        if dndActive {
+            return .skip(reason: MentionAlert.dndReason)
+        }
+        if quietActive {
+            return .skip(reason: MentionAlert.quietReason)
+        }
+        // Classified once up front: the mute gates read it for the
+        // breakthrough check (no window claim there — the switch below
+        // stays the single claim site), then the normal path reuses it.
+        let text = message.text
+        let signal = MeetingSignal.classify(
+            text: text, content: message.raw ?? text,
+            chatID: message.chatID, senderName: message.sender,
+            chatDisplayName: chatDisplayName
+        )
+        // Mute gate: suppresses all message notifications except
+        // elevated mentions (breakthrough).
         if eff.muted {
+            if breaksThrough(
+                message: message, text: text, signal: signal,
+                ownerMRI: ownerMRI, eff: eff)
+            {
+                return .notify(reason: MentionAlert.breakthroughReason)
+            }
             return .skip(reason: mutedReason)
         }
         // Teams per-chat mute: beats everything below (keyword gates,
-        // meeting signals, mentions). Above the meeting branch on
-        // purpose: a muted skip claims no window, so unmuting later
-        // still fires meeting-starting for that meeting.
+        // meeting signals, plain mentions) except elevated mentions.
+        // Above the meeting branch on purpose: a muted skip claims no
+        // window, so unmuting later still fires meeting-starting for
+        // that meeting.
         if teamsMutedChatIDs.contains(message.chatID) {
+            if breaksThrough(
+                message: message, text: text, signal: signal,
+                ownerMRI: ownerMRI, eff: eff)
+            {
+                return .notify(reason: MentionAlert.breakthroughReason)
+            }
             return .skip(reason: teamsMutedReason)
         }
         // OstMac per-chat mute (Settings): same level as the Teams
@@ -157,17 +213,12 @@ public enum ChatFilter {
         }
         // Keyword block beats everything below (keeps its reason even
         // on structural/meeting bodies).
-        let text = message.text
         if KeywordMatch.contains(text, eff.blockKeywords) {
             return .skip(reason: "keyword-block")
         }
         // Structural bodies: never notifiable, beat keyword-allow.
         // Meeting-thread folds extend an open window (never open one).
-        switch MeetingSignal.classify(
-            text: text, content: message.raw ?? text,
-            chatID: message.chatID, senderName: message.sender,
-            chatDisplayName: chatDisplayName
-        ) {
+        switch signal {
         case .emptyText:
             if MeetingSignal.isMeetingThread(message.chatID) { noteMeetingActivity(message.chatID) }
             return .skip(reason: "empty-text")
@@ -225,6 +276,46 @@ public enum ChatFilter {
             return .skip(reason: "loud-no-mention")
         }
         return .notify(reason: "chat-message")
+    }
+
+    /// Mute-breakthrough gate: true only for a normal-body elevated
+    /// mention that the unmuted path would notify — not blocked, not
+    /// structural/meeting, type + edit gates pass, and not the owner's
+    /// own message. Meeting open-signals never break through (beacons
+    /// carry no mentions; the window claim stays single-owner below).
+    static func breaksThrough(
+        message: RealtimeMessage, text: String,
+        signal: MeetingSignal, ownerMRI: String?, eff: EffectiveRules
+    ) -> Bool {
+        guard signal == .normal else { return false }
+        if KeywordMatch.contains(text, eff.blockKeywords) { return false }
+        if isOwnMessage(
+            senderMRI: message.senderID, senderName: message.sender,
+            ownerMRI: ownerMRI, ownerDisplayName: eff.ownerDisplayName,
+            matchByName: eff.matchByDisplayName
+        ) { return false }
+        guard MentionAlert.isElevated(
+            mentions: message.mentions, ownerMRI: ownerMRI,
+            ownerDisplayName: eff.ownerDisplayName,
+            matchByName: eff.matchByDisplayName)
+        else { return false }
+        return passesTypeAndEditGates(message: message, eff: eff)
+    }
+
+    /// Type + edit gates as a predicate (mirror of the gates below:
+    /// unknown types pass, edits need notifyOnEdit).
+    static func passesTypeAndEditGates(message: RealtimeMessage, eff: EffectiveRules) -> Bool {
+        let rawType = (message.messageType ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !rawType.isEmpty {
+            let head = rawType.split(separator: "/").first.map(String.init) ?? rawType
+            if !eff.notifyTypes.contains(NotifyRule.allowAllMarker),
+               !eff.notifyTypes.contains(where: { $0.caseInsensitiveCompare(head) == .orderedSame })
+            {
+                return false
+            }
+        }
+        if message.isEdit, !eff.notifyOnEdit { return false }
+        return true
     }
 
     static func isOwnMessage(senderMRI: String?, senderName: String, ownerMRI: String?, ownerDisplayName: String, matchByName: Bool = true) -> Bool {

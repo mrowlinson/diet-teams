@@ -21,6 +21,8 @@ public extension Notification.Name {
 
 /// One posted chat notification (backend record + delivered log entry).
 /// `threadIdentifier` groups banners per thread (defaults to the chatID).
+/// Elevated mentions carry the OM_MENTION style (distinct sound +
+/// subtitle); plain messages the default style.
 public struct PostedNotification: Sendable, Equatable {
     public let id: String // msgId (also the UN request identifier)
     public let chatID: String
@@ -30,14 +32,20 @@ public struct PostedNotification: Sendable, Equatable {
     public let threadIdentifier: String
     /// Play the banner sound. False = silent post (Settings → Sound).
     public let sound: Bool
+    public let isMention: Bool
+    /// Banner subtitle for elevated mentions ("Mentioned you" /
+    /// "Channel mention"); nil for plain messages.
+    public let subtitle: String?
 
-    public init(id: String, chatID: String, title: String, body: String, threadIdentifier: String? = nil, sound: Bool = true) {
+    public init(id: String, chatID: String, title: String, body: String, threadIdentifier: String? = nil, sound: Bool = true, isMention: Bool = false, subtitle: String? = nil) {
         self.id = id
         self.chatID = chatID
         self.title = title
         self.body = body
         self.threadIdentifier = threadIdentifier ?? chatID
         self.sound = sound
+        self.isMention = isMention
+        self.subtitle = subtitle
     }
 }
 
@@ -70,15 +78,23 @@ public final class SystemNotificationCenter: NotificationPosting, @unchecked Sen
         let reply = UNTextInputNotificationAction(
             identifier: Self.replyActionID, title: "Reply", options: [],
             textInputButtonTitle: "Send", textInputPlaceholder: "Message")
-        center.setNotificationCategories([UNNotificationCategory(
-            identifier: Self.categoryID, actions: [reply],
-            intentIdentifiers: [], options: [])])
+        center.setNotificationCategories([
+            UNNotificationCategory(
+                identifier: Self.categoryID, actions: [reply],
+                intentIdentifiers: [], options: []),
+            UNNotificationCategory(
+                identifier: MentionAlert.categoryID, actions: [reply],
+                intentIdentifiers: [], options: []),
+        ])
         let content = UNMutableNotificationContent()
         content.title = note.title
         content.body = note.body
-        content.sound = note.sound ? .default : nil
-        content.categoryIdentifier = Self.categoryID
+        content.categoryIdentifier = note.isMention ? MentionAlert.categoryID : Self.categoryID
+        content.sound = note.sound ? MentionAlert.sound(isMention: note.isMention).unSound : nil
         content.threadIdentifier = note.threadIdentifier
+        if let subtitle = note.subtitle, !subtitle.isEmpty {
+            content.subtitle = subtitle
+        }
         content.userInfo = [
             Self.chatIDKey: note.chatID,
             Self.msgIDKey: note.id,
@@ -92,9 +108,13 @@ public final class SystemNotificationCenter: NotificationPosting, @unchecked Sen
         await center.deliveredNotifications().compactMap { n in
             let info = n.request.content.userInfo
             guard let chat = info[Self.chatIDKey] as? String else { return nil }
+            let content = n.request.content
+            let elevated = content.categoryIdentifier == MentionAlert.categoryID
             return PostedNotification(
                 id: n.request.identifier, chatID: chat,
-                title: n.request.content.title, body: n.request.content.body)
+                title: content.title, body: content.body,
+                isMention: elevated,
+                subtitle: content.subtitle.isEmpty ? nil : content.subtitle)
         }
     }
 }
@@ -201,12 +221,17 @@ public final class MessageNotifications: ObservableObject {
     /// post is invisible (the bubble/list already updated). Muted chats
     /// (Settings per-chat overrides) never post here either — the
     /// rules path skips them via ChatFilter, this path via the set.
+    /// When the caller passes the rules `decision`, a skip suppresses
+    /// the banner too (mute/DND/quiet/keyword/type/edit/noisy) — the
+    /// rules path owns that verdict, this path only formats it.
     public func handle(
         _ msg: RealtimeMessage, chatName: String? = nil,
         openChatID: String? = nil, ownDisplayName: String? = nil,
-        screenLocked: Bool = false, mutedChatIDs: Set<String> = []
+        screenLocked: Bool = false, mutedChatIDs: Set<String> = [],
+        decision: ChatFilter.Decision? = nil
     ) async {
         guard enabled else { return }
+        if let decision, case .skip = decision { return }
         guard !mutedChatIDs.contains(msg.chatID) else { return }
         guard let note = Self.makeNotification(
             for: msg, chatName: chatName,
@@ -215,13 +240,16 @@ public final class MessageNotifications: ObservableObject {
         else { return }
         await backend.post(PostedNotification(
             id: note.id, chatID: note.chatID, title: note.title,
-            body: note.body, threadIdentifier: note.threadIdentifier, sound: sound))
+            body: note.body, threadIdentifier: note.threadIdentifier, sound: sound,
+            isMention: note.isMention, subtitle: note.subtitle))
     }
 
     /// Pure gate + format. Nil = suppressed (edit, own message, or the
     /// chat is already open — its bubbles updated in place instead).
     /// Locked screens redact to generic title/body (no sender/text leak).
     /// `showPreview` false hides the text (title still names who/where).
+    /// Mentioning messages (owner by display name, or channel/team/
+    /// everyone) flag elevated for the OM_MENTION banner style.
     nonisolated public static func makeNotification(
         for msg: RealtimeMessage, chatName: String? = nil,
         openChatID: String? = nil, ownDisplayName: String? = nil,
@@ -241,9 +269,15 @@ public final class MessageNotifications: ObservableObject {
         } else {
             title = msg.sender
         }
+        let mined = msg.mentions
+        let ownerHit = Mentions.mentionsOwner(
+            mined, ownerMRI: nil, ownerDisplayName: ownDisplayName ?? "")
+        let channelHit = Mentions.mentionsChannelOrEveryone(mined)
         return PostedNotification(
             id: msg.msgId, chatID: msg.chatID, title: title,
-            body: showPreview ? msg.text : hiddenPreviewBody)
+            body: showPreview ? msg.text : hiddenPreviewBody,
+            isMention: ownerHit || channelHit,
+            subtitle: MentionAlert.subtitle(ownerMention: ownerHit, channelMention: channelHit))
     }
 
     /// Delivered-log readback (banner proof in the app, assertions in tests).

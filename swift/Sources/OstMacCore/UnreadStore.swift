@@ -20,16 +20,18 @@ public protocol DockBadging: Sendable {
     func setBadge(_ label: String?)
 }
 
-/// Live sink over NSApp.dockTile. Hops to the main thread (AppKit).
+/// Live sink over the app dock tile. Hops to the main thread (AppKit).
+/// Uses NSApplication.shared (never the NSApp global, which traps when
+/// no app object exists — e.g. store tests running outside the app).
 public final class SystemDockBadge: DockBadging, @unchecked Sendable {
     public init() {}
 
     public func setBadge(_ label: String?) {
         let value = label ?? ""
         if Thread.isMainThread {
-            NSApp.dockTile.badgeLabel = value
+            NSApplication.shared.dockTile.badgeLabel = value
         } else {
-            DispatchQueue.main.sync { NSApp.dockTile.badgeLabel = value }
+            DispatchQueue.main.sync { NSApplication.shared.dockTile.badgeLabel = value }
         }
     }
 }
@@ -110,13 +112,15 @@ public final class UnreadStore: ObservableObject {
         message: RealtimeMessage, chatDisplayName: String,
         ownerMRI: String?, rules: RulesConfig,
         meetingDedup: inout MeetingStartDedup, now: Date,
-        openChatID: String?, teamsMutedChatIDs: Set<String> = []
+        openChatID: String?, teamsMutedChatIDs: Set<String> = [],
+        dndActive: Bool = false, quietActive: Bool = false
     ) -> ChatFilter.Decision {
         let decision = ChatFilter.decide(
             message: message, chatDisplayName: chatDisplayName,
             ownerMRI: ownerMRI, rules: rules,
             meetingDedup: &meetingDedup, now: now,
-            teamsMutedChatIDs: teamsMutedChatIDs)
+            teamsMutedChatIDs: teamsMutedChatIDs,
+            dndActive: dndActive, quietActive: quietActive)
         ingest(decision: decision, chatID: message.chatID, openChatID: openChatID)
         return decision
     }

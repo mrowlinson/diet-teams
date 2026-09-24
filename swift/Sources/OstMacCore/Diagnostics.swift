@@ -111,4 +111,24 @@ public enum DiagnosticsFormat {
         }
         return "\(state) · \(suppressed) suppressed"
     }
+
+    /// Mention-row one-liner (om-mention-alerts): unreviewed mentioning
+    /// threads (the Mentions row filter source). Diagnostics mirrors the
+    /// row count; the Dock tile shows the same number.
+    public static func mentionsLine(count: Int) -> String {
+        "\(count) threads"
+    }
+
+    /// Unread one-liner (om-mention-alerts): total messages + chats with
+    /// unread. Sidebar rows badge per chat; the totals live here only.
+    public static func unreadLine(total: Int, chats: Int) -> String {
+        "\(total) messages · \(chats) chats"
+    }
+
+    /// Mention-alert one-liner (om-mention-alerts): breakthroughs
+    /// through mute + DND/quiet suppressions. Banners/sounds are the
+    /// only interruption; the counts live here only.
+    public static func mentionAlertsLine(breakthroughs: Int, dnd: Int, quiet: Int) -> String {
+        "\(breakthroughs) breakthroughs · \(dnd) DND · \(quiet) quiet"
+    }
 }

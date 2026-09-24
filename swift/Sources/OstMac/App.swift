@@ -235,7 +235,9 @@ final class AppState: ObservableObject {
     let typing = TypingStore()
     let notifs = MessageNotifications()
     let quietHours = QuietHoursStore()
-    let unread = UnreadStore()
+    // om-mention-alerts: the Mentions row count owns the Dock tile, so
+    // unread counts stay sidebar-only here (per-chat badges + Diagnostics).
+    let unread = UnreadStore(dock: NullDockBadge())
     let mentions = MentionStore()
     let receipts = ReceiptStore()
     let auth = AuthViewModel()
@@ -274,6 +276,10 @@ final class AppState: ObservableObject {
     @Published var feedTyping = 0
     @Published var feedRoster = 0
     @Published var feedError: String?
+    // om-mention-alerts: breakthrough/suppression counters (Diagnostics only).
+    @Published var mentionBreakthroughs = 0
+    @Published var mentionDNDSuppressions = 0
+    @Published var mentionQuietSuppressions = 0
     @Published var showJump = false
     @AppStorage("selectedChatID") private var persistedSelection: String?
 
@@ -738,7 +744,8 @@ final class AppState: ObservableObject {
         // om-nc-delivery: the rules decision below owns the single banner
         // (maybeNotify); no second post here — one event, one banner max.
         // om-quiet-hours: snapshot quiet ONCE per event; the banner path
-        // below obeys it (banners/sounds drop, unread still accrues).
+        // below obeys it (banners/sounds drop; unread pauses too —
+        // quiet-hours skips never accrue).
         let quiet = quietHours.isQuietNow
         if let mri = msg.senderID,
            msg.sender != conv.ownDisplayName,
@@ -746,13 +753,15 @@ final class AppState: ObservableObject {
         {
             Task { await presence.refreshChatPeerMri(chatID: msg.chatID, mri: mri) }
         }
-        // om-rules + om-notifbadge: ONE rules decision per event drives
-        // both the banner (all chats, open one included — TN parity) and
-        // the unread counts (skips and the open chat never accrue).
-        // om-quiet-hours: rules run FIRST (unread/mentions accrue from
-        // the decision regardless); quiet hours gate the banners SECOND.
+        // om-rules + om-notifbadge + om-mention-alerts: ONE rules decision
+        // per event (presence-DND, then local quiet, then mute-with-
+        // breakthrough) drives the banner (all chats, open one included
+        // — TN parity), the unread counts (skips and the open chat never
+        // accrue), and the alert stats. Quiet ALSO gates the banner path
+        // below (defense in depth + suppressed counting).
         let chatName = chats.chats.first(where: { $0.id == msg.chatID })?.name ?? ""
         let decision = rulesDecision(for: msg, chatName: chatName)
+        noteAlertStats(decision: decision)
         unread.ingest(decision: decision, chatID: msg.chatID, openChatID: openChatID)
         mentions.ingest(
             realtime: msg, ownName: conv.ownDisplayName,
@@ -787,13 +796,32 @@ final class AppState: ObservableObject {
 
     /// One rules decision for a live event (owns the meeting-start
     /// window claim). Owner identity prefers configured/learned MRI with
-    /// a live display-name backup.
+    /// a live display-name backup. DND reads the own Teams presence;
+    /// quiet reads the local store (schedule or manual DND — both
+    /// suppress mentions too).
     private func rulesDecision(for msg: RealtimeMessage, chatName: String) -> ChatFilter.Decision {
         var cfg = rules.config
         if let own = conv.ownDisplayName, !own.isEmpty { cfg.owner.displayName = own }
         return ChatFilter.decide(
             message: msg, chatDisplayName: chatName, ownerMRI: resolvedOwnerMRI,
-            rules: cfg, meetingDedup: &meetingDedup, now: Date())
+            rules: cfg, meetingDedup: &meetingDedup, now: Date(),
+            dndActive: MentionAlert.isDND(ownAvailability: presence.own?.availability),
+            quietActive: quietHours.isQuietNow)
+    }
+
+    /// Mention-alert counters (Diagnostics only): breakthroughs through
+    /// mute, DND suppressions, quiet-hours suppressions.
+    private func noteAlertStats(decision: ChatFilter.Decision) {
+        switch decision {
+        case .notify(let reason) where reason == MentionAlert.breakthroughReason:
+            mentionBreakthroughs += 1
+        case .skip(let reason) where reason == MentionAlert.dndReason:
+            mentionDNDSuppressions += 1
+        case .skip(let reason) where reason == MentionAlert.quietReason:
+            mentionQuietSuppressions += 1
+        default:
+            break
+        }
     }
 
     /// Quiet-held event (om-quiet-hours): count ONE suppression when a
@@ -828,21 +856,41 @@ final class AppState: ObservableObject {
     /// mute set (defense in depth — the rules engine already skips muted
     /// chats), and the preview/sound toggles via the one banner home.
     /// Quiet hours/DND gate the call (never reach here while quiet).
+    /// Breakthrough mentions post elevated (OM_MENTION style + subtitle).
     private func maybeNotify(
         _ msg: RealtimeMessage, chatName: String,
         decision: ChatFilter.Decision, mutedChatIDs: Set<String>
     ) {
         guard notifs.enabled else { return }
         guard !mutedChatIDs.contains(msg.chatID) else { return }
+        guard case .notify(let reason) = decision else { return }
+        let breakthrough = reason == MentionAlert.breakthroughReason
+        var subtitle: String?
+        if breakthrough {
+            // Same identity the decision used (live name wins, per-chat
+            // gates resolve identically — pure, no extra window claim).
+            var cfg = rules.config
+            if let own = conv.ownDisplayName, !own.isEmpty { cfg.owner.displayName = own }
+            let eff = cfg.effective(forChat: chatName)
+            let mined = msg.mentions
+            let ownerHit = Mentions.mentionsOwner(
+                mined, ownerMRI: resolvedOwnerMRI,
+                ownerDisplayName: eff.ownerDisplayName,
+                matchByName: eff.matchByDisplayName)
+            subtitle = MentionAlert.subtitle(
+                ownerMention: ownerHit,
+                channelMention: Mentions.mentionsChannelOrEveryone(mined))
+        }
         guard let banner = NcDelivery.makeBanner(
             for: msg, chatName: chatName,
             decision: decision, screenLocked: NcDelivery.isScreenLocked(),
-            showPreview: notifs.showPreview, sound: notifs.sound)
+            showPreview: notifs.showPreview, sound: notifs.sound,
+            isMention: breakthrough, subtitle: subtitle)
         else { return }
         Notifier.shared.post(
             title: banner.title, body: banner.body,
             id: banner.id.isEmpty ? nil : banner.id, chatID: banner.chatID,
-            sound: banner.sound)
+            sound: banner.sound, isMention: banner.isMention, subtitle: banner.subtitle)
     }
 
     /// Wire the notifier: Reply posts through core send, Open chat jumps.
@@ -938,8 +986,8 @@ final class AppState: ObservableObject {
             typing.clear()
             meeting.clear()
             meetingChat.clear()
-            unread.markAllRead() // om-notifbadge: dock clears on sign-out
-            mentions.markAllRead() // om-mentions: flags clear on sign-out
+            unread.markAllRead() // om-notifbadge: counts clear on sign-out
+            mentions.markAllRead() // om-mention-alerts: flags + dock clear on sign-out
             receipts.clear() // om-receipts: positions clear on sign-out
             refreshFeedStatus()
         default:

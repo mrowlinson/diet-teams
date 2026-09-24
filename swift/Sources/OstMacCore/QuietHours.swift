@@ -1,10 +1,12 @@
 // QuietHours.swift — om-quiet-hours lane: scheduled quiet hours + manual DND.
 //
-// Banners and sounds pause while quiet is active; in-app unread counts,
-// mention flags, and Diagnostics counters keep accruing. The rules engine
-// (ChatFilter) is ALWAYS consulted first — quiet hours only gate the
-// banner post, never the decision (a rules skip stays a skip, a rules
-// notify still accrues unread; only the banner/sound is dropped).
+// Banners and sounds pause while quiet is active; mention flags and
+// Diagnostics counters keep accruing, but unread pauses too —
+// quiet-hours skips never accrue (the Mentions row stays the review
+// queue). The live quiet state feeds the rules engine (ChatFilter)
+// as its second gate (presence-DND first, then quiet, then
+// mute-with-mention-breakthrough); the banner path ALSO obeys the
+// snapshot (defense in depth + suppressed counting).
 //
 // Two independent sources (either one quiets the app):
 // - Schedule: a daily QuietHoursWindow (start/end minutes + weekday set).

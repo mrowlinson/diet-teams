@@ -7,16 +7,21 @@
 // never accrues (its bubbles are already visible); opening a chat
 // clears it. The sidebar's Mentions row filters to these ids.
 //
-//   let mentions = MentionStore()
+// om-mention-alerts: the flag count drives the Dock tile (nil at zero).
+// Mute/DND/quiet never stop flagging (the row is the review queue, not
+// an interruption — banners/sounds are what those suppress).
+//
+//   let mentions = MentionStore() // live dock badge
 //   mentions.ingest(realtime: msg, ownName: conv.ownDisplayName,
 //                   ownerMRI: mri, openChatID: openChatID)
 //   mentions.markRead(chatID: id) // on open
 //
-// Threading: @MainActor (ObservableObject for the sidebar).
+// Threading: @MainActor (ObservableObject for the sidebar + NSApp dock).
 // History is NOT scanned: like UnreadStore (which accrues live-only),
 // threads mentioned before launch surface on the next mentioning
 // event — `noteThread(chatID:messages:ownName:)` is the explicit seam
 // for callers that already hold history (tests, future lanes).
+// The dock sink is injectable for tests (FakeDockBadge records labels).
 import Foundation
 
 /// Chat ids with an unreviewed owner mention (sidebar filter source).
@@ -25,13 +30,27 @@ public final class MentionStore: ObservableObject {
     /// Mentioning chat ids. Cleared ids are absent, never stored empty.
     @Published public private(set) var mentionedIDs: Set<String> = []
 
+    private let dock: any DockBadging
+
     /// Nonisolated so views can take a default `MentionStore()` in
     /// their (nonisolated) inits; all members stay main-actor-isolated.
-    public nonisolated init() {}
+    public nonisolated init(dock: (any DockBadging)? = nil) {
+        self.dock = dock ?? SystemDockBadge()
+    }
 
     /// Mentioning-thread count (the Mentions row badge).
     public var count: Int {
         mentionedIDs.count
+    }
+
+    /// Dock label for the current count: nil at zero (clears the tile).
+    public var badgeLabel: String? {
+        Self.badgeLabel(forCount: count)
+    }
+
+    /// Pure label: nil at zero, else the decimal count.
+    nonisolated public static func badgeLabel(forCount count: Int) -> String? {
+        count > 0 ? "\(count)" : nil
     }
 
     /// True when the chat is currently flagged.
@@ -58,7 +77,8 @@ public final class MentionStore: ObservableObject {
     }
 
     /// Flag one live event's chat when it mentions the owner. Own
-    /// messages, open-chat events, and non-mentions are no-ops.
+    /// messages, open-chat events, and non-mentions are no-ops (no dock
+    /// write); re-flagging an already-flagged chat is a no-op too.
     public func ingest(
         realtime message: RealtimeMessage, ownName: String?,
         ownerMRI: String?, openChatID: String?
@@ -67,32 +87,46 @@ public final class MentionStore: ObservableObject {
             message: message, ownName: ownName,
             ownerMRI: ownerMRI, openChatID: openChatID)
         else { return }
-        mentionedIDs.insert(message.chatID)
+        if mentionedIDs.insert(message.chatID).inserted {
+            syncDock()
+        }
     }
 
     /// Explicit history seam: flag `chatID` when any loaded message
-    /// mines an owner mention. Blank ids and blank owners are no-ops.
+    /// mines an owner mention. Blank ids and blank owners are no-ops
+    /// (no dock write).
     public func noteThread(chatID: String, messages: [ChatMessage], ownName: String?) {
         guard !chatID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         guard messages.contains(where: { $0.mentionsOwner(ownName: ownName) }) else { return }
-        mentionedIDs.insert(chatID)
+        if mentionedIDs.insert(chatID).inserted {
+            syncDock()
+        }
     }
 
     /// Opening a chat clears its flag (mentions now visible).
-    /// Unknown ids are a no-op.
+    /// Unknown ids are a no-op (no dock write).
     public func markRead(chatID: String) {
-        mentionedIDs.remove(chatID)
+        guard mentionedIDs.remove(chatID) != nil else { return }
+        syncDock()
     }
 
-    /// Clear every flag (sign-out). Empty is a no-op.
+    /// Clear every flag (sign-out). Empty is a no-op (no dock write).
     public func markAllRead() {
         guard !mentionedIDs.isEmpty else { return }
         mentionedIDs.removeAll()
+        syncDock()
     }
 
-    /// Demo/test seeding: adopt a canned flag set wholesale.
+    /// Demo/test seeding: adopt a canned flag set wholesale. Adopting
+    /// the current set is a no-op (no dock write).
     public func adopt(_ ids: Set<String>) {
+        guard mentionedIDs != ids else { return }
         mentionedIDs = ids
+        syncDock()
+    }
+
+    private func syncDock() {
+        dock.setBadge(badgeLabel)
     }
 
     /// Owner's own message? MRI preferred; display-name backup when the

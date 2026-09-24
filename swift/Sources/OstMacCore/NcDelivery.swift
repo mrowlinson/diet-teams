@@ -27,6 +27,8 @@ public enum NcDelivery {
 
     /// One banner to post: the decision mapped to NC content fields.
     /// `threadIdentifier` is always the chatID (group by thread).
+    /// Elevated mentions carry the OM_MENTION style (the caller flags
+    /// them; Notifier renders the category + critical sound + subtitle).
     public struct Banner: Sendable, Equatable {
         public let id: String // msgId (UN request identifier)
         public let chatID: String
@@ -35,14 +37,20 @@ public enum NcDelivery {
         public let threadIdentifier: String
         /// Play the banner sound. False = silent post (Settings → Sound).
         public let sound: Bool
+        public let isMention: Bool
+        /// Banner subtitle for elevated mentions ("Mentioned you" /
+        /// "Channel mention"); nil for plain messages.
+        public let subtitle: String?
 
-        public init(id: String, chatID: String, title: String, body: String, sound: Bool = true) {
+        public init(id: String, chatID: String, title: String, body: String, sound: Bool = true, isMention: Bool = false, subtitle: String? = nil) {
             self.id = id
             self.chatID = chatID
             self.title = title
             self.body = body
             threadIdentifier = chatID
             self.sound = sound
+            self.isMention = isMention
+            self.subtitle = subtitle
         }
     }
 
@@ -51,10 +59,12 @@ public enum NcDelivery {
     /// never shown); `screenLocked` redacts title+body to generics.
     /// `showPreview` false hides message text (synthesized meeting bodies
     /// are not message content, so they stay); `sound` false posts silent.
+    /// `isMention`/`subtitle` ride through for the OM_MENTION style.
     public static func makeBanner(
         for msg: RealtimeMessage, chatName: String,
         decision: ChatFilter.Decision, screenLocked: Bool,
-        showPreview: Bool = true, sound: Bool = true
+        showPreview: Bool = true, sound: Bool = true,
+        isMention: Bool = false, subtitle: String? = nil
     ) -> Banner? {
         guard case .notify(let reason) = decision else { return nil }
         let title: String
@@ -75,12 +85,12 @@ public enum NcDelivery {
             body = msg.text.isEmpty ? emptyBody : msg.text
         }
         if screenLocked {
-            return Banner(id: msg.msgId, chatID: msg.chatID, title: redactedTitle, body: redactedBody, sound: sound)
+            return Banner(id: msg.msgId, chatID: msg.chatID, title: redactedTitle, body: redactedBody, sound: sound, isMention: isMention, subtitle: subtitle)
         }
         if !showPreview, reason != ChatFilter.meetingStartingReason {
             body = MessageNotifications.hiddenPreviewBody
         }
-        return Banner(id: msg.msgId, chatID: msg.chatID, title: title, body: body, sound: sound)
+        return Banner(id: msg.msgId, chatID: msg.chatID, title: title, body: body, sound: sound, isMention: isMention, subtitle: subtitle)
     }
 
     /// Chat id from banner userInfo: accepts both backend keys (om-notif

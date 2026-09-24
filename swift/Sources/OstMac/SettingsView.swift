@@ -129,7 +129,7 @@ struct SettingsView: View {
                         }
                     }
                     .disabled(!quiet.windowEnabled)
-                    Text("Banners and sounds pause on schedule (overnight ranges like 22:00–07:00 wrap past midnight). Unread counts keep accruing; suppressed banners are counted in Diagnostics.")
+                    Text("Banners and sounds pause on schedule (overnight ranges like 22:00–07:00 wrap past midnight), mentions included. Unread pauses too while quiet — the Mentions row still tracks threads for review; suppressions are counted in Diagnostics.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -146,7 +146,7 @@ struct SettingsView: View {
                         if quiet.dndOn { quiet.enableDND(next) }
                     }
                     LabeledContent("Status", value: quiet.dndStatus())
-                    Text("Manual silence with auto-expiry. Like the schedule, it holds banners and sounds only — unread counts keep accruing.")
+                    Text("Manual silence with auto-expiry. Like the schedule, it holds banners and sounds — unread pauses too while on.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
