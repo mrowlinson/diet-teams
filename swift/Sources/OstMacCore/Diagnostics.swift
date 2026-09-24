@@ -131,4 +131,11 @@ public enum DiagnosticsFormat {
     public static func mentionAlertsLine(breakthroughs: Int, dnd: Int, quiet: Int) -> String {
         "\(breakthroughs) breakthroughs · \(dnd) DND · \(quiet) quiet"
     }
+
+    /// Notification counters (om-notif-live): rules notify/skip
+    /// decisions this session + the last decision reason. Diagnostics
+    /// window only — banners carry no counts.
+    public static func notifLine(posted: Int, skipped: Int, lastReason: String) -> String {
+        "\(posted) posted · \(skipped) skipped · last \(lastReason.isEmpty ? "—" : lastReason)"
+    }
 }

@@ -53,6 +53,9 @@
 // (scroll-state shots; consumed by ConversationView).
 // --show-edit / --show-delete open the edit sheet / delete confirm for
 // the first own bubble at launch (om-editdel shot hooks, demo offline).
+// --show-notif-live injects one canned trouter event through the real
+// live path (rules → banner) and logs the decision + delivered
+// readback (om-notif-live proof hook, demo offline; ignored live).
 // --auth-state <name> opens the Auth window with a canned state, never
 // touching core/network (names: signed-out, starting, code, polling,
 // browser, browser-working, signed-in, expired, refreshing,
@@ -70,6 +73,7 @@ import Foundation
 import OstMacChatList
 import OstMacCore
 import SwiftUI
+import UserNotifications
 
 @main
 struct OstMacAppMain: App {
@@ -265,6 +269,8 @@ final class AppState: ObservableObject {
     /// History shot launch (--show-history*): memory key store, so the
     /// shot never touches the real keychain (no SecurityAgent prompt).
     let showHistory: Bool
+    /// --show-notif-live: offline banner-proof injection (demo only).
+    let showNotifLive: Bool
     @Published var openChatID: String?
     @Published var signedIn: Bool?
     @Published var coreVersion = "?"
@@ -280,6 +286,11 @@ final class AppState: ObservableObject {
     @Published var mentionBreakthroughs = 0
     @Published var mentionDNDSuppressions = 0
     @Published var mentionQuietSuppressions = 0
+    /// Rules notify/skip decisions this session + last reason
+    /// (om-notif-live; Diagnostics window only).
+    @Published var notifPosted = 0
+    @Published var notifSkipped = 0
+    @Published var notifLastReason = ""
     @Published var showJump = false
     @AppStorage("selectedChatID") private var persistedSelection: String?
 
@@ -311,6 +322,7 @@ final class AppState: ObservableObject {
         showSidebarChurn = args.contains("--show-sidebarchurn")
         showHistoryError = args.contains("--show-history-error")
         showHistory = args.contains("--show-history") || showHistoryError
+        showNotifLive = args.contains("--show-notif-live")
         if showCatchUp {
             // Shot hook only: throwaway defaults (never the real ones),
             // canned summary, no network.
@@ -532,6 +544,8 @@ final class AppState: ObservableObject {
             feed.onRoster { [weak self] ev in
                 Task { @MainActor [weak self] in self?.handleRoster(ev) }
             }
+            // Single shared response delegate (routes both banner
+            // families; installed after Notifier.setup so it wins).
             notifs.attach()
             await notifs.requestAuthorization()
             feed.start()
@@ -548,6 +562,78 @@ final class AppState: ObservableObject {
             if openChatID != nil {
                 conv.send(text: say)
             }
+        }
+        if showNotifLive, isDemo {
+            Task { await runNotifLiveProof() }
+        }
+    }
+
+    /// Offline banner proof (om-notif-live --show-notif-live): one canned
+    /// trouter event through the REAL live path (handleRealtime: rules →
+    /// banner). Logs NOTIFLIVE lines (auth, injection, decision, posted
+    /// note, delivered readback, counters) to stdout and a temp JSONL
+    /// file the shot runner collects. Never touches core/network: demo
+    /// chats resolve the name, the fixture targets a non-open chat (no
+    /// receipts/presence calls), and the toggle is restored afterwards.
+    private func runNotifLiveProof() async {
+        setupNotifier()
+        notifs.attach()
+        let status = await Notifier.shared.authorizationStatus()
+        let statusName: String = switch status {
+        case .authorized: "authorized"
+        case .denied: "denied"
+        case .notDetermined: "notDetermined"
+        case .provisional: "provisional"
+        case .ephemeral: "ephemeral"
+        @unknown default: "unknown(\(status.rawValue))"
+        }
+        let wasEnabled = notifs.enabled
+        notifs.enabled = true
+        logNotifLive("auth status=\(statusName) toggle-was=\(wasEnabled ? "on" : "off")")
+        let msg = RealtimeMessage(
+            chatID: DemoData.avaID, msgId: "notiflive-1",
+            sender: "Ava Lindqvist",
+            text: "Are we still on for 10?",
+            time: "2026-09-24T05:00:00Z",
+            isEdit: false, messageType: "Text")
+        logNotifLive("inject chatID=\(msg.chatID) msgId=\(msg.msgId) sender=\(msg.sender)")
+        handleRealtime(msg)
+        logNotifLive("decision posted=\(notifPosted) skipped=\(notifSkipped) last=\(notifLastReason)")
+        // The center delivers async; poll briefly for the readback.
+        var found: UNNotification?
+        for _ in 0..<20 {
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            let all = await UNUserNotificationCenter.current().deliveredNotifications()
+            if let hit = all.first(where: { $0.request.identifier == msg.msgId }) {
+                found = hit
+                break
+            }
+        }
+        if let hit = found {
+            logNotifLive("delivered id=\(hit.request.identifier) title=\(hit.request.content.title) body=\(hit.request.content.body)")
+        } else {
+            let all = await UNUserNotificationCenter.current().deliveredNotifications()
+            logNotifLive("delivered MISS ids=\(all.map(\.request.identifier))")
+        }
+        logNotifLive("done posted=\(notifPosted) skipped=\(notifSkipped) last=\(notifLastReason)")
+        notifs.enabled = wasEnabled
+    }
+
+    /// One proof line: stdout (direct launches) + temp JSONL (open(1)
+    /// launches, where stdout goes to Console). Best-effort file append.
+    private func logNotifLive(_ line: String) {
+        print("NOTIFLIVE \(line)")
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("om-notif-live-proof.jsonl")
+        let entry = "{\"t\":\"\(Date().timeIntervalSince1970)\",\"line\":\"\(line.replacingOccurrences(of: "\"", with: "'"))\"}\n"
+        if let data = entry.data(using: .utf8),
+           let fh = try? FileHandle(forWritingTo: url)
+        {
+            try? fh.seekToEnd()
+            try? fh.write(contentsOf: data)
+            try? fh.close()
+        } else if let data = entry.data(using: .utf8) {
+            try? data.write(to: url)
         }
     }
 
@@ -762,6 +848,14 @@ final class AppState: ObservableObject {
         let chatName = chats.chats.first(where: { $0.id == msg.chatID })?.name ?? ""
         let decision = rulesDecision(for: msg, chatName: chatName)
         noteAlertStats(decision: decision)
+        switch decision {
+        case .notify(let reason):
+            notifPosted += 1
+            notifLastReason = reason
+        case .skip(let reason):
+            notifSkipped += 1
+            notifLastReason = reason
+        }
         unread.ingest(decision: decision, chatID: msg.chatID, openChatID: openChatID)
         mentions.ingest(
             realtime: msg, ownName: conv.ownDisplayName,
@@ -893,7 +987,12 @@ final class AppState: ObservableObject {
             sound: banner.sound, isMention: banner.isMention, subtitle: banner.subtitle)
     }
 
-    /// Wire the notifier: Reply posts through core send, Open chat jumps.
+    /// Wire the notifier: categories + auth for rules-posted banners.
+    /// The shared delegate (notifs.attach, installed after this) owns
+    /// response routing via .omNotifOpenChat/.omNotifReply; these
+    /// closures still carry the real send/jump (and select the
+    /// Reply-bearing category) so banners stay actionable if install
+    /// order ever flips Notifier's own delegate back on.
     /// Live mode only (demo never starts the feed, so never notifies).
     private func setupNotifier() {
         Notifier.shared.setup()

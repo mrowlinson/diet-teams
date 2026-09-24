@@ -50,6 +50,12 @@ struct DiagnosticsView: View {
                     breakthroughs: state.mentionBreakthroughs,
                     dnd: state.mentionDNDSuppressions,
                     quietSuppressions: state.mentionQuietSuppressions)
+                LabeledContent(
+                    "Notifications",
+                    value: DiagnosticsFormat.notifLine(
+                        posted: state.notifPosted, skipped: state.notifSkipped,
+                        lastReason: state.notifLastReason))
+                    .textSelection(.enabled)
                 if let err = state.feedError {
                     LabeledContent("Last error") {
                         Text(err)

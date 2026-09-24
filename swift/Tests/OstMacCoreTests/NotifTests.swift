@@ -123,4 +123,84 @@ final class NotifTests: XCTestCase {
                 actionID: UNNotificationDefaultActionIdentifier, userInfo: [:]),
             .none)
     }
+
+    func testRulesBannerClickRoutesOpen() {
+        // Rules-posted banners carry OMChatID (Notifier schema); the
+        // shared delegate must still open the chat.
+        let r = MessageNotifications.dispatch(
+            actionID: UNNotificationDefaultActionIdentifier,
+            userInfo: [OmReplyInfo.chatIDKey: "19:abc@thread.v2"])
+        XCTAssertEqual(r, .open(chatID: "19:abc@thread.v2"))
+    }
+
+    func testRulesBannerOpenActionRoutesOpen() {
+        let exp = expectation(forNotification: .omNotifOpenChat, object: nil) {
+            $0.userInfo?["chatID"] as? String == "19:abc@thread.v2"
+        }
+        let r = MessageNotifications.dispatch(
+            actionID: OmReplyInfo.openActionID,
+            userInfo: [OmReplyInfo.chatIDKey: "19:abc@thread.v2"])
+        XCTAssertEqual(r, .open(chatID: "19:abc@thread.v2"))
+        wait(for: [exp], timeout: 1)
+    }
+
+    func testRulesBannerReplyRoutes() {
+        let exp = expectation(forNotification: .omNotifReply, object: nil) {
+            $0.userInfo?["chatID"] as? String == "19:x"
+                && $0.userInfo?["text"] as? String == "yo"
+        }
+        let r = MessageNotifications.dispatch(
+            actionID: OmReplyInfo.replyActionID,
+            userInfo: [OmReplyInfo.chatIDKey: "19:x"], replyText: "yo")
+        XCTAssertEqual(r, .reply(chatID: "19:x", text: "yo"))
+        wait(for: [exp], timeout: 1)
+    }
+
+    func testEmptyOMChatIDIsNone() {
+        XCTAssertEqual(
+            MessageNotifications.dispatch(
+                actionID: UNNotificationDefaultActionIdentifier,
+                userInfo: [OmReplyInfo.chatIDKey: ""]),
+            .none)
+    }
+
+    func testMakeRulesNoteGroup() {
+        let note = MessageNotifications.makeRulesNote(
+            for: realtime(), chatName: "Design Sync", reason: "chat-message")
+        XCTAssertEqual(note.id, "m1")
+        XCTAssertEqual(note.chatID, "19:abc@thread.v2")
+        XCTAssertEqual(note.title, "Priya Nair in Design Sync")
+        XCTAssertEqual(note.body, "hello")
+    }
+
+    func testMakeRulesNoteBareChat() {
+        let note = MessageNotifications.makeRulesNote(
+            for: realtime(), chatName: "", reason: "chat-message")
+        XCTAssertEqual(note.title, "Priya Nair")
+        XCTAssertEqual(note.body, "hello")
+    }
+
+    func testMakeRulesNoteDirectChatCollapses() {
+        // 1:1 chat: chat name is the sender — never "X in X".
+        let note = MessageNotifications.makeRulesNote(
+            for: realtime(), chatName: "Priya Nair", reason: "chat-message")
+        XCTAssertEqual(note.title, "Priya Nair")
+        XCTAssertEqual(note.body, "hello")
+    }
+
+    func testMakeRulesNoteMeetingStart() {
+        let note = MessageNotifications.makeRulesNote(
+            for: realtime(text: "Design SyncPlay"),
+            chatName: "Design Sync", reason: ChatFilter.meetingStartingReason)
+        XCTAssertEqual(note.title, "Design Sync")
+        XCTAssertEqual(note.body, "Meeting starting: Design Sync")
+    }
+
+    func testMakeRulesNoteMeetingStartUnknownChat() {
+        let note = MessageNotifications.makeRulesNote(
+            for: realtime(), chatName: "",
+            reason: ChatFilter.meetingStartingReason)
+        XCTAssertEqual(note.title, "Teams meeting")
+        XCTAssertEqual(note.body, "Meeting starting")
+    }
 }

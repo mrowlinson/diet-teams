@@ -1,9 +1,13 @@
 // Notifications.swift — om-notif: macOS user notifications for realtime chat.
 //
-// Pipeline: the pure gate (edits, own messages, open chat) decides,
-// and the backend posts through UNUserNotificationCenter. Click returns
-// to the chat via NotificationCenter (.omNotifOpenChat); the message
-// category carries an inline reply action (.omNotifReply → core send).
+// Pipeline: AppState.handleRealtime runs every live event through the
+// rules engine (ChatFilter) and posts .notify decisions via Notifier;
+// this type owns the banner toggle + authorization + the single shared
+// response delegate. Click returns to the chat via NotificationCenter
+// (.omNotifOpenChat); the message category carries an inline reply
+// action (.omNotifReply → core send). The handle() gate below (edits,
+// own messages, open chat) is the injectable-backend path tests use;
+// live posts go through the NcDelivery banner + Notifier instead.
 // Routing, thread grouping, and lock-screen redaction are shared with
 // the rules path through NcDelivery (same route map, both userInfo keys).
 //
@@ -286,8 +290,11 @@ public final class MessageNotifications: ObservableObject {
     }
 
     /// Map a center response to a route + Foundation broadcast.
-    /// Returns the route (tests assert it directly). Routes through the
-    /// shared map, so both backend userInfo keys open/reply.
+    /// Returns the route (tests assert it directly). Routes both banner
+    /// families the app posts: MessageNotifications banners (`chatID`)
+    /// and rules-posted Notifier banners (`OMChatID`) — the app hosts
+    /// this delegate alone, so both must resolve here or clicks die.
+    /// Routes through the shared NcDelivery map.
     @discardableResult
     nonisolated public static func dispatch(
         actionID: String, userInfo: [AnyHashable: Any], replyText: String? = nil
@@ -305,6 +312,44 @@ public final class MessageNotifications: ObservableObject {
         case .none:
             return .none
         }
+    }
+
+    /// Rules-posted banner content. Pure (tests assert it directly).
+    /// Meeting-start reasons synthesize "Meeting starting: <chat>" (raw
+    /// beacons/blobs never shown); otherwise "sender in chat" (sender
+    /// alone when the chat has no better name; 1:1 chats collapse "X in
+    /// X" to "X"). The live banner path maps titles/bodies via NcDelivery
+    /// (plus preview/sound/lock/elevation) but does NOT collapse 1:1
+    /// "X in X" yet — open follow-up, see the waveF merge report.
+    nonisolated public static func makeRulesNote(
+        for msg: RealtimeMessage, chatName: String, reason: String
+    ) -> PostedNotification {
+        let title: String
+        let body: String
+        if reason == ChatFilter.meetingStartingReason {
+            if chatName.isEmpty || chatName == msg.chatID {
+                title = "Teams meeting"
+                body = "Meeting starting"
+            } else {
+                title = chatName
+                body = "Meeting starting: \(chatName)"
+            }
+        } else if chatName.isEmpty || chatName == msg.chatID {
+            title = msg.sender.isEmpty ? "Teams message" : msg.sender
+            body = msg.text
+        } else if msg.sender.isEmpty {
+            title = chatName
+            body = msg.text
+        } else if chatName == msg.sender {
+            // 1:1 chat: the chat name IS the sender — no "X in X".
+            title = msg.sender
+            body = msg.text
+        } else {
+            title = "\(msg.sender) in \(chatName)"
+            body = msg.text
+        }
+        return PostedNotification(
+            id: msg.msgId, chatID: msg.chatID, title: title, body: body)
     }
 }
 

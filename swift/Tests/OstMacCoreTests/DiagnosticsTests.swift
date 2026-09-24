@@ -58,4 +58,14 @@ final class DiagnosticsTests: XCTestCase {
         XCTAssertEqual(
             DiagnosticsFormat.feedWord(state: .stopped), "Realtime off")
     }
+
+    func testNotifLine() {
+        XCTAssertEqual(
+            DiagnosticsFormat.notifLine(posted: 0, skipped: 0, lastReason: ""),
+            "0 posted · 0 skipped · last —")
+        XCTAssertEqual(
+            DiagnosticsFormat.notifLine(
+                posted: 3, skipped: 1, lastReason: "chat-message"),
+            "3 posted · 1 skipped · last chat-message")
+    }
 }
