@@ -34,6 +34,9 @@ public final class SharedFilesStore: ObservableObject {
     @Published public private(set) var uploading = false
     @Published public private(set) var savingIDs: Set<String> = []
     @Published public private(set) var savedPath: String?
+    /// Drop queue (om-iu-dropquick): multi-file drops upload one at a
+    /// time, in drop order; the picker path enqueues a single path.
+    private var uploadQueue: [String] = []
     public private(set) var chatID: String?
     public private(set) var isDemo = false
 
@@ -104,16 +107,37 @@ public final class SharedFilesStore: ObservableObject {
     /// Upload a local file (<4 MB core limit) and prepend the result.
     /// Demo mode fabricates the row locally.
     public func upload(path: String) {
-        guard !uploading, let id = chatID else { return }
+        upload(paths: [path])
+    }
+
+    /// Upload local files in order (drop path; the picker enqueues one).
+    /// Uploads run one at a time; failures mark the tab error but don't
+    /// stop later files. Demo mode fabricates every row locally.
+    public func upload(paths: [String]) {
+        guard !paths.isEmpty, chatID != nil else { return }
         if isDemo {
-            let name = (path as NSString).lastPathComponent
-            files.insert(SharedFile(id: "demo-up-\(files.count + 1)", name: name, size: 1024), at: 0)
+            for path in paths {
+                let name = (path as NSString).lastPathComponent
+                files.insert(SharedFile(id: "demo-up-\(files.count + 1)", name: name, size: 1024), at: 0)
+            }
             state = .loaded
             return
         }
+        uploadQueue.append(contentsOf: paths)
+        drainUploadQueue()
+    }
+
+    /// Upload the head of the queue, then the rest in order. Re-entrant:
+    /// drops arriving mid-upload wait their turn instead of dropping.
+    private func drainUploadQueue() {
+        guard !uploading, let id = chatID, !uploadQueue.isEmpty else { return }
         uploading = true
+        let path = uploadQueue.removeFirst()
         Task {
-            defer { uploading = false }
+            defer {
+                uploading = false
+                drainUploadQueue()
+            }
             let fetcher = uploadFetcher
             do {
                 let resp = try await Task.detached { try fetcher(id, path) }.value
@@ -186,6 +210,9 @@ public final class SharedFilesStore: ObservableObject {
 /// Shared-tab file list: rows with Open + Save, Upload + Refresh toolbar.
 public struct SharedFilesView: View {
     @ObservedObject public var store: SharedFilesStore
+    /// Drop highlight (om-iu-dropquick): accent outline while a file
+    /// drop hovers the tab.
+    @State private var dropTargeted = false
 
     public init(store: SharedFilesStore) {
         self.store = store
@@ -197,6 +224,12 @@ public struct SharedFilesView: View {
             Divider()
             content
         }
+        .onDrop(of: FileDrop.dropTypes, isTargeted: $dropTargeted) { providers in
+            guard store.chatID != nil else { return false }
+            FileDrop.resolve(providers: providers) { store.upload(paths: $0) }
+            return true
+        }
+        .dropHighlight(active: dropTargeted)
     }
 
     private var toolbar: some View {
@@ -210,6 +243,13 @@ public struct SharedFilesView: View {
                     .foregroundStyle(.green)
                     .lineLimit(1)
                     .textSelection(.enabled)
+                if QuickLookPreview.canPreview(path: saved) {
+                    Button("Preview") {
+                        QuickLookPreview.shared.preview(paths: [saved])
+                    }
+                    .font(.caption)
+                    .help("Preview the saved file (Quick Look)")
+                }
             }
             Spacer()
             if store.uploading { ProgressView().controlSize(.small) }
