@@ -215,6 +215,24 @@ needing maintainer buy-in. Minor PRs stand alone; majors are separate PRs.
     Unit tests: calendar parse/defaults, query shape, date spot checks,
     join-URL matrix, lobby transitions.
 
+25. [minor] `src/api/chat.rs` + `src/api/mod.rs` —
+    **read receipts: consumption-horizon send + peer positions
+    (om-receipts lane)**. `ReadReceipt` (user key + last-read message id
+    + raw horizon); pure `consumptionhorizon_url` (`PUT
+    `.../v1/users/ME/conversations/{id}/properties?name=consumptionhorizon`)
+    / `consumptionhorizons_url` (`GET
+    `.../v1/threads/{id}/consumptionhorizons`) / `consumptionhorizon_value`
+    (`"<now_ms>;<now_ms>;<message_id>"`) / `consumptionhorizon_body` /
+    `receipt_message_id` (text after the last `;`, blank → `None`)
+    builders; `mark_read_with_client` (PUT, empty ids rejected
+    pre-network) + `read_receipts_data` (GET, read-only).
+    `parse_consumptionhorizons` is tolerant: missing/empty lists yield
+    `vec![]`, unparseable entries are dropped, bare-string entries use
+    `""` as the user key, user via `mri` → `id` → `user` → display name.
+    Re-exported in `mod.rs`; no CLI (embedder-driven). Unit tests:
+    endpoint/body shapes, id split incl. blanks, tolerant parse incl.
+    missing/empty lists.
+
 ## Upstream PRs (2026-09-22, base 0892144; main red on sdp E0308 until #5)
 
 Minor (standalone modulo #5-first; merge in any order after):
@@ -245,3 +263,9 @@ Minor (stacked: merge after the noted base; only each PR's top commit is new):
 Skipped: ledger 17 reactions (wire shape NOT live-verified — confirm with
 `react` against a signed-in box before upstreaming); ledger 13
 [LOCAL-ONLY, do not upstream].
+
+## Upstream PRs, wave 3 (2026-09-24, base 0892144)
+
+Minor (stacked: merge after the noted base; only the PR's top commit is new):
+- (p) read receipts (ledger 24, after #19 — needs `chat_put`;
+  #19 after #6): https://github.com/eisbaw/ost/pull/20
