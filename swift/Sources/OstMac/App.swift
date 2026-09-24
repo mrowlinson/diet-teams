@@ -207,7 +207,7 @@ private struct OstMacCommands: Commands {
         CommandGroup(after: .appInfo) {
             Button("Sign In…") { openWindow(id: AppIdentity.authWindowID) }
                 .keyboardShortcut("I", modifiers: [.command, .shift])
-            Divider()
+            Divider() // native menu separator; keep.
         }
         CommandMenu("Call") {
             Button("In-Call Window") { openWindow(id: AppIdentity.callWindowID) }
