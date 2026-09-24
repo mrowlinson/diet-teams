@@ -111,6 +111,10 @@ pub struct SharedFile {
     pub modified: Option<String>,
     /// Display name of the chat sender (chat path only; None for channels).
     pub sender: Option<String>,
+    /// True when the driveItem is a folder (has the `folder` facet).
+    /// Folders have no size/mime/download_url; Swift drills in via the
+    /// children endpoint (drive_id + id). Always present in core JSON.
+    pub is_folder: bool,
     /// File-attachment GUID mined from the driveItem eTag (om-inline-docs):
     /// matches the `<attachment id>` in the message that shared this file,
     /// so embedders render inline doc rows in the bubble. None when the
@@ -121,6 +125,7 @@ pub struct SharedFile {
 
 fn shared_from_item(item: DriveItem, sender: Option<String>) -> SharedFile {
     let attachment_id = item.etag.as_deref().and_then(guid_from_etag);
+    let is_folder = item.folder.is_some();
     SharedFile {
         id: item.id,
         name: item.name.unwrap_or_else(|| "[unnamed]".to_string()),
@@ -132,8 +137,15 @@ fn shared_from_item(item: DriveItem, sender: Option<String>) -> SharedFile {
         created: item.created,
         modified: item.modified,
         sender,
+        is_folder,
         attachment_id,
     }
+}
+
+/// True when a raw driveItem survives the folders filter: files always
+/// pass; folders pass only when `include_folders` is set.
+fn keep_item(item: &DriveItem, include_folders: bool) -> bool {
+    include_folders || item.folder.is_none()
 }
 
 /// Encode a SharePoint sharing URL as a Graph shares id (`u!` + base64url).
@@ -208,21 +220,40 @@ pub fn is_channel_id(id: &str) -> bool {
 /// + shares resolution); each falls back to the other path when its own
 /// fails (unknown id shapes still resolve). Folders are skipped; only
 /// file driveItems are returned. Deduplicated by item id.
+/// Default shape (stable): same as `_opts` with `include_folders=false`.
 pub async fn list_chat_files_data(
     client: &TeamsClient,
     chat_id: &str,
     limit: usize,
 ) -> Result<Vec<SharedFile>> {
+    list_chat_files_data_opts(client, chat_id, limit, false).await
+}
+
+/// List shared files, optionally including folders (om-i5-folders).
+/// `include_folders=true` keeps folder driveItems in both list paths;
+/// each carries `is_folder` so callers can drill in via
+/// [`list_folder_children_data`]. Default callers use
+/// [`list_chat_files_data`] (folders filtered, shape unchanged).
+pub async fn list_chat_files_data_opts(
+    client: &TeamsClient,
+    chat_id: &str,
+    limit: usize,
+    include_folders: bool,
+) -> Result<Vec<SharedFile>> {
     if is_channel_id(chat_id) {
-        if let Ok(files) = list_via_channel_folder(client, chat_id, limit).await {
+        if let Ok(files) =
+            list_via_channel_folder(client, chat_id, limit, include_folders).await
+        {
             return Ok(files);
         }
-        list_via_chat_messages(client, chat_id, limit).await
+        list_via_chat_messages(client, chat_id, limit, include_folders).await
     } else {
-        if let Ok(files) = list_via_chat_messages(client, chat_id, limit).await {
+        if let Ok(files) =
+            list_via_chat_messages(client, chat_id, limit, include_folders).await
+        {
             return Ok(files);
         }
-        list_via_channel_folder(client, chat_id, limit).await
+        list_via_channel_folder(client, chat_id, limit, include_folders).await
     }
 }
 
@@ -230,6 +261,7 @@ async fn list_via_chat_messages(
     client: &TeamsClient,
     chat_id: &str,
     limit: usize,
+    include_folders: bool,
 ) -> Result<Vec<SharedFile>> {
     let path = format!("/me/chats/{}/messages?$top={}", chat_id, limit.max(1));
     let resp = client.graph_get(&path).await?;
@@ -264,6 +296,9 @@ async fn list_via_chat_messages(
                     continue;
                 }
             };
+            if !keep_item(&item, include_folders) {
+                continue;
+            }
             if !seen.insert(item.id.clone()) {
                 continue;
             }
@@ -284,6 +319,7 @@ async fn list_via_channel_folder(
     client: &TeamsClient,
     channel_id: &str,
     limit: usize,
+    include_folders: bool,
 ) -> Result<Vec<SharedFile>> {
     let team_id = find_team_for_channel(client, channel_id).await?;
     let fpath = format!("/teams/{}/channels/{}/filesFolder", team_id, channel_id);
@@ -311,7 +347,42 @@ async fn list_via_channel_folder(
     Ok(children
         .value
         .into_iter()
-        .filter(|it| it.folder.is_none())
+        .filter(|it| keep_item(it, include_folders))
+        .map(|it| shared_from_item(it, None))
+        .collect())
+}
+
+// -- Folder children (om-i5-folders) --
+
+/// Graph path for one folder's children (`drive_id` + folder `item_id`).
+pub fn folder_children_path(drive_id: &str, item_id: &str, limit: usize) -> String {
+    format!(
+        "/drives/{}/items/{}/children?$top={}",
+        drive_id,
+        item_id,
+        limit.max(1)
+    )
+}
+
+/// List one folder's children by drive+item id. Returns files AND
+/// subfolders (no filtering: browsing needs folders visible); each
+/// item carries `is_folder`, and folders drill in via this same call
+/// with their own id. Ids come from any [`SharedFile`] (`drive_id`+`id`).
+pub async fn list_folder_children_data(
+    client: &TeamsClient,
+    drive_id: &str,
+    item_id: &str,
+    limit: usize,
+) -> Result<Vec<SharedFile>> {
+    let path = folder_children_path(drive_id, item_id, limit);
+    let resp = client.graph_get(&path).await?;
+    let children: DriveChildrenResponse = resp
+        .json()
+        .await
+        .context("Failed to parse drive children response")?;
+    Ok(children
+        .value
+        .into_iter()
         .map(|it| shared_from_item(it, None))
         .collect())
 }
@@ -338,7 +409,11 @@ pub async fn list_files(chat_id: &str, limit: usize) -> Result<()> {
         return Ok(());
     }
     for f in &files {
-        println!("{}", f.name);
+        if f.is_folder {
+            println!("{}/", f.name);
+        } else {
+            println!("{}", f.name);
+        }
         println!("  ID:   {}", f.id);
         println!("  Size: {} bytes", f.size);
         if let Some(ref m) = f.mime {
@@ -577,6 +652,66 @@ mod tests {
         assert_eq!(files[0].mime.as_deref(), Some("application/pdf"));
         assert_eq!(files[0].drive_id.as_deref(), Some("D1"));
         assert_eq!(files[0].download_url.as_deref(), Some("https://d/a"));
+    }
+
+    #[test]
+    fn keep_item_filters_folders_by_default() {
+        let file: DriveItem =
+            serde_json::from_str(r#"{"id":"f1","name":"a.pdf","file":{}}"#).unwrap();
+        let folder: DriveItem =
+            serde_json::from_str(r#"{"id":"d1","name":"sub","folder":{}}"#).unwrap();
+        assert!(keep_item(&file, false));
+        assert!(keep_item(&file, true));
+        assert!(!keep_item(&folder, false));
+        assert!(keep_item(&folder, true));
+    }
+
+    #[test]
+    fn shared_from_item_marks_folder_facet() {
+        let folder: DriveItem =
+            serde_json::from_str(r#"{"id":"d1","name":"sub","folder":{"childCount":3}}"#)
+                .unwrap();
+        let f = shared_from_item(folder, None);
+        assert!(f.is_folder);
+        assert_eq!(f.name, "sub");
+        assert_eq!(f.size, 0);
+        assert_eq!(f.mime, None);
+        let file: DriveItem =
+            serde_json::from_str(r#"{"id":"f1","name":"a.pdf","file":{"mimeType":"application/pdf"}}"#)
+                .unwrap();
+        assert!(!shared_from_item(file, None).is_folder);
+    }
+
+    #[test]
+    fn folder_children_path_shape() {
+        assert_eq!(
+            folder_children_path("D1", "root", 20),
+            "/drives/D1/items/root/children?$top=20"
+        );
+        assert_eq!(
+            folder_children_path("D1", "abc", 0),
+            "/drives/D1/items/abc/children?$top=1"
+        );
+    }
+
+    #[test]
+    fn children_parse_keeps_folders_and_files() {
+        // Children endpoint never filters: subfolders stay visible.
+        let body: DriveChildrenResponse = serde_json::from_str(
+            r#"{"value":[
+                {"id":"dir1","name":"sub","folder":{},"parentReference":{"driveId":"D1"}},
+                {"id":"f1","name":"a.pdf","size":12,"file":{"mimeType":"application/pdf"},
+                 "parentReference":{"driveId":"D1"}}
+            ]}"#,
+        )
+        .unwrap();
+        let files: Vec<SharedFile> =
+            body.value.into_iter().map(|it| shared_from_item(it, None)).collect();
+        assert_eq!(files.len(), 2);
+        assert!(files[0].is_folder);
+        assert_eq!(files[0].drive_id.as_deref(), Some("D1"));
+        assert!(!files[1].is_folder);
+        assert_eq!(files[1].size, 12);
     }
 
     #[test]

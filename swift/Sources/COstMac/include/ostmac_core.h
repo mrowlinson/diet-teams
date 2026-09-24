@@ -122,6 +122,16 @@ char *ostmac_media_fetch(const char *url);
 // Shared files JSON for one chat/channel (requires sign-in). Caller frees.
 char *ostmac_files(const char *chat_id, int limit);
 
+// Shared files, optionally including folders (om-i5-folders):
+// include_folders nonzero keeps folder driveItems (each is_folder).
+// Same {ok, chat_id, files} envelope. Caller frees.
+char *ostmac_files_opts(const char *chat_id, int limit, int include_folders);
+
+// One folder's children by drive+item id (requires sign-in): files AND
+// subfolders, unfiltered. Returns {ok, drive_id, item_id, files}.
+// Caller frees.
+char *ostmac_files_children(const char *drive_id, const char *item_id, int limit);
+
 // Upload a local file (<4 MB) to a chat/channel + post reference message.
 // Returns {ok, file}. Caller frees.
 char *ostmac_files_upload(const char *chat_id, const char *path);
