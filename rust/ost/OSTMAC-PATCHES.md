@@ -408,6 +408,79 @@ needing maintainer buy-in. Minor PRs stand alone; majors are separate PRs.
     yields whatever is queued) and `len()` for backlog reporting. TUI
     untouched.
 
+40. [major] `src/api/search.rs` (new) + `src/api/mod.rs` + `src/main.rs` —
+    **Teams message search (om-ja-search lane)**. New
+    `search_messages_data` (Graph `POST /search/query`, `entityTypes
+    ["chatMessage"]`, `from`/`size` paging) returning `SearchPage`
+    (`hits`, `total?`, `more`); `SearchHitInfo` (`message_id`, `chat_id`,
+    `team_id?`, `channel_id?`, `sender`, `timestamp`, `preview`,
+    `subject?`). `chat_id` = chat thread, or channel id for channel hits
+    (those carry no `chatId`). Pure `search_body` /
+    `parse_search_response` / `clamp_size` (1..=25, `SEARCH_MAX_SIZE`) /
+    `next_from` pinned by unit tests; blank queries bail pre-network.
+    Re-exported in `src/api/mod.rs`. CLI `teams-cli search <query>
+    [--limit]`. No scope change (existing Graph token). NOT live-verified
+    (stored Graph token expired; wire shape per MS chat-message search
+    docs) — confirm with `search` on a signed-in box before upstreaming.
+    TUI untouched.
+
+41. [major] `src/api/filesearch.rs` (new) + `src/api/client.rs` +
+    `src/api/mod.rs` + `src/main.rs` — **file + people search
+    (om-jb-filesearch lane)**. New `search_files_data` (OneDrive `GET
+    /me/drive/root/search(q='{q}')`, parsed into `SharedFile` rows —
+    search projects no eTag GUID, so no bubble-match key) and
+    `search_people_data` (Graph `GET /users?$search="displayName:{q}"`,
+    parsed into `TeamMemberInfo` rows with empty roles, `user_id` = user
+    id, email = mail else UPN). New `TeamsClient::graph_get_consistent`
+    (GET with `ConsistencyLevel: eventual`; `$search` 400s without it).
+    Pure `drive_search_path` (quote-doubling + URL-encode) /
+    `people_search_path` (quotes dropped + URL-encode) /
+    `parse_drive_search_response` / `parse_people_search_response` /
+    `clamp_limit` (1..=25, `FIND_MAX_LIMIT`) pinned by unit tests; blank
+    queries bail pre-network; id-less items skipped. Re-exported in
+    `src/api/mod.rs`. CLI `teams-cli file-search` / `people-search
+    <query> [--limit]`. No scope change. NOT live-verified (stored Graph
+    token expired; shapes per MS driveitem-search + `$search` docs) —
+    confirm on a signed-in box before upstreaming. TUI untouched.
+
+42. [minor] `src/api/teams.rs` + `src/api/mod.rs` — **channel message
+    reactions, Graph groundwork (om-je-parity lane)**. Pure builders
+    `channel_set/unset_reaction_path` (+ reply variants) pinning the v1.0
+    docs shapes (`/teams/{id}/channels/{id}/messages/{id}/[replies/{r}/]
+    (set|unset)Reaction`), `channel_react_body` (`{"reactionType": emoji}`,
+    unicode per docs), `set/unset_channel_reaction_data` (id guards +
+    picker-emoji validation reused from `REACTION_EMOJI` before any
+    network; 204, no body). Unit tests: docs path shapes, unicode body.
+    NOT live-verified (refresh token expired when this landed): the
+    unicode-vs-named `reactionType` form, the `ChannelMessage.Send` grant
+    on the first-party client id, and the Graph-vs-chat-service message
+    id mapping need a signed-in probe before any core/Swift caller is
+    wired. Receipts stay on HOLD: Graph v1.0 exposes no channel
+    read-receipt API and the chat-service consumptionhorizons call 403s
+    on channel threads (H1 baseline). No behavior change: new fns only,
+    no callers yet.
+
+43. [minor] `src/api/teams.rs` + `src/api/client.rs` + `src/api/mod.rs` —
+    **team CREATE: async Graph POST /teams + operation poll
+    (om-jf-teamcreate lane)**. New `create_team_data` (Graph `POST /teams`
+    with `teamsTemplates('standard')` bind + `displayName` + optional
+    `description` + caller as owner member via `/me`; 202 +
+    `Content-Location` polled every 3s until the `teamsAsyncOperation`
+    reports `succeeded`/`failed` or 120s elapse; non-202 answers parse as
+    a sync team fallback). New `TeamsClient::graph_get_url`
+    (absolute-URL GET, same Graph bearer). Returns `TeamCreateResult`
+    (team + `polls` + `elapsed_ms`); created team refetched with channels
+    (channel errors degrade to empty, same as `list_teams_data`). Pure
+    `create_team_path` / `create_team_body` / `operation_succeeded` /
+    `operation_failed` / `operation_team_id` (`targetResourceId` first,
+    else `targetResourceLocation` `/teams('guid')` or `/teams/guid`) /
+    `operation_url` (absolute passes through, relative expands under
+    Graph v1.0) pinned by unit tests; empty names rejected before
+    network. Re-exported in `src/api/mod.rs`. No CLI commands added (FFI
+    lane). NOT verified live against the server in this lane (would create
+    a real team; wire shape per Graph create-team docs). TUI untouched
+    (still builds).
+
 ## Upstream PRs (2026-09-22, base 0892144; main red on sdp E0308 until #5)
 
 Minor (standalone modulo #5-first; merge in any order after):
