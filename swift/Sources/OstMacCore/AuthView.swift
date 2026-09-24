@@ -64,7 +64,7 @@ public struct AuthView: View {
     private var signedOut: some View {
         VStack(spacing: DietSpace.sm) {
             Image(systemName: "person.crop.circle.badge.xmark")
-                .font(.system(size: DietSize.avatarLG))
+                .font(.system(size: DietSize.avatarLG / 2))
                 .foregroundStyle(DietColor.textSecondaryColor)
             Text("Sign in to Teams")
                 .font(DietType.title2).bold()
@@ -140,7 +140,7 @@ public struct AuthView: View {
     private var signedIn: some View {
         VStack(spacing: DietSpace.sm) {
             Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: DietSize.avatarLG))
+                .font(.system(size: DietSize.avatarLG / 2))
                 .foregroundStyle(Color(nsColor: DietColor.success))
             Text("Signed in")
                 .font(DietType.title2).bold()
@@ -157,7 +157,7 @@ public struct AuthView: View {
     private func expired(message: String?) -> some View {
         VStack(spacing: DietSpace.sm) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: DietSize.avatarLG))
+                .font(.system(size: DietSize.avatarLG / 2))
                 .foregroundStyle(Color(nsColor: DietColor.warning))
             Text("Session expired")
                 .font(DietType.title2).bold()
@@ -185,7 +185,7 @@ public struct AuthView: View {
     private func errorView(message: String) -> some View {
         VStack(spacing: DietSpace.sm) {
             Image(systemName: "xmark.circle.fill")
-                .font(.system(size: DietSize.avatarLG))
+                .font(.system(size: DietSize.avatarLG / 2))
                 .foregroundStyle(Color(nsColor: DietColor.danger))
             Text("Something went wrong")
                 .font(DietType.title2).bold()
