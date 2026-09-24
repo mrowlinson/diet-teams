@@ -13,6 +13,7 @@
 //   let docs = InlineDocs.docs(for: message, files: sharedFiles)
 //   InlineDocRows(docs: docs, onOpen: { shared.open($0.file) })
 import AppKit
+import DietDesign
 import Foundation
 import SwiftUI
 
@@ -178,7 +179,7 @@ public struct InlineDocRows: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: DietSpace.sm) {
             ForEach(docs) { doc in
                 InlineDocRow(doc: doc, onOpen: { onOpen(doc) })
             }
@@ -191,14 +192,14 @@ struct InlineDocRow: View {
     var onOpen: () -> Void = {}
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: DietSpace.sm) {
             InlineDocIcon(fileName: doc.name, fallback: doc.iconName)
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: DietSpace.xxs) {
                 Text(doc.name)
                     .font(.body)
                     .lineLimit(1)
                     .textSelection(.enabled)
-                HStack(spacing: 6) {
+                HStack(spacing: DietSpace.xs) {
                     Text(doc.sizeLabel)
                         .font(.caption).monospaced()
                         .foregroundStyle(.secondary)
@@ -210,7 +211,7 @@ struct InlineDocRow: View {
                     }
                 }
             }
-            Spacer(minLength: 8)
+            Spacer(minLength: DietSpace.sm)
             if InlineDocs.openTarget(for: doc) != nil {
                 Button("Open", action: onOpen)
                     .buttonStyle(.link)
@@ -218,9 +219,9 @@ struct InlineDocRow: View {
                     .help("Open in SharePoint (browser)")
             }
         }
-        .padding(8)
+        .padding(DietSpace.sm)
         .background(Color.gray.opacity(0.12))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .clipShape(RoundedRectangle(cornerRadius: DietRadius.control))
         .accessibilityLabel("\(doc.name), \(doc.sizeLabel)")
     }
 }

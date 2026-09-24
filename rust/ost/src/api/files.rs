@@ -1275,7 +1275,7 @@ mod tests {
         let body: VersionsResponse = serde_json::from_str(
             r#"{"value":[
                 {"id":"3.0","size":48211,"lastModifiedDateTime":"2026-09-20T10:00:00Z",
-                 "lastModifiedBy":{"user":{"displayName":"Priya Nair"}}},
+                 "lastModifiedBy":{"user":{"displayName":"Megan Harper"}}},
                 {"id":"2.0"},
                 {"id":"1.0","size":100,"lastModifiedBy":{}}
             ]}"#,
@@ -1286,7 +1286,7 @@ mod tests {
         assert_eq!(vs[0].id, "3.0");
         assert_eq!(vs[0].size, 48211);
         assert_eq!(vs[0].modified.as_deref(), Some("2026-09-20T10:00:00Z"));
-        assert_eq!(vs[0].modified_by.as_deref(), Some("Priya Nair"));
+        assert_eq!(vs[0].modified_by.as_deref(), Some("Megan Harper"));
         // Sparse versions default size 0, no author (never fatal).
         assert_eq!(vs[1].size, 0);
         assert_eq!(vs[1].modified_by, None);

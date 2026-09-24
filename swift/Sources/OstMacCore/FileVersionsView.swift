@@ -11,6 +11,7 @@
 // Tests inject mock fetchers (same seam as SharedFilesStore).
 import DietDesign
 import Foundation
+import DietDesign
 import SwiftUI
 
 /// Version-list content state.
@@ -207,7 +208,7 @@ public struct FileVersionsView: View {
                 .disabled(store.driveID == nil)
         }
         .padding(.horizontal)
-        .padding(.vertical, 8)
+        .padding(.vertical, DietSpace.sm)
     }
 
     @ViewBuilder
@@ -256,7 +257,7 @@ struct FileVersionRow: View {
     var onSave: () -> Void = {}
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: DietSpace.sm) {
             Image(systemName: isRestored ? "checkmark.circle.fill" : "clock")
                 .font(DietType.title2)
                 .foregroundStyle(
@@ -264,7 +265,7 @@ struct FileVersionRow: View {
                         ? Color(nsColor: DietColor.success)
                         : DietColor.textSecondaryColor)
                 .frame(width: 28)
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: DietSpace.xxs) {
                 Text(version.subtitle)
                     .font(DietType.body)
                     .lineLimit(1)
@@ -287,6 +288,6 @@ struct FileVersionRow: View {
                     .help("Download this version to ~/Downloads")
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, DietSpace.xs)
     }
 }

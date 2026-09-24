@@ -9,7 +9,7 @@ final class NcDeliveryTests: XCTestCase {
     func msg(
         chatID: String = "19:abc@thread.v2",
         msgId: String = "m1",
-        sender: String = "Priya Nair",
+        sender: String = "Megan Harper",
         text: String = "hello there",
         isEdit: Bool = false,
         messageType: String? = nil
@@ -36,7 +36,7 @@ final class NcDeliveryTests: XCTestCase {
             decision: .notify(reason: "chat-message"), screenLocked: false)
         XCTAssertEqual(b?.id, "m1")
         XCTAssertEqual(b?.chatID, "19:abc@thread.v2")
-        XCTAssertEqual(b?.title, "Priya Nair in Design Sync")
+        XCTAssertEqual(b?.title, "Megan Harper in Design Sync")
         XCTAssertEqual(b?.body, "hello there")
     }
 
@@ -79,7 +79,7 @@ final class NcDeliveryTests: XCTestCase {
         let solo = NcDelivery.makeBanner(
             for: msg(), chatName: "",
             decision: .notify(reason: "chat-message"), screenLocked: false)
-        XCTAssertEqual(solo?.title, "Priya Nair")
+        XCTAssertEqual(solo?.title, "Megan Harper")
         // Blank sender: the chat name carries the title.
         let anon = NcDelivery.makeBanner(
             for: msg(sender: ""), chatName: "Design Sync",
@@ -103,11 +103,11 @@ final class NcDeliveryTests: XCTestCase {
         // 1:1 chat: chat name is the sender — banner reads "X", never "X in X".
         let direct = msg()
         let banner = NcDelivery.makeBanner(
-            for: direct, chatName: "Priya Nair",
+            for: direct, chatName: "Megan Harper",
             decision: .notify(reason: "chat-message"), screenLocked: false)
-        XCTAssertEqual(banner?.title, "Priya Nair")
+        XCTAssertEqual(banner?.title, "Megan Harper")
         let oracle = MessageNotifications.makeRulesNote(
-            for: direct, chatName: "Priya Nair", reason: "chat-message")
+            for: direct, chatName: "Megan Harper", reason: "chat-message")
         XCTAssertEqual(banner?.title, oracle.title)
         XCTAssertEqual(banner?.body, oracle.body)
         // Group chat: "sender in chat" on both paths.
@@ -116,7 +116,7 @@ final class NcDeliveryTests: XCTestCase {
             decision: .notify(reason: "chat-message"), screenLocked: false)
         let groupOracle = MessageNotifications.makeRulesNote(
             for: direct, chatName: "Design Sync", reason: "chat-message")
-        XCTAssertEqual(group?.title, "Priya Nair in Design Sync")
+        XCTAssertEqual(group?.title, "Megan Harper in Design Sync")
         XCTAssertEqual(group?.title, groupOracle.title)
         XCTAssertEqual(group?.body, groupOracle.body)
     }
@@ -143,7 +143,7 @@ final class NcDeliveryTests: XCTestCase {
     func testMentionInNoisyChatBanners() {
         let rules = cfg([NotifyRule(kind: NotifyRule.noisyChats, value: "Watercooler")])
         let m = RealtimeMessage(
-            chatID: "19:abc@thread.v2", msgId: "m9", sender: "Priya Nair",
+            chatID: "19:abc@thread.v2", msgId: "m9", sender: "Megan Harper",
             text: "hi Me", time: "2026-09-23T10:00:00Z",
             isEdit: false, raw: #"hi <at id="0">Me</at>"#)
         let d = ChatFilter.decide(
@@ -152,7 +152,7 @@ final class NcDeliveryTests: XCTestCase {
         XCTAssertEqual(d, .notify(reason: "loud-owner-mention"))
         let b = NcDelivery.makeBanner(
             for: m, chatName: "Watercooler Chat", decision: d, screenLocked: false)
-        XCTAssertEqual(b?.title, "Priya Nair in Watercooler Chat")
+        XCTAssertEqual(b?.title, "Megan Harper in Watercooler Chat")
     }
 
     // MARK: click routing
@@ -261,7 +261,7 @@ final class NcDeliveryTests: XCTestCase {
             decision: .notify(reason: "chat-message"), screenLocked: true)
         XCTAssertEqual(b?.title, NcDelivery.redactedTitle)
         XCTAssertEqual(b?.body, NcDelivery.redactedBody)
-        XCTAssertFalse(b?.title.contains("Priya") ?? true)
+        XCTAssertFalse(b?.title.contains("Megan") ?? true)
         XCTAssertFalse(b?.body.contains("hello") ?? true)
         // Grouping survives redaction.
         XCTAssertEqual(b?.threadIdentifier, "19:abc@thread.v2")
@@ -280,7 +280,7 @@ final class NcDeliveryTests: XCTestCase {
         let b = NcDelivery.makeBanner(
             for: msg(), chatName: "Design Sync",
             decision: .notify(reason: "chat-message"), screenLocked: false)
-        XCTAssertTrue(b?.title.contains("Priya") ?? false)
+        XCTAssertTrue(b?.title.contains("Megan") ?? false)
         XCTAssertTrue(b?.body.contains("hello") ?? false)
     }
 

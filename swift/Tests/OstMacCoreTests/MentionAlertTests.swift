@@ -11,8 +11,8 @@ final class MentionAlertTests: XCTestCase {
     func msg(
         chatID: String = "19:chat@thread.v2",
         msgId: String = "m1",
-        sender: String = "Priya",
-        senderID: String? = "8:orgid:priya",
+        sender: String = "Megan",
+        senderID: String? = "8:orgid:megan",
         text: String = "hello",
         isEdit: Bool = false,
         editedID: String? = nil,
@@ -391,13 +391,13 @@ final class MentionAlertTests: XCTestCase {
         let dock = FakeDockBadge()
         let store = MentionStore(dock: dock)
         let mining = ChatMessage(
-            id: "1", sender: "Priya", timestamp: "2026-09-23T10:00:00Z",
+            id: "1", sender: "Megan", timestamp: "2026-09-23T10:00:00Z",
             content: "hi @Me", raw: #"<p>hi <at id="0">@Me</at></p>"#)
         store.noteThread(chatID: "t", messages: [mining], ownName: "Me")
         XCTAssertEqual(dock.labels, ["1"])
         // No mined mention: no write.
         let plain = ChatMessage(
-            id: "2", sender: "Priya", timestamp: "2026-09-23T10:00:00Z",
+            id: "2", sender: "Megan", timestamp: "2026-09-23T10:00:00Z",
             content: "hello")
         store.noteThread(chatID: "u", messages: [plain], ownName: "Me")
         XCTAssertEqual(dock.labels, ["1"])

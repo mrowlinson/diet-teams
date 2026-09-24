@@ -9,7 +9,7 @@ final class FileVersionsTests: XCTestCase {
         let json = """
         {"ok":true,"drive_id":"D1","item_id":"I1","versions":[
           {"id":"3.0","size":48211,
-           "modified":"2026-09-20T10:00:00Z","modified_by":"Priya Nair"},
+           "modified":"2026-09-20T10:00:00Z","modified_by":"Megan Harper"},
           {"id":"2.0","size":0,"modified":null,"modified_by":null}
         ]}
         """.data(using: .utf8)!
@@ -22,7 +22,7 @@ final class FileVersionsTests: XCTestCase {
         XCTAssertEqual(v.id, "3.0")
         XCTAssertEqual(v.size, 48211)
         XCTAssertEqual(v.modified, "2026-09-20T10:00:00Z")
-        XCTAssertEqual(v.modified_by, "Priya Nair")
+        XCTAssertEqual(v.modified_by, "Megan Harper")
         XCTAssertEqual(v.sizeLabel, "47.1 KB")
         XCTAssertNil(resp.versions[1].modified)
     }

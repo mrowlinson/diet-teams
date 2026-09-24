@@ -15,8 +15,8 @@ final class NotifSettingsTests: XCTestCase {
     func msg(
         chatID: String = "19:chat@thread.v2",
         msgId: String = "m1",
-        sender: String = "Priya",
-        senderID: String? = "8:orgid:priya",
+        sender: String = "Megan",
+        senderID: String? = "8:orgid:megan",
         text: String = "hello",
         isEdit: Bool = false,
         editedID: String? = nil,
@@ -236,7 +236,7 @@ final class NotifSettingsTests: XCTestCase {
             for: msg(text: "secret plans"), showPreview: false)
         XCTAssertEqual(note?.body, MessageNotifications.hiddenPreviewBody)
         XCTAssertFalse(note?.body.contains("secret plans") ?? true)
-        XCTAssertEqual(note?.title, "Priya")
+        XCTAssertEqual(note?.title, "Megan")
     }
 
     func testPreviewOnShowsText() {

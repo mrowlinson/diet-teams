@@ -98,15 +98,15 @@ final class DietAvatarTests: XCTestCase {
     func testInitials() {
         XCTAssertEqual(DietAvatar.initials(for: ""), "?")
         XCTAssertEqual(DietAvatar.initials(for: "Jo"), "JO")
-        XCTAssertEqual(DietAvatar.initials(for: "Priya Nair"), "PN")
+        XCTAssertEqual(DietAvatar.initials(for: "Megan Harper"), "MH")
         XCTAssertEqual(DietAvatar.initials(for: "a b c"), "AB")
         XCTAssertEqual(
             DietAvatar.initials(for: "  Ava   Lindqvist "), "AL")
     }
 
     func testHueDeterministic() {
-        let first = DietAvatar.hue(for: "Priya Nair")
-        XCTAssertEqual(first, DietAvatar.hue(for: "Priya Nair"))
+        let first = DietAvatar.hue(for: "Megan Harper")
+        XCTAssertEqual(first, DietAvatar.hue(for: "Megan Harper"))
         XCTAssertGreaterThanOrEqual(first, 0)
         XCTAssertLessThan(first, 1)
     }
@@ -128,6 +128,68 @@ final class DietBannerStyleTests: XCTestCase {
             DietBannerStyle.info, .success, .warning, .error,
         ] {
             XCTAssertFalse(style.systemImage.isEmpty)
+        }
+    }
+}
+
+// MARK: - om-a2-labels: contrast floors
+
+final class DietContrastTests: XCTestCase {
+    private typealias RGBA = (
+        r: CGFloat, g: CGFloat, b: CGFloat, a: CGFloat)
+
+    private func linear(_ c: CGFloat) -> CGFloat {
+        c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4)
+    }
+
+    private func luminance(r: CGFloat, g: CGFloat, b: CGFloat) -> CGFloat {
+        0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b)
+    }
+
+    /// Translucent token over an opaque surface, then WCAG ratio.
+    private func ratio(fg: RGBA, bg: RGBA) -> CGFloat {
+        let r = fg.a * fg.r + (1 - fg.a) * bg.r
+        let g = fg.a * fg.g + (1 - fg.a) * bg.g
+        let b = fg.a * fg.b + (1 - fg.a) * bg.b
+        let l1 = luminance(r: r, g: g, b: b)
+        let l2 = luminance(r: bg.r, g: bg.g, b: bg.b)
+        return (max(l1, l2) + 0.05) / (min(l1, l2) + 0.05)
+    }
+
+    func testTertiaryMeetsNonTextFloor() {
+        // Tertiary is the supplementary/icon token (pin glyphs,
+        // dismiss icons, separators): WCAG non-text floor 3:1 on
+        // every surface it sits on, both appearances. Real text
+        // uses secondary/primary instead.
+        let surfaces = [
+            DietColor.window, DietColor.sidebar, DietColor.card,
+            DietColor.well, DietColor.bubbleIn, DietColor.bubbleOut,
+        ]
+        for dark in [false, true] {
+            let fg = DietColor.resolved(DietColor.textTertiary, dark: dark)
+            for surface in surfaces {
+                let bg = DietColor.resolved(surface, dark: dark)
+                XCTAssertGreaterThanOrEqual(
+                    ratio(fg: fg, bg: bg), 3.0,
+                    "tertiary < 3:1 (dark=\(dark))")
+            }
+        }
+    }
+
+    func testAvatarInitialsContrast() {
+        // Initials vs avatar fill across the whole hue wheel: 4.5:1
+        // everywhere (the fill keeps its hue; the initials flip to
+        // dark on light fills).
+        for step in 0..<100 {
+            let hue = Double(step) / 100.0
+            let fill = DietAvatar.fillRGB(forHue: hue)
+            let dark = DietAvatar.useDarkInitials(forHue: hue)
+            let t: CGFloat = dark ? 0 : 1
+            let l1 = luminance(r: t, g: t, b: t)
+            let l2 = luminance(r: fill.r, g: fill.g, b: fill.b)
+            let r = (max(l1, l2) + 0.05) / (min(l1, l2) + 0.05)
+            XCTAssertGreaterThanOrEqual(
+                r, 4.5, "initials < 4.5:1 at hue \(hue)")
         }
     }
 }

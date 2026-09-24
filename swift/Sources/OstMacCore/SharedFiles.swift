@@ -860,7 +860,7 @@ public struct SharedFilesView: View {
             }
         }
         .sheet(item: $copyTarget) { file in
-            VStack(spacing: 12) {
+            VStack(spacing: DietSpace.row) {
                 Text("Copy “\(file.name)”").font(DietType.headline)
                 TextField("Destination folder id", text: $copyFolder)
                     .textFieldStyle(.roundedBorder)
@@ -901,7 +901,7 @@ public struct SharedFilesView: View {
     }
 
     private func renameSheet(_ file: SharedFile) -> some View {
-        VStack(spacing: 12) {
+        VStack(spacing: DietSpace.row) {
             Text("Rename “\(file.name)”").font(DietType.headline)
             TextField("New name", text: $renameName)
                 .textFieldStyle(.roundedBorder)
@@ -926,7 +926,7 @@ public struct SharedFilesView: View {
         actionLabel: String,
         action: @escaping () -> Void
     ) -> some View {
-        VStack(spacing: 12) {
+        VStack(spacing: DietSpace.row) {
             Text(title).font(DietType.headline)
             TextField("Destination folder id", text: folder)
                 .textFieldStyle(.roundedBorder)
@@ -945,7 +945,7 @@ public struct SharedFilesView: View {
     /// Back + breadcrumb trail (root "Files" + folder crumbs). Depth jumps
     /// read the store cache (no refetch).
     private var breadcrumbs: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: DietSpace.xs) {
             Button("‹ Back") { store.back() }
                 .font(DietType.caption1)
                 .buttonStyle(.link)
@@ -970,11 +970,11 @@ public struct SharedFilesView: View {
             Spacer()
         }
         .padding(.horizontal)
-        .padding(.vertical, 6)
+        .padding(.vertical, DietSpace.xs)
     }
 
     private var toolbar: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: DietSpace.xs) {
             HStack {
                 Text("\(store.displayedFiles.count) files")
                     .font(DietType.caption1).monospaced()
@@ -1024,11 +1024,11 @@ public struct SharedFilesView: View {
             }
         }
         .padding(.horizontal)
-        .padding(.vertical, 8)
+        .padding(.vertical, DietSpace.sm)
     }
 
     private var controls: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: DietSpace.sm) {
             Picker("Sort", selection: $store.sort) {
                 ForEach(SharedFilesSort.allCases, id: \.self) { order in
                     Text(order.label).tag(order)
@@ -1038,7 +1038,7 @@ public struct SharedFilesView: View {
             .frame(maxWidth: 210)
             .help("Sort shared files")
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
+                HStack(spacing: DietSpace.sm) {
                     ForEach(SharedFilesTypeFilter.allCases, id: \.self) { kind in
                         Button(kind.label) { store.filter = kind }
                             .buttonStyle(.bordered)
@@ -1051,7 +1051,7 @@ public struct SharedFilesView: View {
             Spacer()
         }
         .padding(.horizontal)
-        .padding(.bottom, 8)
+        .padding(.bottom, DietSpace.sm)
     }
 
     @ViewBuilder
@@ -1178,12 +1178,12 @@ struct SharedFileRow: View {
     var body: some View {
         if drillable {
             Button(action: onDrill) {
-                HStack(spacing: 10) {
+                HStack(spacing: DietSpace.sm) {
                     Image(systemName: "folder")
                         .font(DietType.title2)
                         .foregroundStyle(DietColor.textSecondaryColor)
                         .frame(width: 28)
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: DietSpace.xxs) {
                         Text(file.name)
                             .font(DietType.body)
                             .lineLimit(1)
@@ -1197,24 +1197,24 @@ struct SharedFileRow: View {
                         .font(DietType.caption1)
                         .foregroundStyle(DietColor.textSecondaryColor)
                 }
-                .padding(.vertical, 4)
+                .padding(.vertical, DietSpace.xs)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Open folder \(file.name)")
             .accessibilityHint("Shows this folder's files")
         } else {
-            HStack(spacing: 10) {
+            HStack(spacing: DietSpace.sm) {
                 Image(systemName: file.isFolder ? "folder" : file.iconName)
                     .font(DietType.title2)
                     .foregroundStyle(DietColor.textSecondaryColor)
                     .frame(width: 28)
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: DietSpace.xxs) {
                     Text(file.name)
                         .font(DietType.body)
                         .lineLimit(1)
                         .textSelection(.enabled)
-                    HStack(spacing: 6) {
+                    HStack(spacing: DietSpace.xs) {
                         Text(file.sizeLabel)
                             .font(DietType.caption1).monospaced()
                             .foregroundStyle(DietColor.textSecondaryColor)
@@ -1247,7 +1247,7 @@ struct SharedFileRow: View {
                     }
                 }
             }
-            .padding(.vertical, 4)
+            .padding(.vertical, DietSpace.xs)
         }
     }
 }

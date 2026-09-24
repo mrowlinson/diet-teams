@@ -13,7 +13,7 @@ final class MessageSearchTests: XCTestCase {
             {"ok":true,"query":"ship","from":0,"size":25,"total":2,\
             "more":false,"next_from":null,"hits":[\
             {"message_id":"1758600000000","chat_id":"19:chat1@thread.v2",\
-            "team_id":null,"channel_id":null,"sender":"Priya Nair",\
+            "team_id":null,"channel_id":null,"sender":"Megan Harper",\
             "timestamp":"2026-09-22T09:12:05Z","preview":"...Ship it...","subject":null},\
             {"message_id":"1758600001000","chat_id":"demo-chan-general",\
             "team_id":"demo-team-eng","channel_id":"demo-chan-general",\
@@ -37,7 +37,7 @@ final class MessageSearchTests: XCTestCase {
         XCTAssertEqual(chat.messageID, "1758600000000")
         XCTAssertEqual(chat.chatID, "19:chat1@thread.v2")
         XCTAssertNil(chat.teamID)
-        XCTAssertEqual(chat.sender, "Priya Nair")
+        XCTAssertEqual(chat.sender, "Megan Harper")
         XCTAssertEqual(chat.preview, "...Ship it...")
         XCTAssertEqual(chat.displayTime, "09:12 22 Sep")
         // Channel hit: conversation id is the channel, team retained.

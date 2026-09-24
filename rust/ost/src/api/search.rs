@@ -270,7 +270,7 @@ mod tests {
                             "id": "1758600000000",
                             "createdDateTime": "2026-09-22T09:12:05Z",
                             "subject": "",
-                            "from": {"emailAddress": {"name": "Priya Nair", "address": "priya@x"}},
+                            "from": {"emailAddress": {"name": "Megan Harper", "address": "megan@x"}},
                             "channelIdentity": {},
                             "chatId": "19:chat1@thread.v2"
                         }
@@ -317,7 +317,7 @@ mod tests {
         assert_eq!(h.chat_id, "19:chat1@thread.v2");
         assert!(h.team_id.is_none());
         assert!(h.channel_id.is_none());
-        assert_eq!(h.sender, "Priya Nair");
+        assert_eq!(h.sender, "Megan Harper");
         assert_eq!(h.timestamp, "2026-09-22T09:12:05Z");
         assert_eq!(h.preview, "...Ship it...");
         assert!(h.subject.is_none()); // blank subject drops

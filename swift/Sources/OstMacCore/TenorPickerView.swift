@@ -3,6 +3,7 @@
 // graceful off-state pointing at Settings (no request is ever made).
 import DietDesign
 import SwiftUI
+import DietDesign
 
 /// GIF picker. `onPick` fires with the full-size GIF URL; the host inserts
 /// it into the draft (or sends it) and dismisses the popover.
@@ -27,7 +28,7 @@ public struct TenorPickerView: View {
             if apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 offState
             } else {
-                HStack(spacing: 8) {
+                HStack(spacing: DietSpace.sm) {
                     Image(systemName: "magnifyingglass")
                         .foregroundStyle(DietColor.textSecondaryColor)
                     TextField("Search GIFs", text: $query)
@@ -35,7 +36,7 @@ public struct TenorPickerView: View {
                         .onSubmit { Task { await runSearch() } }
                     if loading { ProgressView().controlSize(.small) }
                 }
-                .padding(10)
+                .padding(DietSpace.sm)
                 DietSeamH()
                 grid
             }
@@ -72,8 +73,8 @@ public struct TenorPickerView: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVGrid(
-                            columns: [GridItem(.adaptive(minimum: 100), spacing: 8)],
-                            spacing: 8
+                            columns: [GridItem(.adaptive(minimum: 100), spacing: DietSpace.sm)],
+                            spacing: DietSpace.sm
                         ) {
                             ForEach(Array(gifs.enumerated()), id: \.element.id) { i, gif in
                                 Button { onPick(gif.fullURL) } label: {
@@ -91,23 +92,23 @@ public struct TenorPickerView: View {
                                             Color.gray.opacity(0.12)
                                         }
                                     }
-                                    .frame(height: 90)
-                                    .clipped()
-                                    .clipShape(RoundedRectangle(cornerRadius: 8))
                                 }
+                                .frame(height: 90)
+                                .clipped()
+                                .clipShape(RoundedRectangle(cornerRadius: DietRadius.control))
                                 .buttonStyle(.plain)
                                 .help(gif.title.isEmpty ? "Send GIF" : gif.title)
                                 .accessibilityLabel(
                                     gif.title.isEmpty ? "GIF" : gif.title)
                                 .overlay(
-                                    RoundedRectangle(cornerRadius: 8)
+                                    RoundedRectangle(cornerRadius: DietRadius.control)
                                         .stroke(
                                             i == highlight ? Color.accentColor : Color.clear,
                                             lineWidth: 2))
                                 .id(i)
                             }
                         }
-                        .padding(10)
+                        .padding(DietSpace.sm)
                     }
                     .onChange(of: highlight) { proxy.scrollTo($0, anchor: .center) }
                 }
@@ -125,7 +126,9 @@ public struct TenorPickerView: View {
     /// Adaptive columns rendered for the fixed 380pt width: same
     /// minimum + spacing the LazyVGrid uses, so arrow steps match.
     private var columns: Int {
-        max(1, Int((380 - 20 + 8) / (100 + 8)))
+        let pad = DietSpace.sm * 2
+        let gap = DietSpace.sm
+        return max(1, Int((380 - pad + gap) / (100 + gap)))
     }
 
     private func arrow(dx: Int, dy: Int) -> KeyPress.Result {

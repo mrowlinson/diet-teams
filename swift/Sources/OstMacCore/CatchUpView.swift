@@ -73,11 +73,11 @@ public struct CatchUpView: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: DietSpace.section) {
             HStack {
                 Text("Thread catch-up")
                     .font(DietType.headline)
-                Spacer(minLength: 12)
+                Spacer(minLength: DietSpace.section)
                 // Native macOS dismiss: a visible Done button that ALSO
                 // owns .cancelAction, so Esc dismisses from any focus
                 // (no focus trap). Summarize keeps .defaultAction (Return);
@@ -125,7 +125,7 @@ public struct CatchUpView: View {
                 ProgressView("Summarizing…")
                 Spacer()
             }
-            .padding(.top, 24)
+            .padding(.top, DietSpace.lg)
         case let .loaded(text):
             ScrollView {
                 Text(text)
@@ -161,7 +161,7 @@ public struct CatchUpInstallPrompt: View {
     public init() {}
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: DietSpace.xs) {
             Text("To use the OpenCode CLI provider:")
                 .font(DietType.caption1)
                 .foregroundStyle(DietColor.textSecondaryColor)
@@ -178,9 +178,9 @@ public struct CatchUpInstallPrompt: View {
                     .font(DietType.caption1)
             }
         }
-        .padding(8)
+        .padding(DietSpace.sm)
         .background(.secondary.opacity(0.12))
-        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .clipShape(RoundedRectangle(cornerRadius: DietRadius.control))
     }
 }
 
@@ -245,6 +245,11 @@ public struct CatchUpSettingsSection: View {
             Text(CatchUp.privacyNote)
                 .font(DietType.caption1)
                 .foregroundStyle(DietColor.textSecondaryColor)
+        }
+        .onAppear {
+            // Lazy key read lands here for Settings (init never
+            // touches the keychain; launch stays prompt-free).
+            catchUp.ensureKeyLoaded()
         }
     }
 

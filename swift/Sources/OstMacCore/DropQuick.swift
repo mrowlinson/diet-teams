@@ -13,6 +13,7 @@
 //   FileDrop.resolve(providers: p) { store.upload(paths: $0) }
 //   QuickLookPreview.shared.preview(paths: [saved])
 import AppKit
+import DietDesign
 import Quartz
 import SwiftUI
 import UniformTypeIdentifiers
@@ -124,9 +125,9 @@ public struct DropHighlight: ViewModifier {
 
     public func body(content: Content) -> some View {
         content.overlay(
-            RoundedRectangle(cornerRadius: 8)
+            RoundedRectangle(cornerRadius: DietRadius.control)
                 .stroke(Color.accentColor, lineWidth: 2)
-                .padding(3)
+                .padding(DietSpace.xxs)
                 .opacity(active ? 1 : 0)
         )
     }

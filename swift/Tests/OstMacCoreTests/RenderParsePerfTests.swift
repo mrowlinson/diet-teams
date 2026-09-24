@@ -20,8 +20,8 @@ final class RenderParsePerfTests: XCTestCase {
     }
 
     private static func msg(
-        _ id: String, content: String = "hello @Priya check `x` https://example.com",
-        raw: String? = "<p>hello <at>@Priya</at> check `x` <a href=\"https://example.com\">l</a></p>",
+        _ id: String, content: String = "hello @Megan check `x` https://example.com",
+        raw: String? = "<p>hello <at>@Megan</at> check `x` <a href=\"https://example.com\">l</a></p>",
         ts: String = "2026-09-22T10:00:00Z", reply: String? = nil
     ) -> ChatMessage {
         ChatMessage(
@@ -180,7 +180,7 @@ final class RenderParsePerfTests: XCTestCase {
         var bag = Set<AnyCancellable>()
         t.objectWillChange.sink { publishes += 1 }.store(in: &bag)
         let now = Date()
-        let ev = TypingEvent(chatID: "c", sender: "Priya", senderID: "mri")
+        let ev = TypingEvent(chatID: "c", sender: "Megan", senderID: "mri")
         t.ingest(ev, at: now)
         t.ingest(ev, at: now)
         XCTAssertEqual(publishes, 1)
@@ -188,7 +188,7 @@ final class RenderParsePerfTests: XCTestCase {
         XCTAssertEqual(publishes, 1)
         t.noteMessage(chatID: "c", sender: "Nobody", senderID: "ghost")
         XCTAssertEqual(publishes, 1)
-        t.noteMessage(chatID: "c", sender: "Priya", senderID: "mri")
+        t.noteMessage(chatID: "c", sender: "Megan", senderID: "mri")
         XCTAssertEqual(publishes, 2)
         t.clear()
         XCTAssertEqual(publishes, 2)

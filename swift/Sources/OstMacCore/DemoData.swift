@@ -33,7 +33,7 @@ public enum DemoData {
         ChatItem(
             chatId: "demo", name: "Demo — Design Sync", is_group: true,
             last_message_time: "2026-09-22T09:12:05Z",
-            last_message_sender: "Priya Nair",
+            last_message_sender: "Megan Harper",
             last_message_preview: "Ship it. I'll take screenshots for the review deck."),
         ChatItem(
             chatId: "demo-2", name: "Ava Lindqvist",
@@ -364,7 +364,7 @@ public enum DemoData {
             mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             web_url: "https://example.sharepoint.com/launch-checklist.xlsx",
             drive_id: "demo-drive-1",
-            created: "2026-09-20T16:20:11Z", sender: "Priya Nair",
+            created: "2026-09-20T16:20:11Z", sender: "Megan Harper",
             attachment_id: "doc-attach-3"),
     ]
 
@@ -411,7 +411,7 @@ public enum DemoData {
     private static let searchPeople: [TeamMember] = [
         TeamMember(id: "demo-u-ava", displayName: "Ava Lindqvist", userId: "demo-u-ava", email: "ava@example.com"),
         TeamMember(id: "demo-u-tom", displayName: "Tom Becker", userId: "demo-u-tom", email: "tom@example.com"),
-        TeamMember(id: "demo-u-priya", displayName: "Priya Nair", userId: "demo-u-priya", email: "priya@example.com"),
+        TeamMember(id: "demo-u-megan", displayName: "Megan Harper", userId: "demo-u-megan", email: "megan@example.com"),
     ]
 
     public static func name(for chatID: String) -> String? {
@@ -437,7 +437,7 @@ public enum DemoData {
         }
         return [
             ChatMessage(
-                id: "media-1", sender: "Priya Nair",
+                id: "media-1", sender: "Megan Harper",
                 timestamp: iso(at(h: 9, m: 2)),
                 content: "Ship day! 🚀 (party) the build is green",
                 raw: "<p>Ship day! 🚀 (party) the build is green</p>"),
@@ -447,7 +447,7 @@ public enum DemoData {
                 content: "Sunset from the offsite 🌅",
                 raw: #"<p>Sunset from the offsite 🌅</p><p><img src="demo://photo-1" alt="offsite sunset"></p>"#),
             ChatMessage(
-                id: "media-3", sender: "Priya Nair",
+                id: "media-3", sender: "Megan Harper",
                 timestamp: iso(at(h: 9, m: 7)),
                 content: "",
                 raw: #"<p><img src="demo://photo-2" alt="lake dawn"></p>"#),
@@ -482,7 +482,7 @@ public enum DemoData {
         }
         return [
             ChatMessage(
-                id: "react-1", sender: "Priya Nair",
+                id: "react-1", sender: "Megan Harper",
                 timestamp: iso(at(h: 10, m: 2)),
                 content: "Review deck is ready — link in the channel. Thumbs up when you've seen it?",
                 reactions: [
@@ -515,17 +515,17 @@ public enum DemoData {
         }
         return [
             ChatMessage(
-                id: "rep-1", sender: "Priya Nair",
+                id: "rep-1", sender: "Megan Harper",
                 timestamp: iso(at(h: 9, m: 2)),
                 content: "Review thread is open — drop questions on the onboarding mock here and I'll answer inline."),
             ChatMessage(
                 id: "rep-2", sender: "Tom Becker",
                 timestamp: iso(at(h: 9, m: 5)),
                 content: "First one: is the empty-state illustration final, or still placeholder?",
-                raw: #"<quote author="Priya Nair" guid="rep-1">Review thread is open — drop questions on the onboarding mock here and I'll answer inline.</quote><p>First one: is the empty-state illustration final, or still placeholder?</p>"#,
+                raw: #"<quote author="Megan Harper" guid="rep-1">Review thread is open — drop questions on the onboarding mock here and I'll answer inline.</quote><p>First one: is the empty-state illustration final, or still placeholder?</p>"#,
                 reply_to: "rep-1"),
             ChatMessage(
-                id: "rep-3", sender: "Priya Nair",
+                id: "rep-3", sender: "Megan Harper",
                 timestamp: iso(at(h: 9, m: 8)),
                 content: "Final — approved in yesterday's crit. The copy around it is still TBD though, so flag anything that reads odd.",
                 raw: #"<quote author="Tom Becker" guid="rep-2">First one: is the empty-state illustration final, or still placeholder?</quote><p>Final — approved in yesterday's crit. The copy around it is still TBD though, so flag anything that reads odd.</p>"#,
@@ -540,7 +540,7 @@ public enum DemoData {
                 timestamp: iso(at(h: 9, m: 13)),
                 content: "One more: do we keep the progress dots on step 1?",
                 isOwn: true,
-                raw: #"<quote author="Priya Nair" guid="rep-1">Review thread is open — drop questions on the onboarding mock here and I'll answer inline.</quote><p>One more: do we keep the progress dots on step 1?</p>"#,
+                raw: #"<quote author="Megan Harper" guid="rep-1">Review thread is open — drop questions on the onboarding mock here and I'll answer inline.</quote><p>One more: do we keep the progress dots on step 1?</p>"#,
                 reply_to: "rep-1"),
             ChatMessage(
                 id: "rep-6", sender: "Tom Becker",
@@ -564,43 +564,43 @@ public enum DemoData {
         }
         // (dayOffset, hour, minute, sender, text, isOwn)
         let script: [(Int, Int, Int, String, String, Bool)] = [
-            (-2, 9, 2, "Priya Nair", "Kicking off the release review thread — three days of notes live here.", false),
+            (-2, 9, 2, "Megan Harper", "Kicking off the release review thread — three days of notes live here.", false),
             (-2, 9, 5, "Tom Becker", "Agenda: window load, day paging, then the blank-state fixes.", false),
-            (-2, 9, 9, "Priya Nair", "First up: opening a long thread should show the last day, not everything.", false),
+            (-2, 9, 9, "Megan Harper", "First up: opening a long thread should show the last day, not everything.", false),
             (-2, 9, 14, "Me", "Agreed — a few-days window keeps the initial load fast.", true),
             (-2, 9, 21, "Tom Becker", "And older days load lazily from the top of the scroll.", false),
-            (-2, 10, 3, "Priya Nair", "What about threads that went quiet for a week?", false),
+            (-2, 10, 3, "Megan Harper", "What about threads that went quiet for a week?", false),
             (-2, 10, 11, "Me", "Then the newest page still shows — the window never blanks the view.", true),
             (-2, 11, 26, "Tom Becker", "Right: bound the fetch, not the display.", false),
-            (-2, 13, 2, "Priya Nair", "Lunch break. Back with the paging sketches.", false),
-            (-2, 14, 40, "Priya Nair", "Sketches are up: one tap loads one more day back.", false),
+            (-2, 13, 2, "Megan Harper", "Lunch break. Back with the paging sketches.", false),
+            (-2, 14, 40, "Megan Harper", "Sketches are up: one tap loads one more day back.", false),
             (-2, 14, 47, "Tom Becker", "Love it. No more auto-chaining the whole history.", false),
             (-2, 15, 12, "Me", "That auto-chain was the churn bug — spinner swap refires the loader.", true),
             (-2, 16, 5, "Tom Becker", "Explicit taps only from now on.", false),
-            (-2, 16, 58, "Priya Nair", "Day one notes done. Tomorrow: error states.", false),
-            (-1, 9, 1, "Priya Nair", "Day two: what does a failed history fetch look like?", false),
+            (-2, 16, 58, "Megan Harper", "Day one notes done. Tomorrow: error states.", false),
+            (-1, 9, 1, "Megan Harper", "Day two: what does a failed history fetch look like?", false),
             (-1, 9, 6, "Tom Becker", "A banner over the messages we already have — never a blank pane.", false),
             (-1, 9, 13, "Me", "And when nothing loaded at all, an empty state with retry.", true),
-            (-1, 9, 29, "Priya Nair", "Retry re-runs the open, right? Not just the failed page?", false),
+            (-1, 9, 29, "Megan Harper", "Retry re-runs the open, right? Not just the failed page?", false),
             (-1, 9, 34, "Me", "Exactly — Try Again re-opens the chat.", true),
             (-1, 10, 15, "Tom Becker", "Mid-chain failures keep partial pages too.", false),
-            (-1, 10, 22, "Priya Nair", "Good. Partial progress plus a visible error.", false),
+            (-1, 10, 22, "Megan Harper", "Good. Partial progress plus a visible error.", false),
             (-1, 11, 48, "Tom Becker", "Switching chats mid-load drops the stale work?", false),
             (-1, 11, 55, "Me", "Yes — generation guard on every page, open and day-load alike.", true),
-            (-1, 13, 20, "Priya Nair", "Edge case: a page that arrives empty but points further back.", false),
+            (-1, 13, 20, "Megan Harper", "Edge case: a page that arrives empty but points further back.", false),
             (-1, 13, 31, "Tom Becker", "Keep paging — blank pages don't cover the window.", false),
-            (-1, 15, 2, "Priya Nair", "And garbage timestamps stop the window after the current page.", false),
+            (-1, 15, 2, "Megan Harper", "And garbage timestamps stop the window after the current page.", false),
             (-1, 15, 19, "Me", "Right, we can't window what we can't parse.", true),
             (-1, 16, 44, "Tom Becker", "Day two notes done. Tomorrow we ship it.", false),
-            (0, 9, 0, "Priya Nair", "Ship day. Final pass over the scroll states.", false),
+            (0, 9, 0, "Megan Harper", "Ship day. Final pass over the scroll states.", false),
             (0, 9, 4, "Tom Becker", "Top of thread: oldest day separator plus the load-more button.", false),
             (0, 9, 9, "Me", "Middle: day separators between the three days.", true),
-            (0, 9, 15, "Priya Nair", "Bottom: the tail of the last 24 hours.", false),
+            (0, 9, 15, "Megan Harper", "Bottom: the tail of the last 24 hours.", false),
             (0, 9, 28, "Tom Becker", "Screenshots at every state, all viewed.", false),
-            (0, 9, 41, "Priya Nair", "One more check: the error state with its Try Again.", false),
+            (0, 9, 41, "Megan Harper", "One more check: the error state with its Try Again.", false),
             (0, 10, 2, "Me", "Covered — canned fetch failure, fully offline.", true),
             (0, 10, 20, "Tom Becker", "Then we're green. Merging the lane.", false),
-            (0, 10, 35, "Priya Nair", "Release review complete. Great thread, everyone.", false),
+            (0, 10, 35, "Megan Harper", "Release review complete. Great thread, everyone.", false),
             (0, 10, 41, "Me", "Archiving these notes — see you at the next review.", true),
         ]
         return script.enumerated().map { i, line in
@@ -674,7 +674,7 @@ public enum DemoData {
                 content: "",
                 raw: #"<attachment id="doc-attach-1"></attachment>"#),
             ChatMessage(
-                id: "doc-2", sender: "Priya Nair",
+                id: "doc-2", sender: "Megan Harper",
                 timestamp: iso(at(h: 9, m: 5)),
                 content: "Mocks and the launch checklist — feedback by noon?",
                 raw: "<p>Mocks and the launch checklist — feedback by noon?</p>"
@@ -706,7 +706,7 @@ public enum DemoData {
         }
         return [
             ChatMessage(
-                id: "sc-1", sender: "Priya Nair",
+                id: "sc-1", sender: "Megan Harper",
                 timestamp: iso(at(dayOffset: -1, h: 16, m: 2)),
                 content: "Showcase thread is open — @Me kick us off with the hero shot?",
                 raw: "<p>Showcase thread is open — <at id=\"8:me\">@Me</at> kick us off with the hero shot?</p>",
@@ -718,7 +718,7 @@ public enum DemoData {
                 id: "sc-2", sender: "Tom Becker",
                 timestamp: iso(at(dayOffset: -1, h: 16, m: 5)),
                 content: "In. Run `ostmac demo --rich` then frame the timeline.",
-                raw: #"<quote author="Priya Nair" guid="sc-1">Showcase thread is open — @Me kick us off with the hero shot?</quote><p>In. Run `ostmac demo --rich` then frame the timeline.</p>"#,
+                raw: #"<quote author="Megan Harper" guid="sc-1">Showcase thread is open — @Me kick us off with the hero shot?</quote><p>In. Run `ostmac demo --rich` then frame the timeline.</p>"#,
                 reply_to: "sc-1"),
             ChatMessage(
                 id: "sc-3", sender: "Me",
@@ -750,7 +750,7 @@ public enum DemoData {
                 reactions: [ReactionCount(emoji: "😂", count: 2)],
                 reply_to: "sc-4"),
             ChatMessage(
-                id: "sc-7", sender: "Priya Nair",
+                id: "sc-7", sender: "Megan Harper",
                 timestamp: iso(at(dayOffset: 0, h: 9, m: 1)),
                 content: "Nice. @Tom Becker (party) the review deck is ready — thumbs up when you've seen it?",
                 raw: "<p>Nice. <at id=\"8:t\">@Tom Becker</at> (party) the review deck is ready — thumbs up when you've seen it?</p>"),
@@ -759,7 +759,7 @@ public enum DemoData {
                 timestamp: iso(at(dayOffset: 0, h: 9, m: 4)),
                 content: "Seen — the empty-states slide made me laugh out loud.",
                 isOwn: true,
-                raw: #"<quote author="Priya Nair" guid="sc-7">Nice. @Tom Becker (party) the review deck is ready — thumbs up when you've seen it?</quote><p>Seen — the empty-states slide made me laugh out loud.</p>"#,
+                raw: #"<quote author="Megan Harper" guid="sc-7">Nice. @Tom Becker (party) the review deck is ready — thumbs up when you've seen it?</quote><p>Seen — the empty-states slide made me laugh out loud.</p>"#,
                 reply_to: "sc-7"),
             ChatMessage(
                 id: "sc-9", sender: "Tom Becker",
@@ -767,7 +767,7 @@ public enum DemoData {
                 content: "",
                 raw: #"<p><img src="demo://photo-2" alt="lake dawn"></p>"#),
             ChatMessage(
-                id: "sc-10", sender: "Priya Nair",
+                id: "sc-10", sender: "Megan Harper",
                 timestamp: iso(at(dayOffset: 0, h: 9, m: 9)),
                 content: "Locking the shot list: mentions, reactions, replies, pins, cards, photos, receipts.",
                 edited: true),
@@ -795,7 +795,7 @@ public enum DemoData {
                 bySettingHour: 9, minute: 0, second: 0, of: base) ?? base
             return cal.date(byAdding: .minute, value: minutes, to: morning) ?? morning
         }
-        let crew = ["Priya Nair", "Tom Becker", "Ava Lindqvist", "Me"]
+        let crew = ["Megan Harper", "Tom Becker", "Ava Lindqvist", "Me"]
         let lines = [
             "Release review notes — paging through the long channel.",
             "Window load first: newest slice lands, older pages wait.",
@@ -823,7 +823,7 @@ public enum DemoData {
     /// Shared offline thread shown when a demo channel opens.
     private static let channelMessages: [ChatMessage] = [
         ChatMessage(
-            id: "chan-m1", sender: "Priya Nair",
+            id: "chan-m1", sender: "Megan Harper",
             timestamp: "2026-09-22T09:02:11Z",
             content: "Kickoff notes are pinned — goals, dates, owners."),
         ChatMessage(
@@ -901,7 +901,7 @@ public enum DemoData {
             "<html><head><title>Kickoff Notes</title></head><body>" +
                 "<h1>Kickoff Notes</h1>" +
                 "<p>Goals: ship the chat window, keep edits in place.</p>" +
-                "<p>Owners: Priya (design), Tom (render), Me (core).</p>" +
+                "<p>Owners: Megan (design), Tom (render), Me (core).</p>" +
                 "</body></html>"),
         "demo-page-empty": ("Empty States Review",
             "<html><head><title>Empty States Review</title></head><body>" +
@@ -963,7 +963,7 @@ public enum DemoData {
             ChatItem(
                 chatId: churnMeetingID, name: "Sprint Planning", is_group: true,
                 last_message_time: "2026-09-23T09:00:00Z",
-                last_message_sender: "Priya Nair",
+                last_message_sender: "Megan Harper",
                 last_message_preview: "Running 5 late, start without me"),
             ChatItem(
                 chatId: churnPollyID, name: "Polly",
@@ -1024,11 +1024,11 @@ public enum DemoData {
             RealtimeMessage(
                 chatID: churnPollyID, msgId: "ch-b8", sender: "Polly",
                 senderID: "28:00001111-2222-3333-4444-555566667777",
-                text: "Priya voted: Thursday works best",
+                text: "Megan voted: Thursday works best",
                 time: "2026-09-23T09:08:00Z", isEdit: false, messageType: "Text"),
             RealtimeMessage(
                 chatID: churnStandupID, msgId: "ch-b9", sender: "?",
-                text: "Tom Becker added Priya Nair to the chat",
+                text: "Tom Becker added Megan Harper to the chat",
                 time: "2026-09-23T09:09:00Z", isEdit: false,
                 messageType: "ThreadActivity/AddMember"),
             RealtimeMessage(
@@ -1045,7 +1045,7 @@ public enum DemoData {
             timestamp: "2026-09-23T08:55:00Z",
             content: "Agenda: sprint review, then retro. Starting in 5."),
         ChatMessage(
-            id: "chm-2", sender: "Priya Nair",
+            id: "chm-2", sender: "Megan Harper",
             timestamp: "2026-09-23T09:00:00Z",
             content: "Running 5 late, start without me"),
     ]

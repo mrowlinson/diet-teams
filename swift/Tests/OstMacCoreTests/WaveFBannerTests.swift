@@ -13,7 +13,7 @@ final class WaveFBannerTests: XCTestCase {
     func msg(
         chatID: String = "19:chat@thread.v2",
         msgId: String = "m1",
-        sender: String = "Priya",
+        sender: String = "Megan",
         text: String = "hello there"
     ) -> RealtimeMessage {
         RealtimeMessage(
@@ -80,7 +80,7 @@ final class WaveFBannerTests: XCTestCase {
             for: msg(text: "secret plans"), rules: rules, showPreview: false)
         XCTAssertEqual(b?.body, MessageNotifications.hiddenPreviewBody)
         XCTAssertFalse(b?.body.contains("secret plans") ?? true)
-        XCTAssertEqual(b?.title, "Priya in Team Chat")
+        XCTAssertEqual(b?.title, "Megan in Team Chat")
         // Preview on shows the text.
         let open = pipelineBanner(for: msg(text: "secret plans"), rules: rules)
         XCTAssertEqual(open?.body, "secret plans")
