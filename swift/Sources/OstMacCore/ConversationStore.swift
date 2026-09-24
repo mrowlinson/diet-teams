@@ -1,7 +1,7 @@
 // ConversationStore.swift — om-conv lane: state for one open chat.
 //
 // INPUT API (what the chat-list and realtime lanes drive):
-//   store.open(chatID:chatName:) — load last-24h window via core (replaces messages)
+//   store.open(chatID:chatName:) — load last-few-days window via core (replaces messages)
 //   store.ingest(_ message:)      — upsert one realtime ChatMessage by id:
 //                                  new id appends, known id updates content
 //                                  in place (edit). THE realtime feed point.
@@ -52,15 +52,17 @@ public final class ConversationStore: ObservableObject {
 
     // MARK: - History window (om-history)
 
-    /// Initial load covers the last 24h: `open` pages back until the
-    /// oldest message is older than the window (or the page cap / end
-    /// of history hits). The server ignores `startTime=` (OSTMAC-PATCHES
-    /// #7), so the window is enforced client-side over the page_token
-    /// chain — no core time params needed.
-    public nonisolated static let historyWindowHours: Double = 24
+    /// Initial load covers the last few days: `open` pages back until
+    /// the oldest message is older than the window (or the page cap /
+    /// end of history hits). The server ignores `startTime=`
+    /// (OSTMAC-PATCHES #7), so the window is enforced client-side over
+    /// the page_token chain — no core time params needed.
+    public nonisolated static let historyWindowHours: Double = 72
     /// Fetch bounds: one open / day-load never fires more page fetches
     /// than this, so long threads can't churn the view unboundedly.
-    public nonisolated static let openMaxPages = 6
+    /// Open stays small (newest slice, fast land); older history pages
+    /// back on scroll.
+    public nonisolated static let openMaxPages = 3
     public nonisolated static let dayLoadMaxPages = 4
 
     /// Tolerant ISO8601 parse for server stamps (fractional
@@ -103,7 +105,7 @@ public final class ConversationStore: ObservableObject {
         return MessageRender.dayKey(oldest.timestamp) != startDayKey
     }
 
-    /// Open a chat: fetch the last-24h window via core (newest page,
+    /// Open a chat: fetch the last-few-days window via core (newest page,
     /// published immediately, then older pages until the window is
     /// covered), replace messages. Stale completions are dropped, so
     /// fast chat-switching always lands on the newest selection. The
@@ -136,7 +138,7 @@ public final class ConversationStore: ObservableObject {
                 self.messages = Self.stampOwnership(resp.messages, ownName: self.ownDisplayName)
                 self.pageToken = resp.page_token
                 self.didLoad = true
-                // Chain older pages until the 24h window is covered.
+                // Chain older pages until the window is covered.
                 var pages = 1
                 while gen == self.openGeneration,
                       self.pageToken != nil,
