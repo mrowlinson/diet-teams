@@ -581,6 +581,7 @@ public struct MeetingChatPanel: View {
     @ObservedObject public var chat: MeetingChatStore
     @State private var draft = ""
     @FocusState private var boxFocused: Bool
+    @StateObject private var scroll = ChatScrollModel()
 
     public init(chat: MeetingChatStore) {
         self.chat = chat
@@ -625,19 +626,77 @@ public struct MeetingChatPanel: View {
                     .padding(DietSpace.md)
             } else {
                 ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: DietSpace.sm) {
-                            ForEach(chat.messages) { m in
-                                MeetingBubbleRow(message: m)
-                                    .id(m.id)
+                    ZStack(alignment: .bottom) {
+                        ScrollView {
+                            LazyVStack(alignment: .leading, spacing: DietSpace.sm) {
+                                ForEach(chat.messages) { m in
+                                    MeetingBubbleRow(message: m)
+                                        .id(m.id)
+                                }
+                                // Bottom sentinel (FIX-scroll port): the TRUE
+                                // content end, laid out LAST with the trailing
+                                // inset as part of it — scrollToBottom lands
+                                // on the exact content end with zero gap.
+                                // Dwell hugs the tail (kills the pill);
+                                // leaving cancels settle (no yank races).
+                                Color.clear
+                                    .frame(height: 1)
+                                    .padding(.bottom, DietSpace.md)
+                                    .id(ScrollPolicy.bottomSentinelID)
+                                    .onAppear {
+                                        scroll.noteBottomDwell(tailID: chat.messages.last?.id)
+                                    }
+                                    .onDisappear {
+                                        scroll.noteLeftBottom()
+                                    }
                             }
+                            .padding([.top, .leading, .trailing], DietSpace.md)
                         }
-                        .padding(DietSpace.md)
-                    }
-                    .onChange(of: chat.messages.count) { _, _ in
-                        if let last = chat.messages.last {
-                            withAnimation(.easeOut(duration: 0.15)) {
-                                proxy.scrollTo(last.id, anchor: .bottom)
+                        .defaultScrollAnchor(.bottom)
+                        .onChange(of: chat.messages.count) { handleMessagesChanged(proxy) }
+                        .onChange(of: chat.loading) { handleLoadingChanged(proxy) }
+                        .onAppear {
+                            scroll.lastSeenID = chat.messages.last?.id
+                            scroll.lastReadID = chat.messages.last?.id
+                            settleToBottom(proxy)
+                        }
+                        if let action = bottomAction {
+                            switch action {
+                            case .pill(let title):
+                                Button { jumpTap(proxy) } label: {
+                                    HStack(spacing: DietSpace.xs) {
+                                        Image(systemName: "arrow.down.circle.fill")
+                                        Text(title)
+                                            .font(DietType.caption1).bold()
+                                    }
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, DietSpace.sm + DietSpace.xs)
+                                    .padding(.vertical, DietSpace.xs)
+                                    .background(Color.accentColor, in: Capsule())
+                                    .shadow(color: .black.opacity(0.2), radius: 2, y: 1)
+                                }
+                                .buttonStyle(.plain)
+                                .help("Jump to latest messages")
+                                .padding(.bottom, DietSpace.sm)
+                            case .jump:
+                                Button { jumpTap(proxy) } label: {
+                                    HStack(spacing: DietSpace.xs) {
+                                        Image(systemName: "arrow.down.circle")
+                                        Text("Jump to latest")
+                                            .font(DietType.caption1).bold()
+                                    }
+                                    .foregroundStyle(DietColor.textPrimaryColor)
+                                    .padding(.horizontal, DietSpace.sm + DietSpace.xs)
+                                    .padding(.vertical, DietSpace.xs)
+                                    .background(DietColor.wellColor, in: Capsule())
+                                    .overlay(
+                                        Capsule()
+                                            .stroke(DietColor.dividerColor, lineWidth: 1))
+                                    .shadow(color: .black.opacity(0.15), radius: 2, y: 1)
+                                }
+                                .buttonStyle(.plain)
+                                .help("Jump to latest messages")
+                                .padding(.bottom, DietSpace.sm)
                             }
                         }
                     }
@@ -671,6 +730,87 @@ public struct MeetingChatPanel: View {
             .padding(DietSpace.md)
         }
         .background(DietColor.windowColor)
+    }
+
+    /// Exact-bottom landing target (FIX-scroll port): always the
+    /// bottom sentinel (true content end), never the tail bubble.
+    /// Targeting the last bubble parks the 16pt trailing inset below
+    /// the fold. Nil tail (empty thread) → nil. Internal so tests pin
+    /// it; every land below funnels through here.
+    static func landingTarget(tailID: String?) -> String? {
+        ScrollPolicy.bottomTargetID(tailID: tailID)
+    }
+
+    private var unseen: Int {
+        scroll.unseenCount(messages: chat.messages)
+    }
+
+    private var bottomAction: BottomAction? {
+        ScrollPolicy.bottomAction(unseen: unseen, nearBottom: scroll.nearBottom)
+    }
+
+    /// Tail advance → follow or pill; anything else (edit in place,
+    /// same-tail refresh) holds position. Meeting history merges on
+    /// open land via handleLoadingChanged instead.
+    private func handleMessagesChanged(_ proxy: ScrollViewProxy) {
+        switch scroll.consumeTail(
+            currentTailID: chat.messages.last?.id,
+            isOwnTail: chat.messages.last?.isOwn ?? false)
+        {
+        case .follow:
+            scrollToBottom(proxy)
+        case .pill:
+            break // the pill absorbs it (unseen derives from lastReadID)
+        case .none:
+            break
+        }
+    }
+
+    /// Open history merge finished: land on latest (the merge may have
+    /// prepended over the persisted snapshot mid-scroll).
+    private func handleLoadingChanged(_ proxy: ScrollViewProxy) {
+        if !chat.loading {
+            scroll.lastSeenID = chat.messages.last?.id
+            scroll.jumpToLatest(tailID: chat.messages.last?.id)
+            settleToBottom(proxy)
+        }
+    }
+
+    private func jumpTap(_ proxy: ScrollViewProxy) {
+        scroll.jumpToLatest(tailID: chat.messages.last?.id)
+        scrollToBottom(proxy)
+    }
+
+    /// Exact-bottom landing: targets the bottom sentinel (true content
+    /// end), never the tail bubble. Empty thread → no-op.
+    private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool = true) {
+        guard let target = Self.landingTarget(tailID: chat.messages.last?.id) else { return }
+        DispatchQueue.main.async {
+            if animated {
+                withAnimation { proxy.scrollTo(target, anchor: .bottom) }
+            } else {
+                proxy.scrollTo(target, anchor: .bottom)
+            }
+        }
+    }
+
+    /// Initial land + timed re-asserts while the reader stays near the
+    /// bottom. Rows settle as content resolves, so one scroll can land
+    /// short; each pass re-reads live `nearBottom`, and leaving the
+    /// bottom cancels the task outright.
+    private func settleToBottom(_ proxy: ScrollViewProxy) {
+        scrollToBottom(proxy, animated: false)
+        scroll.cancelSettle()
+        scroll.settleTask = Task { @MainActor in
+            var waited: TimeInterval = 0
+            for step in ScrollPolicy.settleDelays {
+                let nanos = UInt64(max(0, step - waited) * 1_000_000_000)
+                try? await Task.sleep(nanoseconds: nanos)
+                waited = step
+                guard !Task.isCancelled else { return }
+                if scroll.nearBottom { scrollToBottom(proxy, animated: false) }
+            }
+        }
     }
 
     private func submit() {
