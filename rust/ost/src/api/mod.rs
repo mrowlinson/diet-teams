@@ -50,9 +50,10 @@ pub use calendar::{
     parse_join_url,
 };
 pub use files::{
-    create_link_data, download_file_data, download_file_version_data, folder_children_path,
-    list_chat_files_data, list_chat_files_data_opts, list_file_versions_data,
-    list_folder_children_data, restore_file_version_data, upload_file_data,
+    copy_body, copy_file_data, create_link_data, delete_file_data, download_file_data,
+    download_file_version_data, drive_item_path, folder_children_path, list_chat_files_data,
+    list_chat_files_data_opts, list_file_versions_data, list_folder_children_data, move_body,
+    move_file_data, rename_body, rename_file_data, restore_file_version_data, upload_file_data,
 };
 pub use media::{fetch_media_data, MediaBytes, MAX_BYTES};
 pub use me::whoami_data;

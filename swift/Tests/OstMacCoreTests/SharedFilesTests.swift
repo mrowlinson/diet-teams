@@ -126,4 +126,99 @@ final class SharedFilesTests: XCTestCase {
         XCTAssertThrowsError(try RustCore.sharedUpload(chatID: "19:x", path: "  "))
         XCTAssertThrowsError(try RustCore.sharedDownload(driveID: "", itemID: "i", dest: "/tmp/x"))
     }
+
+    // MARK: - om-i3-manage
+
+    func testManageResponsesDecode() throws {
+        let item = """
+        {"id":"i1","name":"plan v2.docx","size":99,"mime":null,"web_url":null,\
+        "download_url":null,"drive_id":"D1","created":null,"modified":null,\
+        "sender":null,"attachment_id":null}
+        """
+        let ren = try JSONDecoder().decode(
+            SharedFileManageResponse.self,
+            from: #"{"ok":true,"file":\#(item)}"#.data(using: .utf8)!)
+        XCTAssertTrue(ren.ok)
+        XCTAssertEqual(ren.file.name, "plan v2.docx")
+        let mov = try JSONDecoder().decode(
+            SharedFileManageResponse.self,
+            from: #"{"ok":true,"file":\#(item)}"#.data(using: .utf8)!)
+        XCTAssertEqual(mov.file.id, "i1")
+        let cpy = try JSONDecoder().decode(
+            SharedFileCopyResponse.self,
+            from: #"{"ok":true,"monitor":"https://m/1"}"#.data(using: .utf8)!)
+        XCTAssertEqual(cpy.monitor, "https://m/1")
+        let del = try JSONDecoder().decode(
+            SharedFileDeleteResponse.self,
+            from: #"{"ok":true,"id":"i1"}"#.data(using: .utf8)!)
+        XCTAssertEqual(del.id, "i1")
+    }
+
+    func testRemovedDropsID() {
+        let list = [SharedFile(id: "f1", name: "a"), SharedFile(id: "f2", name: "b")]
+        XCTAssertEqual(
+            SharedFilesStore.removed("f1", from: list).map(\.id), ["f2"])
+        XCTAssertEqual(
+            SharedFilesStore.removed("zz", from: list).map(\.id), ["f1", "f2"])
+    }
+
+    func testRenameUpsertsRow() async {
+        let file = SharedFile(id: "f1", name: "a", drive_id: "D1")
+        let store = SharedFilesStore(
+            list: { _, _ in SharedFilesResponse(ok: true, chat_id: "19:x", files: [file]) },
+            rename: { _, _, name in
+                SharedFileManageResponse(
+                    ok: true,
+                    file: SharedFile(id: "f1", name: name, drive_id: "D1"))
+            }
+        )
+        store.open(chatID: "19:x")
+        for _ in 0 ..< 50 {
+            if store.state == .loaded { break }
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        store.rename(file, to: "b")
+        for _ in 0 ..< 50 {
+            if store.files.first?.name == "b" { break }
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTAssertEqual(store.files.first?.name, "b")
+        XCTAssertEqual(store.files.count, 1)
+    }
+
+    func testDeleteRemovesRow() async {
+        let f1 = SharedFile(id: "f1", name: "a", drive_id: "D1")
+        let f2 = SharedFile(id: "f2", name: "b", drive_id: "D1")
+        let store = SharedFilesStore(
+            list: { _, _ in SharedFilesResponse(ok: true, chat_id: "19:x", files: [f1, f2]) },
+            delete: { _, _ in SharedFileDeleteResponse(ok: true, id: "f1") }
+        )
+        store.open(chatID: "19:x")
+        for _ in 0 ..< 50 {
+            if store.files.count == 2 { break }
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        store.delete(f1)
+        for _ in 0 ..< 50 {
+            if store.files.count == 1 { break }
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTAssertEqual(store.files.map(\.id), ["f2"])
+    }
+
+    func testDemoDeleteRemovesRowLocally() {
+        let store = SharedFilesStore()
+        store.showDemo(chatID: "demo", files: [SharedFile(id: "f1", name: "a")])
+        store.delete(SharedFile(id: "f1", name: "a"))
+        XCTAssertTrue(store.files.isEmpty)
+        XCTAssertEqual(store.state, .empty)
+    }
+
+    func testManageFFIEmptyArgsThrow() {
+        XCTAssertThrowsError(try RustCore.sharedRename(driveID: "", itemID: "i", newName: "n"))
+        XCTAssertThrowsError(try RustCore.sharedMove(driveID: "d", itemID: "i", destFolderID: ""))
+        XCTAssertThrowsError(
+            try RustCore.sharedCopy(driveID: "d", itemID: "", destFolderID: "f", newName: nil))
+        XCTAssertThrowsError(try RustCore.sharedDelete(driveID: "d", itemID: "  "))
+    }
 }

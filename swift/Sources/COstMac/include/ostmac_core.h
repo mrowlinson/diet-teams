@@ -161,6 +161,21 @@ char *ostmac_file_version_download(
     const char *drive_id, const char *item_id,
     const char *version_id, const char *dest);
 
+// Rename one driveItem (PATCH name). Returns {ok, file}. Caller frees.
+char *ostmac_files_rename(const char *drive_id, const char *item_id, const char *new_name);
+
+// Move one driveItem to another folder (same drive). Returns {ok, file}.
+// Caller frees.
+char *ostmac_files_move(const char *drive_id, const char *item_id, const char *dest_folder_id);
+
+// Copy one driveItem to another folder (same drive, async server-side).
+// new_name may be NULL to keep the source name. Returns {ok, monitor}.
+// Caller frees.
+char *ostmac_files_copy(const char *drive_id, const char *item_id, const char *dest_folder_id, const char *new_name);
+
+// Delete one driveItem. Returns {ok, id}. Caller frees.
+char *ostmac_files_delete(const char *drive_id, const char *item_id);
+
 // To Do lists JSON (requires sign-in): {ok,lists:[{id,name,wellknown?}]}.
 // Caller frees.
 char *ostmac_reminders(void);

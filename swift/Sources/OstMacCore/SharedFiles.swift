@@ -46,6 +46,10 @@ public final class SharedFilesStore: ObservableObject {
     public typealias UploadFetcher = @Sendable (String, String) throws -> SharedFileUploadResponse
     public typealias DownloadFetcher = @Sendable (String, String, String) throws -> SharedFileDownloadResponse
     public typealias LinkFetcher = @Sendable (String, String, String) throws -> SharedFileLinkResponse
+    public typealias RenameFetcher = @Sendable (String, String, String) throws -> SharedFileManageResponse
+    public typealias MoveFetcher = @Sendable (String, String, String) throws -> SharedFileManageResponse
+    public typealias CopyFetcher = @Sendable (String, String, String, String?) throws -> SharedFileCopyResponse
+    public typealias DeleteFetcher = @Sendable (String, String) throws -> SharedFileDeleteResponse
     public typealias OpenURLFn = @Sendable (URL) -> Bool
     public typealias CopyLinkFn = @Sendable (String) -> Void
 
@@ -58,6 +62,7 @@ public final class SharedFilesStore: ObservableObject {
     @Published public private(set) var savedPath: String?
     /// Breadcrumb path from root (empty = root). Drives view crumbs + back.
     @Published public private(set) var crumbs: [SharedFolderCrumb] = []
+    @Published public private(set) var managingIDs: Set<String> = []
     public private(set) var chatID: String?
     public private(set) var isDemo = false
 
@@ -69,6 +74,10 @@ public final class SharedFilesStore: ObservableObject {
     private let uploadFetcher: UploadFetcher
     private let downloadFetcher: DownloadFetcher
     private let linkFetcher: LinkFetcher
+    private let renameFetcher: RenameFetcher
+    private let moveFetcher: MoveFetcher
+    private let copyFetcher: CopyFetcher
+    private let deleteFetcher: DeleteFetcher
     private let openURLFn: OpenURLFn
     /// Per-folder list cache: rootKey + crumb keys. Back/crumb jumps read
     /// here (no refetch); refresh() bypasses for the current level only.
@@ -109,6 +118,18 @@ public final class SharedFilesStore: ObservableObject {
         link: @escaping LinkFetcher = {
             try RustCore.sharedLink(driveID: $0, itemID: $1, scope: $2)
         },
+        rename: @escaping RenameFetcher = {
+            try RustCore.sharedRename(driveID: $0, itemID: $1, newName: $2)
+        },
+        move: @escaping MoveFetcher = {
+            try RustCore.sharedMove(driveID: $0, itemID: $1, destFolderID: $2)
+        },
+        copy: @escaping CopyFetcher = {
+            try RustCore.sharedCopy(driveID: $0, itemID: $1, destFolderID: $2, newName: $3)
+        },
+        delete: @escaping DeleteFetcher = {
+            try RustCore.sharedDelete(driveID: $0, itemID: $1)
+        },
         openURL: @escaping OpenURLFn = SharedFilesStore.defaultOpenURL,
         copyLink: @escaping CopyLinkFn = SharedFilesStore.defaultCopyLink
     ) {
@@ -117,6 +138,10 @@ public final class SharedFilesStore: ObservableObject {
         self.uploadFetcher = upload
         self.downloadFetcher = download
         self.linkFetcher = link
+        self.renameFetcher = rename
+        self.moveFetcher = move
+        self.copyFetcher = copy
+        self.deleteFetcher = delete
         self.openURLFn = openURL
         self.copyLinkFn = copyLink
     }
@@ -351,6 +376,106 @@ public final class SharedFilesStore: ObservableObject {
         }
     }
 
+    // MARK: - om-i3-manage: rename/move/copy/delete
+
+    /// Rename via core PATCH. Demo mode renames the row locally.
+    /// No-op without a drive_id (offline rows) or when blank/unchanged.
+    public func rename(_ file: SharedFile, to newName: String) {
+        let name = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, name != file.name, !managingIDs.contains(file.id) else { return }
+        if isDemo {
+            files = Self.renamed(file.id, to: name, in: files)
+            return
+        }
+        guard let drive = file.drive_id else { return }
+        managingIDs.insert(file.id)
+        let fetcher = renameFetcher
+        let itemID = file.id
+        Task {
+            defer { managingIDs.remove(itemID) }
+            do {
+                let resp = try await Task.detached {
+                    try fetcher(drive, itemID, name)
+                }.value
+                files = Self.upsert(resp.file, into: files)
+            } catch {
+                state = .error(Self.message(for: error))
+            }
+        }
+    }
+
+    /// Move to another folder (same drive) via core PATCH. Demo mode is a
+    /// no-op: the row stays (no folder model offline).
+    public func move(_ file: SharedFile, toFolder destFolderID: String) {
+        let folder = destFolderID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !folder.isEmpty, !isDemo, !managingIDs.contains(file.id) else { return }
+        guard let drive = file.drive_id else { return }
+        managingIDs.insert(file.id)
+        let fetcher = moveFetcher
+        let itemID = file.id
+        Task {
+            defer { managingIDs.remove(itemID) }
+            do {
+                let resp = try await Task.detached {
+                    try fetcher(drive, itemID, folder)
+                }.value
+                files = Self.upsert(resp.file, into: files)
+            } catch {
+                state = .error(Self.message(for: error))
+            }
+        }
+    }
+
+    /// Copy to another folder (same drive, async server-side). The copy
+    /// lands outside this list, so the row list is untouched; callers
+    /// refresh to see server-side effects. Demo mode is a no-op.
+    public func copy(_ file: SharedFile, toFolder destFolderID: String, newName: String? = nil) {
+        let folder = destFolderID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !folder.isEmpty, !isDemo, !managingIDs.contains(file.id) else { return }
+        guard let drive = file.drive_id else { return }
+        managingIDs.insert(file.id)
+        let fetcher = copyFetcher
+        let itemID = file.id
+        let name = newName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        Task {
+            defer { managingIDs.remove(itemID) }
+            do {
+                _ = try await Task.detached {
+                    try fetcher(drive, itemID, folder, name)
+                }.value
+            } catch {
+                state = .error(Self.message(for: error))
+            }
+        }
+    }
+
+    /// Delete via core DELETE. Demo mode removes the row locally.
+    /// Without a drive_id there is nothing server-side to delete: the row
+    /// is dropped locally so the list still reflects the user's intent.
+    public func delete(_ file: SharedFile) {
+        guard !managingIDs.contains(file.id) else { return }
+        guard let drive = file.drive_id, !isDemo else {
+            files = Self.removed(file.id, from: files)
+            if files.isEmpty { state = .empty }
+            return
+        }
+        managingIDs.insert(file.id)
+        let fetcher = deleteFetcher
+        let itemID = file.id
+        Task {
+            defer { managingIDs.remove(itemID) }
+            do {
+                let resp = try await Task.detached {
+                    try fetcher(drive, itemID)
+                }.value
+                files = Self.removed(resp.id, from: files)
+                if files.isEmpty { state = .empty }
+            } catch {
+                state = .error(Self.message(for: error))
+            }
+        }
+    }
+
     /// ~/Downloads/<filename> (pure, testable).
     public static func downloadDestination(filename: String) -> String {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
@@ -368,6 +493,23 @@ public final class SharedFilesStore: ObservableObject {
         return out
     }
 
+    /// Pure remove: drops `id`, keeps order (delete path).
+    public static func removed(_ id: String, from list: [SharedFile]) -> [SharedFile] {
+        list.filter { $0.id != id }
+    }
+
+    /// Pure local rename (demo mode): swaps the name, keeps the row in place.
+    public static func renamed(_ id: String, to name: String, in list: [SharedFile]) -> [SharedFile] {
+        list.map { f in
+            guard f.id == id else { return f }
+            return SharedFile(
+                id: f.id, name: name, size: f.size, mime: f.mime,
+                web_url: f.web_url, download_url: f.download_url,
+                drive_id: f.drive_id, created: f.created, modified: f.modified,
+                sender: f.sender, attachment_id: f.attachment_id)
+        }
+    }
+
     static func message(for error: Error) -> String {
         if case CoreCallError.failed(let m) = error { return m }
         return String(describing: error)
@@ -377,6 +519,14 @@ public final class SharedFilesStore: ObservableObject {
 /// Shared-tab file list: rows with Open + Save, Upload + Refresh toolbar.
 public struct SharedFilesView: View {
     @ObservedObject public var store: SharedFilesStore
+    @State private var renameTarget: SharedFile?
+    @State private var renameName = ""
+    @State private var moveTarget: SharedFile?
+    @State private var moveFolder = ""
+    @State private var copyTarget: SharedFile?
+    @State private var copyFolder = ""
+    @State private var copyName = ""
+    @State private var deleteTarget: SharedFile?
 
     public init(store: SharedFilesStore) {
         self.store = store
@@ -390,6 +540,94 @@ public struct SharedFilesView: View {
             if !store.isRoot { Divider() }
             content
         }
+        .sheet(item: $renameTarget) { file in
+            renameSheet(file)
+        }
+        .sheet(item: $moveTarget) { file in
+            folderSheet(
+                title: "Move “\(file.name)”",
+                folder: $moveFolder,
+                actionLabel: "Move"
+            ) {
+                store.move(file, toFolder: moveFolder)
+                moveTarget = nil
+            }
+        }
+        .sheet(item: $copyTarget) { file in
+            VStack(spacing: 12) {
+                Text("Copy “\(file.name)”").font(.headline)
+                TextField("Destination folder id", text: $copyFolder)
+                    .textFieldStyle(.roundedBorder)
+                TextField("New name (optional)", text: $copyName)
+                    .textFieldStyle(.roundedBorder)
+                HStack {
+                    Spacer()
+                    Button("Cancel") { copyTarget = nil }.keyboardShortcut(.cancelAction)
+                    Button("Copy") {
+                        store.copy(
+                            file, toFolder: copyFolder,
+                            newName: copyName.isEmpty ? nil : copyName)
+                        copyTarget = nil
+                    }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(copyFolder.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
+            .padding()
+            .frame(minWidth: 320)
+        }
+        .alert(item: $deleteTarget) { file in
+            Alert(
+                title: Text("Delete “\(file.name)”?"),
+                message: Text("This removes the file from the shared library. This cannot be undone."),
+                primaryButton: .destructive(Text("Delete")) {
+                    store.delete(file)
+                },
+                secondaryButton: .cancel()
+            )
+        }
+    }
+
+    private func renameSheet(_ file: SharedFile) -> some View {
+        VStack(spacing: 12) {
+            Text("Rename “\(file.name)”").font(.headline)
+            TextField("New name", text: $renameName)
+                .textFieldStyle(.roundedBorder)
+            HStack {
+                Spacer()
+                Button("Cancel") { renameTarget = nil }.keyboardShortcut(.cancelAction)
+                Button("Rename") {
+                    store.rename(file, to: renameName)
+                    renameTarget = nil
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(renameName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding()
+        .frame(minWidth: 300)
+    }
+
+    private func folderSheet(
+        title: String,
+        folder: Binding<String>,
+        actionLabel: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        VStack(spacing: 12) {
+            Text(title).font(.headline)
+            TextField("Destination folder id", text: folder)
+                .textFieldStyle(.roundedBorder)
+            HStack {
+                Spacer()
+                Button("Cancel") { moveTarget = nil }.keyboardShortcut(.cancelAction)
+                Button(actionLabel, action: action)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(folder.wrappedValue.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        }
+        .padding()
+        .frame(minWidth: 300)
     }
 
     /// Back + breadcrumb trail (root "Files" + folder crumbs). Depth jumps
@@ -493,11 +731,37 @@ public struct SharedFilesView: View {
                     saving: store.savingIDs.contains(file.id),
                     linking: store.linkingIDs.contains(file.id),
                     linked: store.link(for: file) != nil,
+                    managing: store.managingIDs.contains(file.id),
                     onOpen: { store.open(file) },
                     onSave: { store.save(file) },
                     onDrill: { store.drill(file) },
                     onLink: { store.shareLink(file) }
                 )
+                // MARK: - om-i3-manage row context menu
+                .contextMenu {
+                    // MARK: om-i3-manage region
+                    Button("Rename…") {
+                        renameName = file.name
+                        renameTarget = file
+                    }
+                    .disabled(file.drive_id == nil && !store.isDemo)
+                    Button("Move to Folder…") {
+                        moveFolder = ""
+                        moveTarget = file
+                    }
+                    .disabled(file.drive_id == nil)
+                    Button("Copy to Folder…") {
+                        copyFolder = ""
+                        copyName = ""
+                        copyTarget = file
+                    }
+                    .disabled(file.drive_id == nil)
+                    Divider()
+                    Button("Delete…", role: .destructive) {
+                        deleteTarget = file
+                    }
+                    // end om-i3-manage region
+                }
             }
             .listStyle(.plain)
         }
@@ -519,6 +783,7 @@ struct SharedFileRow: View {
     var saving: Bool = false
     var linking: Bool = false
     var linked: Bool = false
+    var managing: Bool = false
     var onOpen: () -> Void = {}
     var onSave: () -> Void = {}
     var onDrill: () -> Void = {}
@@ -576,7 +841,7 @@ struct SharedFileRow: View {
                     }
                 }
                 Spacer()
-                if saving {
+                if saving || managing {
                     ProgressView().controlSize(.small)
                 } else {
                     if file.web_url != nil {
