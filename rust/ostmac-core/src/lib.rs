@@ -2321,7 +2321,7 @@ pub fn trouter_poll_typed_json() -> String {
     }
     let mut batch = realtime::parse_batch(&values);
     batch.skipped += unparseable;
-    let call_events = calls::scan_events(&events);
+    let call_events = calls::scan_values(&values);
     json!({
         "ok": true,
         "messages": batch.messages,
