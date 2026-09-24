@@ -149,7 +149,7 @@ struct OstMacAppMain: App {
         }
         .defaultSize(width: 440, height: 520)
         Window("Call A/V", id: AppIdentity.avWindowID) {
-            AvPanelView()
+            AvPanelView(screenShare: state.screenShare)
         }
         .defaultSize(width: 600, height: 740)
         Window("Diagnostics", id: AppIdentity.diagWindowID) {
@@ -211,6 +211,7 @@ final class AppState: ObservableObject {
     let auth = AuthViewModel()
     let presence = PresenceStore()
     let call: CallStore
+    let screenShare = ScreenShareModel()
     let notes = NotesStore()
     let showNotes: Bool
     let catchUp: CatchUpStore

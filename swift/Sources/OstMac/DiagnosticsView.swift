@@ -70,6 +70,9 @@ struct DiagnosticsView: View {
                     }
                 }
             }
+            Section("Screen share") {
+                ShareDiagRow(store: state.screenShare)
+            }
             Section("Call") {
                 callRow
                 if let err = state.call.error {
@@ -109,6 +112,23 @@ struct DiagnosticsView: View {
             LabeledContent("Active", value: "no call")
                 .foregroundStyle(DietColor.textSecondaryColor)
         }
+    }
+}
+
+/// Screen-share counters row (om-screenshare): observes the shared
+/// model so the counts tick while sharing. The only place share
+/// numbers appear — the tile shows status words only.
+struct ShareDiagRow: View {
+    @ObservedObject var store: ScreenShareModel
+
+    var body: some View {
+        LabeledContent(
+            "Sharing",
+            value: DiagnosticsFormat.shareLine(
+                source: store.phase.isLive ? store.sourceLabel : nil,
+                frames: store.framesCaptured,
+                sent: store.framesSent))
+            .textSelection(.enabled)
     }
 }
 
