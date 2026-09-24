@@ -154,6 +154,9 @@ public final class SharedFilesStore: ObservableObject {
     /// Sort + type filter (bound to the toolbar controls).
     @Published public var sort: SharedFilesSort = .date
     @Published public var filter: SharedFilesTypeFilter = .all
+    /// Drop queue (om-iu-dropquick): multi-file drops upload one at a
+    /// time, in drop order; the picker path enqueues a single path.
+    private var uploadQueue: [String] = []
     public private(set) var chatID: String?
     public private(set) var isDemo = false
 
@@ -379,13 +382,16 @@ public final class SharedFilesStore: ObservableObject {
         upload(paths: [path])
     }
 
-    /// Multi-upload (om-iu-rowdepth, matches the composer): probe every path,
-    /// pre-gate over-cap files into `gatedUploads`/`uploadError` (the fetcher
-    /// is never called for them), then upload the rest in pick order,
-    /// upserting each result. Failures mark `state` but don't stop later
+    /// Multi-upload (om-iu-rowdepth pre-gate + om-iu-dropquick queue):
+    /// probe every path, pre-gate over-cap files into
+    /// `gatedUploads`/`uploadError` (the fetcher is never called for
+    /// them), then enqueue the rest in pick order. Uploads run one at
+    /// a time via `drainUploadQueue` (re-entrant: drops arriving
+    /// mid-upload wait their turn); each result upserts into the
+    /// CURRENT level. Failures mark `state` but don't stop later
     /// files. Demo mode fabricates each row locally.
     public func upload(paths: [String]) {
-        guard !uploading, let id = chatID, !paths.isEmpty else { return }
+        guard !paths.isEmpty, chatID != nil else { return }
         var ok: [String] = []
         var gated: [(path: String, size: UInt64)] = []
         for path in paths {
@@ -416,27 +422,36 @@ public final class SharedFilesStore: ObservableObject {
             state = .loaded
             return
         }
+        uploadQueue.append(contentsOf: ok)
+        drainUploadQueue()
+    }
+
+    /// Upload the head of the queue, then the rest in order. Re-entrant:
+    /// drops arriving mid-upload wait their turn instead of dropping.
+    /// The `%` gauge polls while each upload streams.
+    private func drainUploadQueue() {
+        guard !uploading, let id = chatID, !uploadQueue.isEmpty else { return }
         uploading = true
         uploadProgress = nil
         let poll = startProgressPoll { [weak self] frac in
             self?.uploadProgress = frac
         }
+        let path = uploadQueue.removeFirst()
         Task {
             defer {
                 poll.cancel()
                 uploading = false
                 uploadProgress = nil
+                drainUploadQueue()
             }
             let fetcher = uploadFetcher
-            for path in ok {
-                do {
-                    let resp = try await Task.detached { try fetcher(id, path) }.value
-                    files = Self.upsert(resp.file, into: files)
-                    cache[currentKey] = files
-                    state = .loaded
-                } catch {
-                    state = .error(Self.message(for: error))
-                }
+            do {
+                let resp = try await Task.detached { try fetcher(id, path) }.value
+                files = Self.upsert(resp.file, into: files)
+                cache[currentKey] = files
+                state = .loaded
+            } catch {
+                state = .error(Self.message(for: error))
             }
         }
     }
@@ -776,6 +791,9 @@ public struct SharedFilesView: View {
     @State private var copyFolder = ""
     @State private var copyName = ""
     @State private var deleteTarget: SharedFile?
+    /// Drop highlight (om-iu-dropquick): accent outline while a file
+    /// drop hovers the tab.
+    @State private var dropTargeted = false
 
     public init(store: SharedFilesStore) {
         self.store = store
@@ -836,6 +854,12 @@ public struct SharedFilesView: View {
                 secondaryButton: .cancel()
             )
         }
+        .onDrop(of: FileDrop.dropTypes, isTargeted: $dropTargeted) { providers in
+            guard store.chatID != nil else { return false }
+            FileDrop.resolve(providers: providers) { store.upload(paths: $0) }
+            return true
+        }
+        .dropHighlight(active: dropTargeted)
     }
 
     private func renameSheet(_ file: SharedFile) -> some View {
@@ -923,6 +947,13 @@ public struct SharedFilesView: View {
                         .foregroundStyle(.green)
                         .lineLimit(1)
                         .textSelection(.enabled)
+                    if QuickLookPreview.canPreview(path: saved) {
+                        Button("Preview") {
+                            QuickLookPreview.shared.preview(paths: [saved])
+                        }
+                        .font(.caption)
+                        .help("Preview the saved file (Quick Look)")
+                    }
                 }
                 Spacer()
                 if store.uploading {

@@ -37,6 +37,8 @@ public struct ConversationView: View {
     @State private var gifHovering = false
     @State private var mentionHovering = false
     @State private var attachHovering = false
+    /// File-drop hover (om-iu-dropquick): accent outline on sendBox.
+    @State private var dropTargeted = false
     /// Forward tap (om-msgactions): the host opens its jump-palette sheet
     /// (OstMac target owns JumpPaletteView; this module cannot import it).
     private let onForward: (ChatMessage) -> Void
@@ -494,6 +496,13 @@ public struct ConversationView: View {
             // Shot hook: --show-gif opens the picker at launch.
             if CommandLine.arguments.contains("--show-gif") { showGIFs = true }
         }
+        // File drops stage like picker output (same cap gate); the
+        // attachment strip above shows the staged rows.
+        .onDrop(of: FileDrop.dropTypes, isTargeted: $dropTargeted) { providers in
+            FileDrop.resolve(providers: providers) { attachments.stage(paths: $0) }
+            return true
+        }
+        .dropHighlight(active: dropTargeted)
     }
 
     private func submit() {
