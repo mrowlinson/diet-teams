@@ -97,6 +97,13 @@ struct DiagnosticsView: View {
             Section("Quiet hours") {
                 QuietHoursDiagRow(store: state.quietHours)
             }
+            Section("Chat list") {
+                LabeledContent(
+                    "User pins",
+                    value: DiagnosticsFormat.pinsLine(
+                        count: state.chats.pins.count))
+                    .textSelection(.enabled)
+            }
             Section("Call") {
                 callRow
                 LabeledContent(

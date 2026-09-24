@@ -99,17 +99,27 @@ public struct ChatListSidebar: View {
                     ForEach(visible, id: \.id) { chat in
                         ChatRow(
                             chat: chat,
+                            isPinned: model.isPinned(chat.id),
                             peerAvailability: chat.is_group ? nil : .some(presence.availabilityForChat(chat.id))
                         )
                         .tag(chat.id)
                         .unreadBadge(unread.count(for: chat.id))
-                        // om-markunread: native row menu, top-level only
-                        // (never a submenu). Real threads only — the
-                        // synthetic pinned rows carry no read state.
-                        // Touches UnreadStore alone: the badge updates in
-                        // place, the list never refetches or re-sorts.
+                        // om-markunread + om-userpins: one native row menu,
+                        // top-level items only (never a submenu). Real
+                        // threads only — synthetic pinned rows carry no
+                        // read or pin state. Badge updates in place, the
+                        // list never refetches or re-sorts.
                         .contextMenu {
                             if !PinnedChats.isSynthetic(chat.id) {
+                                if model.isPinned(chat.id) {
+                                    Button("Unpin", systemImage: "pin.slash") {
+                                        model.unpin(chat.id)
+                                    }
+                                } else {
+                                    Button("Pin", systemImage: "pin") {
+                                        model.pin(chat.id)
+                                    }
+                                }
                                 if unread.count(for: chat.id) > 0 {
                                     Button("Mark as Read") {
                                         unread.markRead(chatID: chat.id)
@@ -169,6 +179,8 @@ public struct ChatListSidebar: View {
 
 struct ChatRow: View {
     let chat: ChatItem
+    /// User-pinned rows show a pin glyph by the timestamp.
+    var isPinned: Bool = false
     /// Chatmate availability for 1:1 chats. Outer nil = group (no dot);
     /// inner nil = unknown (no dot, fail closed).
     var peerAvailability: String?? = nil
@@ -190,6 +202,12 @@ struct ChatRow: View {
                         .foregroundStyle(DietColor.textPrimaryColor)
                         .lineLimit(1)
                     Spacer()
+                    if isPinned {
+                        Image(systemName: "pin.fill")
+                            .font(.system(size: DietSize.iconSM))
+                            .foregroundStyle(DietColor.textTertiaryColor)
+                            .accessibilityLabel("Pinned")
+                    }
                     Text(ChatListFormat.previewTime(chat.last_message_time))
                         .font(DietType.captionMono)
                         .foregroundStyle(DietColor.textTertiaryColor)
@@ -223,4 +241,5 @@ extension View {
             self
         }
     }
+
 }

@@ -450,6 +450,12 @@ final class AppState: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.objectWillChange.send() }
             .store(in: &cancellables)
+        // om-userpins: forward chat-list changes so the Diagnostics
+        // pin count ticks live (the model already forwards its store).
+        chats.objectWillChange
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &cancellables)
         history.onRedial = { [weak self] record in
             Task { @MainActor [weak self] in self?.redial(record) }
         }

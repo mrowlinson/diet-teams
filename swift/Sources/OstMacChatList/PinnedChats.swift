@@ -21,6 +21,12 @@
 // the pinned position, and keeps its own id so its unread/counts
 // entries still apply. Real threads never dedupe against each other:
 // same-named extras stay in recency.
+//
+// om-userpins: user-pinned chats form a third section between the two
+// synthetic rows and recency, in pin-time order (oldest pin first).
+// `sorted(_:pins:)` extends the pindedupe partition — the synthetic
+// occupant logic is unchanged, and a pinned chat that already
+// occupies a synthetic slot stays there (never duplicated below).
 import Foundation
 import OstMacCore
 
@@ -42,6 +48,14 @@ public enum PinnedChats {
     /// True for the two synthetic ids, false for every real chat id.
     public static func isSynthetic(_ id: String) -> Bool {
         id == mentionsID || id == notificationsID
+    }
+
+    /// True when a chat id can be user-pinned: a non-blank real id.
+    /// Synthetic rows are already pinned by construction (pinning
+    /// them would duplicate the top-two slots), so they refuse.
+    public static func isPinnable(_ id: String) -> Bool {
+        !isSynthetic(id)
+            && !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     /// Stable identity shared by a synthetic row and any real thread
@@ -95,7 +109,23 @@ public enum PinnedChats {
     /// dropped — the survivor keeps its own id, so unread/counts keyed
     /// by that id still apply. Real threads never collapse into each
     /// other: same-named extras stay in recency order.
+    ///
+    /// Shorthand for `sorted(_:pins:)` with no user pins.
     public static func sorted(_ chats: [ChatItem]) -> [ChatItem] {
+        sorted(chats, pins: [])
+    }
+
+    /// Full sidebar order: the two synthetic occupants (pindedupe
+    /// partition, unchanged), then user-pinned chats in pin-time
+    /// order (oldest pin first — `pins` array order), then the
+    /// remaining real chats in their original order. Unknown pin
+    /// ids (chat gone or beyond the fetch window) don't render
+    /// but stay in `pins` (the store never prunes — a later fetch
+    /// restores the row); synthetic pin ids and duplicate pins
+    /// are skipped; a pinned chat that already occupies a
+    /// synthetic slot stays there (never duplicated below).
+    /// Idempotent for a fixed pin list.
+    public static func sorted(_ chats: [ChatItem], pins: [String]) -> [ChatItem] {
         var seen = Set<String>()
         var unique: [ChatItem] = []
         unique.reserveCapacity(chats.count)
@@ -106,14 +136,30 @@ public enum PinnedChats {
         let mentions = occupant(slotID: mentionsID, factory: mentionsRow, in: unique)
         let notifications = occupant(slotID: notificationsID, factory: notificationsRow, in: unique)
         let occupantIDs: Set<String> = [mentions.id, notifications.id]
+        var byID: [String: ChatItem] = [:]
+        byID.reserveCapacity(unique.count)
+        for chat in unique where byID[chat.id] == nil {
+            byID[chat.id] = chat
+        }
+        var pinned: [ChatItem] = []
+        pinned.reserveCapacity(pins.count)
+        var pinnedIDs = Set<String>()
+        for id in pins {
+            guard isPinnable(id) else { continue }
+            guard !occupantIDs.contains(id) else { continue }
+            guard pinnedIDs.insert(id).inserted else { continue }
+            guard let chat = byID[id] else { continue }
+            pinned.append(chat)
+        }
         var rest: [ChatItem] = []
         rest.reserveCapacity(unique.count)
         for chat in unique {
             if occupantIDs.contains(chat.id) { continue }
+            if pinnedIDs.contains(chat.id) { continue }
             if isSynthetic(chat.id) { continue }
             rest.append(chat)
         }
-        return [mentions, notifications] + rest
+        return [mentions, notifications] + pinned + rest
     }
 
     /// One slot's occupant: the first real thread sharing the slot's

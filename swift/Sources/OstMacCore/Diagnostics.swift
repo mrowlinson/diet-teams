@@ -138,4 +138,11 @@ public enum DiagnosticsFormat {
     public static func notifLine(posted: Int, skipped: Int, lastReason: String) -> String {
         "\(posted) posted · \(skipped) skipped · last \(lastReason.isEmpty ? "—" : lastReason)"
     }
+
+    /// User-pin one-liner (om-userpins): persisted pin count.
+    /// Diagnostics window only — sidebar rows show a pin glyph,
+    /// never a number.
+    public static func pinsLine(count: Int) -> String {
+        "\(count) pinned"
+    }
 }

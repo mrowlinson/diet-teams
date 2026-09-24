@@ -68,4 +68,9 @@ final class DiagnosticsTests: XCTestCase {
                 posted: 3, skipped: 1, lastReason: "chat-message"),
             "3 posted · 1 skipped · last chat-message")
     }
+
+    func testPinsLine() {
+        XCTAssertEqual(DiagnosticsFormat.pinsLine(count: 0), "0 pinned")
+        XCTAssertEqual(DiagnosticsFormat.pinsLine(count: 2), "2 pinned")
+    }
 }
