@@ -1251,6 +1251,116 @@ pub fn files_download_json(drive_id: &str, item_id: &str, dest: &str) -> String 
 }
 
 // ---------------------------------------------------------------------------
+// File versions (om-i2-versions lane: Graph driveItemVersion history)
+// ---------------------------------------------------------------------------
+
+fn file_version_to_json(v: &ost::api::FileVersion) -> serde_json::Value {
+    json!({
+        "id": v.id,
+        "size": v.size,
+        "modified": v.modified,
+        "modified_by": v.modified_by,
+    })
+}
+
+/// Version history for one driveItem as JSON. Requires sign-in; unsigned
+/// yields `{ok:false}`. Empty ids are rejected before any network.
+/// Returns `{ok:true, drive_id, item_id, versions:[...]}` (newest first).
+pub fn file_versions_json(drive_id: &str, item_id: &str) -> String {
+    if drive_id.trim().is_empty() {
+        return err_json("arg", "empty drive_id");
+    }
+    if item_id.trim().is_empty() {
+        return err_json("arg", "empty item_id");
+    }
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let versions = ost::api::list_file_versions_data(&client, drive_id, item_id)
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let items: Vec<_> = versions.iter().map(file_version_to_json).collect();
+            Ok(json!({"ok": true, "drive_id": drive_id, "item_id": item_id, "versions": items}).to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("file_versions", e),
+    }
+}
+
+/// Restore one version as current (Graph `restoreVersion` action).
+/// Returns `{ok:true, drive_id, item_id, version_id}`.
+pub fn file_version_restore_json(drive_id: &str, item_id: &str, version_id: &str) -> String {
+    if drive_id.trim().is_empty() {
+        return err_json("arg", "empty drive_id");
+    }
+    if item_id.trim().is_empty() {
+        return err_json("arg", "empty item_id");
+    }
+    if version_id.trim().is_empty() {
+        return err_json("arg", "empty version_id");
+    }
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            ost::api::restore_file_version_data(&client, drive_id, item_id, version_id)
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            Ok(json!({"ok": true, "drive_id": drive_id, "item_id": item_id, "version_id": version_id}).to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("file_version_restore", e),
+    }
+}
+
+/// Download one old version's content to `dest`.
+/// Returns `{ok:true, path, bytes}`.
+pub fn file_version_download_json(
+    drive_id: &str,
+    item_id: &str,
+    version_id: &str,
+    dest: &str,
+) -> String {
+    if drive_id.trim().is_empty() {
+        return err_json("arg", "empty drive_id");
+    }
+    if item_id.trim().is_empty() {
+        return err_json("arg", "empty item_id");
+    }
+    if version_id.trim().is_empty() {
+        return err_json("arg", "empty version_id");
+    }
+    if dest.trim().is_empty() {
+        return err_json("arg", "empty dest");
+    }
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let n = ost::api::download_file_version_data(&client, drive_id, item_id, version_id, dest)
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            Ok(json!({"ok": true, "path": dest, "bytes": n}).to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("file_version_download", e),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Presence (om-presence lane: ost CLI get/set + TUI LoadPresence parity)
 // ---------------------------------------------------------------------------
 
@@ -2404,6 +2514,69 @@ pub extern "C" fn ostmac_files_download(
     };
     match cstr_to_string(dest) {
         Ok(d) => string_to_c(files_download_json(&drive, &item, &d)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
+/// Version history for one driveItem. See [`file_versions_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_file_versions(
+    drive_id: *const c_char,
+    item_id: *const c_char,
+) -> *mut c_char {
+    let drive = match cstr_to_string(drive_id) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    match cstr_to_string(item_id) {
+        Ok(item) => string_to_c(file_versions_json(&drive, &item)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
+/// Restore one version as current. See [`file_version_restore_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_file_version_restore(
+    drive_id: *const c_char,
+    item_id: *const c_char,
+    version_id: *const c_char,
+) -> *mut c_char {
+    let drive = match cstr_to_string(drive_id) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    let item = match cstr_to_string(item_id) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    match cstr_to_string(version_id) {
+        Ok(v) => string_to_c(file_version_restore_json(&drive, &item, &v)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
+/// Download one old version's content to `dest`. See [`file_version_download_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_file_version_download(
+    drive_id: *const c_char,
+    item_id: *const c_char,
+    version_id: *const c_char,
+    dest: *const c_char,
+) -> *mut c_char {
+    let drive = match cstr_to_string(drive_id) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    let item = match cstr_to_string(item_id) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    let ver = match cstr_to_string(version_id) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    match cstr_to_string(dest) {
+        Ok(d) => string_to_c(file_version_download_json(&drive, &item, &ver, &d)),
         Err(e) => string_to_c(err_json("arg", e)),
     }
 }
@@ -4175,6 +4348,97 @@ mod tests {
         let m = CString::new("8:skypeids:aaa").unwrap();
         unsafe {
             let p = ostmac_resolve_mri(m.as_ptr());
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
+    fn file_version_json_shape() {
+        let f = ost::api::FileVersion {
+            id: "3.0".to_string(),
+            size: 48211,
+            modified: Some("2026-09-20T10:00:00Z".to_string()),
+            modified_by: Some("Priya Nair".to_string()),
+        };
+        let v = file_version_to_json(&f);
+        assert_eq!(v["id"], "3.0");
+        assert_eq!(v["size"], 48211);
+        assert_eq!(v["modified"], "2026-09-20T10:00:00Z");
+        assert_eq!(v["modified_by"], "Priya Nair");
+        let sparse = ost::api::FileVersion {
+            id: "1.0".to_string(),
+            size: 0,
+            modified: None,
+            modified_by: None,
+        };
+        let s = file_version_to_json(&sparse);
+        assert_eq!(s["id"], "1.0");
+        assert!(s["modified"].is_null());
+        assert!(s["modified_by"].is_null());
+    }
+
+    #[test]
+    fn versions_rejects_empty_args_without_network() {
+        for (d, i) in [("", "i"), ("d", ""), ("  ", "i")] {
+            let v: serde_json::Value =
+                serde_json::from_str(&file_versions_json(d, i)).unwrap();
+            assert_eq!(v["ok"], false, "d={:?} i={:?}", d, i);
+            assert_eq!(v["error"], "arg");
+        }
+        for (d, i, ver) in [("", "i", "1.0"), ("d", "", "1.0"), ("d", "i", "  ")] {
+            let v: serde_json::Value =
+                serde_json::from_str(&file_version_restore_json(d, i, ver)).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
+        for (d, i, ver, dst) in [
+            ("", "i", "1.0", "/tmp/x"),
+            ("d", "", "1.0", "/tmp/x"),
+            ("d", "i", "", "/tmp/x"),
+            ("d", "i", "1.0", "  "),
+        ] {
+            let v: serde_json::Value =
+                serde_json::from_str(&file_version_download_json(d, i, ver, dst)).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
+    fn ffi_versions_null_is_arg_error() {
+        let d = CString::new("D1").unwrap();
+        let it = CString::new("I1").unwrap();
+        let ver = CString::new("1.0").unwrap();
+        unsafe {
+            let p = ostmac_file_versions(d.as_ptr(), std::ptr::null());
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
+        unsafe {
+            let p = ostmac_file_version_restore(d.as_ptr(), it.as_ptr(), std::ptr::null());
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
+        unsafe {
+            let p = ostmac_file_version_download(
+                d.as_ptr(),
+                it.as_ptr(),
+                ver.as_ptr(),
+                std::ptr::null(),
+            );
             assert!(!p.is_null());
             let s = CStr::from_ptr(p).to_string_lossy().into_owned();
             ostmac_free(p);

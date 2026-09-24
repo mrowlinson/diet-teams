@@ -929,6 +929,75 @@ public struct SharedFileDownloadResponse: Decodable, Sendable {
     public let bytes: UInt64
 }
 
+// MARK: - File versions (om-i2-versions lane)
+
+/// One file version from core `ostmac_file_versions` (Graph
+/// driveItemVersion projection, newest first). `modified_by` is the
+/// last-modifier display name; both optionals are nil on sparse items.
+public struct FileVersion: Decodable, Sendable, Identifiable, Equatable {
+    public let id: String
+    public let size: UInt64
+    public let modified: String?
+    public let modified_by: String?
+
+    public init(
+        id: String, size: UInt64 = 0,
+        modified: String? = nil, modified_by: String? = nil
+    ) {
+        self.id = id
+        self.size = size
+        self.modified = modified
+        self.modified_by = modified_by
+    }
+
+    /// "48211" -> "47.1 KB" (shared files scale).
+    public var sizeLabel: String {
+        SharedFile.sizeLabel(size)
+    }
+
+    /// "v3.0 · Priya Nair · 2026-09-20T10:00:00Z" (known parts only).
+    public var subtitle: String {
+        var parts = ["v\(id)"]
+        if let by = modified_by, !by.isEmpty { parts.append(by) }
+        if let m = modified, !m.isEmpty { parts.append(m) }
+        return parts.joined(separator: " · ")
+    }
+}
+
+public struct FileVersionsResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let drive_id: String?
+    public let item_id: String?
+    public let versions: [FileVersion]
+
+    public init(
+        ok: Bool, drive_id: String? = nil, item_id: String? = nil,
+        versions: [FileVersion]
+    ) {
+        self.ok = ok
+        self.drive_id = drive_id
+        self.item_id = item_id
+        self.versions = versions
+    }
+}
+
+public struct FileVersionRestoreResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let drive_id: String?
+    public let item_id: String?
+    public let version_id: String?
+
+    public init(
+        ok: Bool, drive_id: String? = nil, item_id: String? = nil,
+        version_id: String? = nil
+    ) {
+        self.ok = ok
+        self.drive_id = drive_id
+        self.item_id = item_id
+        self.version_id = version_id
+    }
+}
+
 // MARK: - Presence (om-presence lane)
 
 /// Own presence from core `ostmac_presence` / `ostmac_presence_set`
