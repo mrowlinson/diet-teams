@@ -22,12 +22,12 @@ Chat & conversation
   (bring-your-own Tenor key).
 
 Teams, meetings, reminders, notes
-: Teams/channels browser; upcoming meetings + join-string parsing; To Do
-  lists/tasks; OneNote notebooks/sections/pages read + paragraph append.
+: Teams/channels browser; upcoming meetings + join-string parsing + lobby;
+  To Do lists/tasks; OneNote notebooks/sections/pages read + paragraph append.
 
 Calls
 : Signaling (place/accept/end, echo-bot test), live A/V banner,
-  mic/speaker/camera panel with probes, recent call history.
+  mic/speaker/camera panel with probes, screen sharing, recent call history.
 
 Notifications & presence
 : Native banners with rules, quiet hours, @me/@team mention alerts,
