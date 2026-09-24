@@ -693,8 +693,11 @@ public struct OpenCodeCLICatchUpTransport: CatchUpTransport {
 
 /// Catch-up state for the app. Non-secret config persists in
 /// UserDefaults (OFF default); the key lives in the key store (live:
-/// macOS keychain) and is only ever in memory on `config`. The
-/// summary state resets per tap.
+/// macOS keychain) and is only ever in memory on `config`. The key
+/// store is read LAZILY (first run with a key-needing provider, or
+/// Settings open) — init never touches it, so app launch cannot
+/// trigger a SecurityAgent prompt on re-signed builds. The summary
+/// state resets per tap.
 @MainActor
 public final class CatchUpStore: ObservableObject {
     public enum State: Equatable {
@@ -709,8 +712,9 @@ public final class CatchUpStore: ObservableObject {
         static let enabled = "catchup.enabled"
         static let baseURL = "catchup.baseURL"
         static let model = "catchup.model"
-        /// Legacy: the pre-keychain lane kept the key here. Read once
-        /// for migration, never written.
+        /// Legacy: the pre-keychain lane kept the key here. Read
+        /// lazily once for migration (see ensureKeyLoaded), never
+        /// written.
         static let legacyKey = "catchup.apiKey"
     }
 
@@ -734,6 +738,13 @@ public final class CatchUpStore: ObservableObject {
     private let cliTransport: any CatchUpTransport
     private let defaults: UserDefaults
     private let keys: any CatchUpKeyStore
+    /// True once the key state is known (lazy load ran, or a key was
+    /// set explicitly). Guards save() from wiping the stored key
+    /// with a pre-load empty apiKey.
+    private var keyLoaded = false
+    /// Suppresses the key write for the assignment that adopts a
+    /// just-loaded key (no write-back of the identical value).
+    private var skipKeyWrite = false
 
     /// Nonisolated so views can take a default `CatchUpStore()` in
     /// their (nonisolated) inits; all members stay main-actor-isolated.
@@ -758,15 +769,8 @@ public final class CatchUpStore: ObservableObject {
         if defaults.bool(forKey: Keys.enabled) { cfg.enabled = true }
         if let b = defaults.string(forKey: Keys.baseURL), !b.isEmpty { cfg.baseURL = b }
         if let m = defaults.string(forKey: Keys.model), !m.isEmpty { cfg.model = m }
-        if let k = keys.load(), !k.isEmpty {
-            cfg.apiKey = k
-        } else if let legacy = defaults.string(forKey: Keys.legacyKey), !legacy.isEmpty {
-            // One-time migration: move the pre-keychain key into the
-            // key store, scrub it from defaults.
-            cfg.apiKey = legacy
-            keys.save(legacy)
-            defaults.removeObject(forKey: Keys.legacyKey)
-        }
+        // No key-store touch here: the key loads lazily via
+        // ensureKeyLoaded (first key-needing run, or Settings open).
         _config = Published(initialValue: cfg)
         _state = Published(initialValue: .idle)
         _lastError = Published(initialValue: nil)
@@ -785,6 +789,11 @@ public final class CatchUpStore: ObservableObject {
             lastError = .off
             state = .failed(CatchUpError.off.message)
             return
+        }
+        // Lazy key read: only a key-needing (direct HTTPS) provider
+        // touches the key store; the CLI provider never does.
+        if config.provider != .openCodeCLI {
+            ensureKeyLoaded()
         }
         let hasKey = !config.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         if config.provider != .openCodeCLI, !hasKey {
@@ -844,13 +853,40 @@ public final class CatchUpStore: ObservableObject {
         config = config.withProvider(provider)
     }
 
+    /// Lazy key load: reads the key store at most once per store —
+    /// on the first run with a key-needing provider (via
+    /// summarize) or when Settings opens — never at init/launch.
+    /// A no-op when a key is already set. Includes the one-time
+    /// legacy-defaults migration (persist via save, scrubbed).
+    public func ensureKeyLoaded() {
+        guard !keyLoaded else { return }
+        keyLoaded = true
+        guard config.apiKey.isEmpty else { return }
+        if let k = keys.load(), !k.isEmpty {
+            skipKeyWrite = true
+            config.apiKey = k
+            skipKeyWrite = false
+        } else if let legacy = defaults.string(forKey: Keys.legacyKey), !legacy.isEmpty {
+            config.apiKey = legacy
+            defaults.removeObject(forKey: Keys.legacyKey)
+        }
+    }
+
     private func save() {
         defaults.set(config.provider.rawValue, forKey: Keys.provider)
         defaults.set(config.enabled, forKey: Keys.enabled)
         defaults.set(config.baseURL, forKey: Keys.baseURL)
         defaults.set(config.model, forKey: Keys.model)
-        // Key → key store only. Never UserDefaults (see migration in
-        // init for the one pre-keychain exception we scrub).
-        keys.save(config.apiKey)
+        // Key → key store only. Never UserDefaults (see the legacy
+        // migration in ensureKeyLoaded for the one pre-keychain
+        // exception we scrub). A pre-load empty apiKey means "not
+        // loaded", not "no key" — writing it would wipe the stored
+        // key, so the write waits until the key state is known. An
+        // explicitly set (non-empty) key always persists, and marks
+        // the state known so a later clear propagates.
+        if !config.apiKey.isEmpty { keyLoaded = true }
+        if !skipKeyWrite, keyLoaded {
+            keys.save(config.apiKey)
+        }
     }
 }

@@ -836,7 +836,7 @@ public final class ConversationStore: ObservableObject {
 
     public nonisolated static let demoMessages: [ChatMessage] = [
         ChatMessage(
-            id: "demo-1", sender: "Priya Nair",
+            id: "demo-1", sender: "Megan Harper",
             timestamp: "2026-09-22T09:02:11Z",
             content: "Morning! Design sync in 10. Today: onboarding flow + empty states."),
         ChatMessage(
@@ -844,7 +844,7 @@ public final class ConversationStore: ObservableObject {
             timestamp: "2026-09-22T09:04:47Z",
             content: "Pushed new mocks for the chat window last night — bubbles, timestamps, the works."),
         ChatMessage(
-            id: "demo-3", sender: "Priya Nair",
+            id: "demo-3", sender: "Megan Harper",
             timestamp: "2026-09-22T09:06:02Z",
             content: "Love the bubble alignment. Can we keep edited messages in place instead of re-sorting?"),
         ChatMessage(
@@ -860,7 +860,7 @@ public final class ConversationStore: ObservableObject {
             timestamp: "2026-09-22T09:10:41Z",
             content: "Optimistic bubble first, then the core send call confirms. Failures surface inline.", isOwn: true),
         ChatMessage(
-            id: "demo-7", sender: "Priya Nair",
+            id: "demo-7", sender: "Megan Harper",
             timestamp: "2026-09-22T09:12:05Z",
             content: "Ship it. I'll take screenshots for the review deck."),
     ]
@@ -894,7 +894,7 @@ public final class ConversationStore: ObservableObject {
         }
         return [
             ChatMessage(
-                id: "rich-1", sender: "Priya Nair",
+                id: "rich-1", sender: "Megan Harper",
                 timestamp: iso(at(dayOffset: -1, h: 16, m: 2)),
                 content: "Kicking off the richness pass. @Tom Becker can you own code blocks?",
                 raw: "<p>Kicking off the richness pass. <at id=\"8:t\">@Tom Becker</at> can you own code blocks?</p>"),
@@ -914,7 +914,7 @@ public final class ConversationStore: ObservableObject {
                 content: "Morning — paging works, backwardLink chains with zero overlap.",
                 isOwn: true),
             ChatMessage(
-                id: "rich-5", sender: "Priya Nair",
+                id: "rich-5", sender: "Megan Harper",
                 timestamp: iso(at(dayOffset: 0, h: 9, m: 4)),
                 content: "Nice. @Me please double-check the edited marker on this bubble.",
                 raw: "<p>Nice. <at id=\"8:me\">@Me</at> please double-check the edited marker on this bubble.</p>",

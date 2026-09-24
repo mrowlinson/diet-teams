@@ -82,7 +82,7 @@ final class ReactionsTests: XCTestCase {
         let id = store.messages[0].id
         let before = store.messages.count
         store.ingest(realtime: RealtimeMessage(
-            chatID: "demo", msgId: id, sender: "Priya Nair",
+            chatID: "demo", msgId: id, sender: "Megan Harper",
             text: "", time: "t", isEdit: false,
             reactions: [ReactionCount(emoji: "👍", count: 5)]))
         XCTAssertEqual(store.messages.count, before)

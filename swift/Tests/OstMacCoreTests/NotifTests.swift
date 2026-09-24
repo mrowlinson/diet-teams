@@ -7,7 +7,7 @@ import XCTest
 final class NotifTests: XCTestCase {
     func realtime(
         chat: String = "19:abc@thread.v2", id: String = "m1",
-        sender: String = "Priya Nair", text: String = "hello", edit: Bool = false
+        sender: String = "Megan Harper", text: String = "hello", edit: Bool = false
     ) -> RealtimeMessage {
         RealtimeMessage(
             chatID: chat, msgId: id, sender: sender,
@@ -29,7 +29,7 @@ final class NotifTests: XCTestCase {
         XCTAssertEqual(posted.count, 1)
         XCTAssertEqual(posted[0].id, "m1")
         XCTAssertEqual(posted[0].chatID, "19:abc@thread.v2")
-        XCTAssertEqual(posted[0].title, "Priya Nair")
+        XCTAssertEqual(posted[0].title, "Megan Harper")
         XCTAssertEqual(posted[0].body, "hello")
         // Delivered log replays the post (banner proof surface).
         let delivered = await notifs.delivered()
@@ -39,7 +39,7 @@ final class NotifTests: XCTestCase {
     func testGroupTitleNamesChat() {
         let note = MessageNotifications.makeNotification(
             for: realtime(), chatName: "Design Sync")
-        XCTAssertEqual(note?.title, "Priya Nair in Design Sync")
+        XCTAssertEqual(note?.title, "Megan Harper in Design Sync")
     }
 
     func testSkipsOwnMessage() {
@@ -169,22 +169,22 @@ final class NotifTests: XCTestCase {
             for: realtime(), chatName: "Design Sync", reason: "chat-message")
         XCTAssertEqual(note.id, "m1")
         XCTAssertEqual(note.chatID, "19:abc@thread.v2")
-        XCTAssertEqual(note.title, "Priya Nair in Design Sync")
+        XCTAssertEqual(note.title, "Megan Harper in Design Sync")
         XCTAssertEqual(note.body, "hello")
     }
 
     func testMakeRulesNoteBareChat() {
         let note = MessageNotifications.makeRulesNote(
             for: realtime(), chatName: "", reason: "chat-message")
-        XCTAssertEqual(note.title, "Priya Nair")
+        XCTAssertEqual(note.title, "Megan Harper")
         XCTAssertEqual(note.body, "hello")
     }
 
     func testMakeRulesNoteDirectChatCollapses() {
         // 1:1 chat: chat name is the sender — never "X in X".
         let note = MessageNotifications.makeRulesNote(
-            for: realtime(), chatName: "Priya Nair", reason: "chat-message")
-        XCTAssertEqual(note.title, "Priya Nair")
+            for: realtime(), chatName: "Megan Harper", reason: "chat-message")
+        XCTAssertEqual(note.title, "Megan Harper")
         XCTAssertEqual(note.body, "hello")
     }
 

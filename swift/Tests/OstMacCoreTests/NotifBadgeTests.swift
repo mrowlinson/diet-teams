@@ -8,8 +8,8 @@ final class NotifBadgeTests: XCTestCase {
     func msg(
         chatID: String = "19:chat@thread.v2",
         msgId: String = "m1",
-        sender: String = "Priya",
-        senderID: String? = "8:orgid:priya",
+        sender: String = "Megan",
+        senderID: String? = "8:orgid:megan",
         text: String = "hello",
         time: String = "2026-09-23T10:00:00Z",
         isEdit: Bool = false,

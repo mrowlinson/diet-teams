@@ -39,7 +39,7 @@ final class SettingsTrimTests: XCTestCase {
         let fake = FakeNotificationCenter()
         let notifs = MessageNotifications(backend: fake, defaults: defaults)
         await notifs.handle(RealtimeMessage(
-            chatID: "19:abc@thread.v2", msgId: "m1", sender: "Priya Nair",
+            chatID: "19:abc@thread.v2", msgId: "m1", sender: "Megan Harper",
             text: "hello", time: "2026-09-23T10:00:00Z",
             isEdit: false, editedID: nil))
         let posted = await fake.posted

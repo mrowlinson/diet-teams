@@ -42,7 +42,7 @@ final class AppIdentityTests: XCTestCase {
     func testChatItemInit() {
         let c = ChatItem(chatId: "19:x", name: "Grp", is_group: true,
                          last_message_time: "2026-09-22T09:12:05Z",
-                         last_message_sender: "Priya", last_message_preview: "hi")
+                         last_message_sender: "Megan", last_message_preview: "hi")
         XCTAssertEqual(c.id, "19:x")
         XCTAssertEqual(c.name, "Grp")
         XCTAssertTrue(c.is_group)

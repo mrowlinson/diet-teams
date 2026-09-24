@@ -179,7 +179,7 @@ public struct InlineDocRows: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: DietSpace.sm) {
             ForEach(docs) { doc in
                 InlineDocRow(doc: doc, onOpen: { onOpen(doc) })
             }
@@ -192,14 +192,14 @@ struct InlineDocRow: View {
     var onOpen: () -> Void = {}
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: DietSpace.sm) {
             InlineDocIcon(fileName: doc.name, fallback: doc.iconName)
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: DietSpace.xxs) {
                 Text(doc.name)
                     .font(.body)
                     .lineLimit(1)
                     .textSelection(.enabled)
-                HStack(spacing: 6) {
+                HStack(spacing: DietSpace.xs) {
                     Text(doc.sizeLabel)
                         .font(.caption).monospaced()
                         .foregroundStyle(.secondary)
@@ -211,7 +211,7 @@ struct InlineDocRow: View {
                     }
                 }
             }
-            Spacer(minLength: 8)
+            Spacer(minLength: DietSpace.sm)
             if InlineDocs.openTarget(for: doc) != nil {
                 Button("Open", action: onOpen)
                     .buttonStyle(.link)

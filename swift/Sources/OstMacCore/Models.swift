@@ -1177,7 +1177,7 @@ public struct FileVersion: Decodable, Sendable, Identifiable, Equatable {
         SharedFile.sizeLabel(size)
     }
 
-    /// "v3.0 · Priya Nair · 2026-09-20T10:00:00Z" (known parts only).
+    /// "v3.0 · Megan Harper · 2026-09-20T10:00:00Z" (known parts only).
     public var subtitle: String {
         var parts = ["v\(id)"]
         if let by = modified_by, !by.isEmpty { parts.append(by) }

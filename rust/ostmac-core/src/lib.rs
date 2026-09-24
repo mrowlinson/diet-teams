@@ -5267,7 +5267,7 @@ mod tests {
             drive_id: Some("D1".to_string()),
             created: Some("2026-09-20T10:00:00Z".to_string()),
             modified: None,
-            sender: Some("Priya Nair".to_string()),
+            sender: Some("Megan Harper".to_string()),
             is_folder: false,
             attachment_id: Some("550E8400-E29B-41D4-A716-446655440000".to_string()),
             share_url: Some("https://sp/share/ABC".to_string()),
@@ -5278,7 +5278,7 @@ mod tests {
         assert_eq!(v["size"], 48211);
         assert_eq!(v["mime"], "application/pdf");
         assert_eq!(v["drive_id"], "D1");
-        assert_eq!(v["sender"], "Priya Nair");
+        assert_eq!(v["sender"], "Megan Harper");
         assert_eq!(v["is_folder"], false);
         assert_eq!(v["attachment_id"], "550E8400-E29B-41D4-A716-446655440000");
         assert_eq!(v["share_url"], "https://sp/share/ABC");
@@ -5533,13 +5533,13 @@ mod tests {
             id: "3.0".to_string(),
             size: 48211,
             modified: Some("2026-09-20T10:00:00Z".to_string()),
-            modified_by: Some("Priya Nair".to_string()),
+            modified_by: Some("Megan Harper".to_string()),
         };
         let v = file_version_to_json(&f);
         assert_eq!(v["id"], "3.0");
         assert_eq!(v["size"], 48211);
         assert_eq!(v["modified"], "2026-09-20T10:00:00Z");
-        assert_eq!(v["modified_by"], "Priya Nair");
+        assert_eq!(v["modified_by"], "Megan Harper");
         let sparse = ost::api::FileVersion {
             id: "1.0".to_string(),
             size: 0,

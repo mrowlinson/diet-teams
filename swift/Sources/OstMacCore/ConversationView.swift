@@ -339,6 +339,7 @@ public struct ConversationView: View {
                 }
                 .buttonStyle(.borderless)
                 .disabled(call.busy || (call.call?.isActive ?? false))
+                .accessibilityLabel("Call options")
                 .help("Call this chat")
             }
             if CatchUp.shouldOffer(messageCount: store.messages.count) {
@@ -351,7 +352,7 @@ public struct ConversationView: View {
             if store.loading { ProgressView().controlSize(.small) }
             Text("\(store.messages.count)")
                 .font(DietType.captionMono)
-                .foregroundStyle(DietColor.textTertiaryColor)
+                .foregroundStyle(DietColor.textSecondaryColor)
                 .help("\(store.messages.count) messages loaded")
                 .accessibilityLabel("\(store.messages.count) messages")
         }
@@ -386,6 +387,8 @@ public struct ConversationView: View {
                                 .foregroundStyle(DietColor.textTertiaryColor)
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel("Cancel reply")
+                        .plainFocusRing()
                         .help("Cancel reply")
                     }
                     .padding(.horizontal, DietSpace.md)
@@ -418,6 +421,8 @@ public struct ConversationView: View {
                 }
                 .buttonStyle(.plain)
                 .onHover { attachHovering = $0 }
+                .accessibilityLabel("Attach a file")
+                .plainFocusRing()
                 .help("Attach a file (<4 MB)")
                 .disabled(attachments.uploading)
                 Button {
@@ -437,6 +442,8 @@ public struct ConversationView: View {
                 }
                 .buttonStyle(.plain)
                 .onHover { mentionHovering = $0 }
+                .accessibilityLabel("Mention someone")
+                .plainFocusRing()
                 .help("Mention someone (@)")
                 .popover(isPresented: $showMentions, arrowEdge: .top) {
                     MentionPickerView(
@@ -464,6 +471,8 @@ public struct ConversationView: View {
             }
             .buttonStyle(.plain)
             .onHover { gifHovering = $0 }
+            .accessibilityLabel("Insert a GIF")
+            .plainFocusRing()
             .help("Insert a GIF (Tenor)")
             .popover(isPresented: $showGIFs, arrowEdge: .top) {
                 TenorPickerView(apiKey: tenorAPIKey) { url in
@@ -565,7 +574,7 @@ public struct ConversationView: View {
                 .lineLimit(1)
             Text(SharedFile.sizeLabel(file.size))
                 .font(DietType.captionMono)
-                .foregroundStyle(DietColor.textTertiaryColor)
+                .foregroundStyle(DietColor.textSecondaryColor)
             Spacer(minLength: DietSpace.sm)
             switch file.state {
             case .staged:
@@ -605,6 +614,8 @@ public struct ConversationView: View {
                         .foregroundStyle(DietColor.textTertiaryColor)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Remove attachment")
+                .plainFocusRing()
                 .help("Remove attachment")
             }
         }
@@ -713,9 +724,10 @@ struct MessageBubble: View {
                             Text("(edited)")
                                 .font(DietType.caption2)
                                 .italic()
-                                .foregroundStyle(DietColor.textTertiaryColor)
+                                .foregroundStyle(DietColor.textSecondaryColor)
                         }
                     }
+                    .accessibilityElement(children: .combine)
                     quoteBlock
                     let rendered = MessageRender.bubbleText(for: message)
                     let images = MessageRender.images(fromRaw: message.raw)
@@ -787,7 +799,7 @@ struct MessageBubble: View {
                         Text("Bot post unavailable")
                             .font(DietType.caption1)
                             .italic()
-                            .foregroundStyle(DietColor.textTertiaryColor)
+                            .foregroundStyle(DietColor.textSecondaryColor)
                             .accessibilityLabel("Unsupported post format")
                     }
                     if message.isOwn, isRead, !failed {
@@ -797,7 +809,8 @@ struct MessageBubble: View {
                             Text("Seen")
                                 .font(DietType.caption2)
                         }
-                        .foregroundStyle(DietColor.textTertiaryColor)
+                        .foregroundStyle(DietColor.textSecondaryColor)
+                        .accessibilityElement(children: .combine)
                         .accessibilityLabel("Seen")
                     }
             }
@@ -884,13 +897,15 @@ struct MessageBubble: View {
                 }
             }
             .buttonStyle(.plain)
+            .accessibilityElement(children: .combine)
+            .plainFocusRing()
             .help("Jump to quoted message")
             .padding(.vertical, DietSpace.xxs)
         } else if message.reply_to != nil {
             Text("↩ Original message not in history")
                 .font(DietType.caption2)
                 .italic()
-                .foregroundStyle(DietColor.textTertiaryColor)
+                .foregroundStyle(DietColor.textSecondaryColor)
         }
     }
 }
@@ -960,6 +975,8 @@ struct ReactionTapbacks: View {
                     .shadow(color: .black.opacity(0.12), radius: 2, y: 1)
                 }
                 .buttonStyle(.plain)
+                .accessibilityElement(children: .combine)
+                .plainFocusRing(radius: 12)
                 .help(r.count > 1 ? "\(r.count) reactions" : "1 reaction")
             }
         }
