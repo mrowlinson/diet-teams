@@ -1,12 +1,13 @@
 // CardActions.swift — om-jd-cardactions lane: card action buttons +
-// "Open in Teams" fallback, DECOUPLED from the J-C card renderer.
+// "Open in Teams" fallback, wired into the J-C card renderer.
 //
 // Adaptive `actions[]` / O365 `potentialAction[]` mine into OpenUrl
 // buttons (safe locally: http(s) browser opens); Submit / Execute /
 // inputs / message extensions / unknown actions collapse to ONE
 // "Open in Teams" fallback row (Teams owns the interaction).
-// Merge moves the wiring into the J-C renderer; until then the bubble
-// renders CardActionRows under BotPostRows (no-op when empty).
+// Rendered cards show their rows inside AdaptiveCardView; the bubble
+// keeps a decoupled CardActionRows block for non-card payloads only
+// (no-op when empty).
 //
 // Deep-link probe: MS documents the MESSAGE form for channel threads
 // (`/l/message/<channelId>/<messageId>?tenantId=…&groupId=…`) and the

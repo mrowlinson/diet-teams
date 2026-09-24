@@ -738,16 +738,22 @@ struct MessageBubble: View {
                     let cards = MessageBubbleState.cards(for: message)
                     if !cards.isEmpty {
                         ForEach(Array(cards.enumerated()), id: \.offset) { _, card in
-                            AdaptiveCardView(card: card, messageID: message.id)
+                            AdaptiveCardView(
+                                card: card, messageID: message.id,
+                                chatID: chatID)
                         }
                     }
                     if !posts.isEmpty, MessageBubbleState.shouldShowFallbackRows(for: message) {
                         BotPostRows(posts: posts)
                     }
-                    // Card actions (om-jd-cardactions, decoupled): OpenUrl
-                    // buttons + "Open in Teams" fallback. No-op without
-                    // card actions; merge moves this into the J-C renderer.
-                    let cardActions = CardActions.actions(fromRaw: message.raw ?? message.content)
+                    // Card actions (om-jd-cardactions): rendered cards own
+                    // their rows inside AdaptiveCardView (OpenUrl links +
+                    // "Open in Teams" fallback); this decoupled block stays
+                    // for non-card payloads (O365 connector actions etc).
+                    // No-op without card actions.
+                    let cardActions = cards.isEmpty
+                        ? CardActions.actions(fromRaw: message.raw ?? message.content)
+                        : .empty
                     if !cardActions.isEmpty {
                         CardActionRows(
                             actions: cardActions, chatID: chatID,

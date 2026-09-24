@@ -340,14 +340,19 @@ public enum MessageBubbleState {
 
 /// One rendered Adaptive Card: styled text, fact rows, card images,
 /// OpenUrl buttons as http(s)-only Links. Submit/inputs/Execute have
-/// no control here — the fallback row covers them.
+/// no control here — the "Open in Teams" fallback row covers them
+/// (om-jd-cardactions wiring, inside the renderer).
 public struct AdaptiveCardView: View {
     public let card: AdaptiveCard
     public let messageID: String
+    /// Open chat id (om-jd-cardactions): feeds the "Open in Teams"
+    /// fallback link. Nil (previews, tests) falls back to Teams home.
+    public let chatID: String?
 
-    public init(card: AdaptiveCard, messageID: String) {
+    public init(card: AdaptiveCard, messageID: String, chatID: String? = nil) {
         self.card = card
         self.messageID = messageID
+        self.chatID = chatID
     }
 
     public var body: some View {
@@ -363,6 +368,16 @@ public struct AdaptiveCardView: View {
                     .font(DietType.body)
                     .foregroundStyle(Color.accentColor)
                 }
+            }
+            if card.needsFallback {
+                Link(destination: CardActions.fallbackURL(
+                    chatID: chatID, messageID: messageID))
+                {
+                    Text("Open in Teams").underline()
+                }
+                .font(DietType.body)
+                .foregroundStyle(Color.accentColor)
+                .accessibilityLabel("Open in Teams")
             }
         }
         .padding(DietSpace.xs)
