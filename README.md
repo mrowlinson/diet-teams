@@ -12,17 +12,22 @@ in `--demo` with canned data; sign in via device code or browser to go live.
 ## Features
 
 Chat & conversation
-: Sidebar (Chats / Teams / Reminders, pinned Mentions/Notifications) +
-  conversation with Chat / Shared / Notes tabs, live Trouter feed, paged
-  history, ⌘K jump palette, filters.
+: Sidebar (Chats / Teams / Reminders, pinned Mentions/Notifications,
+  user chat pins, mark-unread, hide, leave/block) + conversation with
+  Chat / Shared / Notes tabs, live Trouter feed, paged history, ⌘K jump
+  palette, filters.
 : Send, edit, delete, quote replies, emoji reactions, forward/copy/save,
-  @-mention picker, rich rendering (mentions, code, inline images, bot
-  posts, link previews), read receipts, typing indicators.
-: Shared files (list/upload/download) + composer attachments; GIF picker
+  pinned messages, @-mention picker, rich rendering (mentions, code,
+  inline images, bot posts, link previews), read receipts, typing
+  indicators.
+: Shared files (list/upload/download, folders + drill-in, share links,
+  versions, move/copy/rename/delete, resumable big uploads, drag-drop +
+  QuickLook, sort/filter, save-as) + composer attachments; GIF picker
   (bring-your-own Tenor key).
 
 Teams, meetings, reminders, notes
-: Teams/channels browser; upcoming meetings + join-string parsing + lobby;
+: Teams/channels browser (join team, create channel, channel detail +
+  tabs, team roster); upcoming meetings + join-string parsing + lobby;
   To Do lists/tasks; OneNote notebooks/sections/pages read + paragraph append.
 
 Calls
@@ -65,7 +70,7 @@ identity; else ad-hoc (mic/camera grants won't stick across rebuilds).
 ## Usage
 
 - Try offline first: `--demo` (also `--demo-rich`, `--demo-reactions`,
-  `--demo-botposts`, `--chat <id>`).
+  `--demo-botposts`, `--demo-showcase`, `--chat <id>`).
 - Sign in from the app: device code (copy code / open browser) or
   browser sign-in; the session persists across launches. Settings shows
   the account row plus token/probe diagnostics.
@@ -76,8 +81,9 @@ identity; else ad-hoc (mic/camera grants won't stick across rebuilds).
 
 - `swift/` — SPM package: `OstMac` (the app), `OstMacCore` (state +
   views), `OstMacChatList` (sidebar), `DietDesign` (design system),
-  `OstMacMCP` + `ostmac-mcp` executable, `COstMac` (C header).
-- `rust/ostmac-core/` — FFI `staticlib`: ~80-function C ABI, JSON over
+  `OstMacMCP` + `ostmac-mcp` executable, `DietShowcase` (design-system
+  demo), `COstMac` (C header).
+- `rust/ostmac-core/` — FFI `staticlib`: ~100-function C ABI, JSON over
   the boundary, every string freed with `ostmac_free`.
 - `rust/ost/` — vendored upstream `ost` (built as a lib) plus our
   documented patch stack (`OSTMAC-PATCHES.md`, tagged `[minor]`/`[major]`).
