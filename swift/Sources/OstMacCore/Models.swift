@@ -929,6 +929,40 @@ public struct SharedFileDownloadResponse: Decodable, Sendable {
     public let bytes: UInt64
 }
 
+/// Rename/move result from core (updated driveItem projection).
+public struct SharedFileManageResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let file: SharedFile
+
+    public init(ok: Bool, file: SharedFile) {
+        self.ok = ok
+        self.file = file
+    }
+}
+
+/// Copy result from core: Graph copies async, `monitor` is the 202
+/// Location URL ("" when the server omits it).
+public struct SharedFileCopyResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let monitor: String
+
+    public init(ok: Bool, monitor: String) {
+        self.ok = ok
+        self.monitor = monitor
+    }
+}
+
+/// Delete result from core (echoes the removed item id).
+public struct SharedFileDeleteResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let id: String
+
+    public init(ok: Bool, id: String) {
+        self.ok = ok
+        self.id = id
+    }
+}
+
 // MARK: - Presence (om-presence lane)
 
 /// Own presence from core `ostmac_presence` / `ostmac_presence_set`

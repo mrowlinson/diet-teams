@@ -14,7 +14,7 @@
 //! - notes: OneNote notebooks/sections/pages read + paragraph append
 //! - trouter: background push connection with a polled event channel
 //! - calls: signaling-only place/accept/end + echo-bot + recorder inject
-//! - files: shared files list + upload + download (Graph driveItems)
+//! - files: shared files list + upload + download + manage (Graph driveItems)
 //!
 //! Dropped for now: TUI, audio/video, call media.
 
@@ -1220,6 +1220,130 @@ pub fn files_upload_json(chat_id: &str, path: &str) -> String {
     }
 }
 
+/// Rename one driveItem (PATCH name). Empty args are rejected before
+/// any network. Returns `{ok:true, file:{...}}`.
+pub fn files_rename_json(drive_id: &str, item_id: &str, new_name: &str) -> String {
+    if drive_id.trim().is_empty() {
+        return err_json("arg", "empty drive_id");
+    }
+    if item_id.trim().is_empty() {
+        return err_json("arg", "empty item_id");
+    }
+    if new_name.trim().is_empty() {
+        return err_json("arg", "empty new_name");
+    }
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let file = ost::api::rename_file_data(&client, drive_id, item_id, new_name)
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            Ok(json!({"ok": true, "file": shared_file_to_json(&file)}).to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("files_rename", e),
+    }
+}
+
+/// Move one driveItem to another folder in the same drive (PATCH
+/// parentReference). Returns `{ok:true, file:{...}}`.
+pub fn files_move_json(drive_id: &str, item_id: &str, dest_folder_id: &str) -> String {
+    if drive_id.trim().is_empty() {
+        return err_json("arg", "empty drive_id");
+    }
+    if item_id.trim().is_empty() {
+        return err_json("arg", "empty item_id");
+    }
+    if dest_folder_id.trim().is_empty() {
+        return err_json("arg", "empty dest_folder_id");
+    }
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let file = ost::api::move_file_data(&client, drive_id, item_id, dest_folder_id)
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            Ok(json!({"ok": true, "file": shared_file_to_json(&file)}).to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("files_move", e),
+    }
+}
+
+/// Copy one driveItem to another folder in the same drive (server-side
+/// async: Graph answers 202 + monitor URL). `new_name` (None/empty) keeps
+/// the source name. Returns `{ok:true, monitor}`.
+pub fn files_copy_json(
+    drive_id: &str,
+    item_id: &str,
+    dest_folder_id: &str,
+    new_name: Option<&str>,
+) -> String {
+    if drive_id.trim().is_empty() {
+        return err_json("arg", "empty drive_id");
+    }
+    if item_id.trim().is_empty() {
+        return err_json("arg", "empty item_id");
+    }
+    if dest_folder_id.trim().is_empty() {
+        return err_json("arg", "empty dest_folder_id");
+    }
+    let name = new_name.filter(|n| !n.trim().is_empty());
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let monitor =
+                ost::api::copy_file_data(&client, drive_id, item_id, dest_folder_id, name)
+                    .await
+                    .map_err(|e| format!("{:#}", e))?;
+            Ok(json!({"ok": true, "monitor": monitor}).to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("files_copy", e),
+    }
+}
+
+/// Delete one driveItem (DELETE). Returns `{ok:true, id}`.
+pub fn files_delete_json(drive_id: &str, item_id: &str) -> String {
+    if drive_id.trim().is_empty() {
+        return err_json("arg", "empty drive_id");
+    }
+    if item_id.trim().is_empty() {
+        return err_json("arg", "empty item_id");
+    }
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            ost::api::delete_file_data(&client, drive_id, item_id)
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            Ok(json!({"ok": true, "id": item_id}).to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("files_delete", e),
+    }
+}
+
 /// Download one driveItem's content to `dest`. Empty args are rejected
 /// before any network. Returns `{ok:true, path, bytes}`.
 pub fn files_download_json(drive_id: &str, item_id: &str, dest: &str) -> String {
@@ -2404,6 +2528,91 @@ pub extern "C" fn ostmac_files_download(
     };
     match cstr_to_string(dest) {
         Ok(d) => string_to_c(files_download_json(&drive, &item, &d)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
+/// Rename one driveItem. See [`files_rename_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_files_rename(
+    drive_id: *const c_char,
+    item_id: *const c_char,
+    new_name: *const c_char,
+) -> *mut c_char {
+    let drive = match cstr_to_string(drive_id) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    let item = match cstr_to_string(item_id) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    match cstr_to_string(new_name) {
+        Ok(n) => string_to_c(files_rename_json(&drive, &item, &n)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
+/// Move one driveItem to another folder (same drive). See [`files_move_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_files_move(
+    drive_id: *const c_char,
+    item_id: *const c_char,
+    dest_folder_id: *const c_char,
+) -> *mut c_char {
+    let drive = match cstr_to_string(drive_id) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    let item = match cstr_to_string(item_id) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    match cstr_to_string(dest_folder_id) {
+        Ok(f) => string_to_c(files_move_json(&drive, &item, &f)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
+/// Copy one driveItem to another folder (same drive). `new_name` may be
+/// null/empty to keep the source name. See [`files_copy_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_files_copy(
+    drive_id: *const c_char,
+    item_id: *const c_char,
+    dest_folder_id: *const c_char,
+    new_name: *const c_char,
+) -> *mut c_char {
+    let drive = match cstr_to_string(drive_id) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    let item = match cstr_to_string(item_id) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    let folder = match cstr_to_string(dest_folder_id) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    match opt_cstr_to_string(new_name) {
+        Ok(n) => string_to_c(files_copy_json(&drive, &item, &folder, n.as_deref())),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
+/// Delete one driveItem. See [`files_delete_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_files_delete(
+    drive_id: *const c_char,
+    item_id: *const c_char,
+) -> *mut c_char {
+    let drive = match cstr_to_string(drive_id) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    match cstr_to_string(item_id) {
+        Ok(i) => string_to_c(files_delete_json(&drive, &i)),
         Err(e) => string_to_c(err_json("arg", e)),
     }
 }
@@ -4151,6 +4360,37 @@ mod tests {
     }
 
     #[test]
+    fn files_manage_rejects_empty_args_without_network() {
+        // om-i3-manage: rename/move/copy/delete guards.
+        for (d, i, n) in [
+            ("", "i", "n"),
+            ("d", "", "n"),
+            ("d", "i", ""),
+            ("d", "i", "  "),
+        ] {
+            let v: serde_json::Value = serde_json::from_str(&files_rename_json(d, i, n)).unwrap();
+            assert_eq!(v["ok"], false, "d={:?} i={:?} n={:?}", d, i, n);
+            assert_eq!(v["error"], "arg");
+        }
+        for (d, i, f) in [("", "i", "f"), ("d", "", "f"), ("d", "i", "")] {
+            let v: serde_json::Value = serde_json::from_str(&files_move_json(d, i, f)).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
+        for (d, i, f) in [("", "i", "f"), ("d", "", "f"), ("d", "i", "")] {
+            let v: serde_json::Value =
+                serde_json::from_str(&files_copy_json(d, i, f, None)).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
+        for (d, i) in [("", "i"), ("d", ""), ("  ", "i")] {
+            let v: serde_json::Value = serde_json::from_str(&files_delete_json(d, i)).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
     fn not_found_matches_graph_404_text() {
         assert!(is_not_found("HTTP 404 for https://graph.microsoft.com/v1.0/users/x: {}"));
         assert!(!is_not_found("HTTP 401 for https://graph.microsoft.com/v1.0/me: denied"));
@@ -4209,6 +4449,61 @@ mod tests {
         let it = CString::new("I1").unwrap();
         unsafe {
             let p = ostmac_files_download(d.as_ptr(), it.as_ptr(), std::ptr::null());
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
+    fn ffi_files_manage_null_is_arg_error() {
+        // om-i3-manage: null required ptrs rejected; copy's new_name is nullable.
+        unsafe {
+            let p = ostmac_files_rename(std::ptr::null(), std::ptr::null(), std::ptr::null());
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
+        unsafe {
+            let p = ostmac_files_move(std::ptr::null(), std::ptr::null(), std::ptr::null());
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
+        let d = CString::new("D1").unwrap();
+        let it = CString::new("I1").unwrap();
+        let f = CString::new("F9").unwrap();
+        unsafe {
+            // Null new_name passes the FFI layer (no "arg"); it fails later
+            // at sign-in/network, never as a null-pointer error.
+            let p = ostmac_files_copy(d.as_ptr(), it.as_ptr(), f.as_ptr(), std::ptr::null());
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_ne!(v["error"], "arg");
+        }
+        unsafe {
+            let p = ostmac_files_copy(std::ptr::null(), it.as_ptr(), f.as_ptr(), std::ptr::null());
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
+        unsafe {
+            let p = ostmac_files_delete(std::ptr::null(), std::ptr::null());
             assert!(!p.is_null());
             let s = CStr::from_ptr(p).to_string_lossy().into_owned();
             ostmac_free(p);

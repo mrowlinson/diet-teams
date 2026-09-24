@@ -514,6 +514,107 @@ pub async fn upload_file(chat_id: &str, local_path: &str) -> Result<()> {
     Ok(())
 }
 
+// -- Manage (om-i3-manage): rename/move/copy/delete driveItems --
+
+/// Graph path of one driveItem.
+pub fn drive_item_path(drive_id: &str, item_id: &str) -> String {
+    format!("/drives/{}/items/{}", drive_id, item_id)
+}
+
+/// PATCH body renaming an item (same-folder rename).
+pub fn rename_body(new_name: &str) -> serde_json::Value {
+    serde_json::json!({ "name": new_name })
+}
+
+/// PATCH body moving an item to another folder (same drive).
+pub fn move_body(dest_folder_id: &str) -> serde_json::Value {
+    serde_json::json!({ "parentReference": { "id": dest_folder_id } })
+}
+
+/// POST body copying an item to another folder (same drive).
+/// `new_name` renames the copy; None keeps the source name.
+pub fn copy_body(
+    drive_id: &str,
+    dest_folder_id: &str,
+    new_name: Option<&str>,
+) -> serde_json::Value {
+    let parent = serde_json::json!({ "driveId": drive_id, "id": dest_folder_id });
+    match new_name {
+        Some(n) => serde_json::json!({ "parentReference": parent, "name": n }),
+        None => serde_json::json!({ "parentReference": parent }),
+    }
+}
+
+/// Rename one driveItem (PATCH name). Returns the updated item.
+pub async fn rename_file_data(
+    client: &TeamsClient,
+    drive_id: &str,
+    item_id: &str,
+    new_name: &str,
+) -> Result<SharedFile> {
+    if new_name.trim().is_empty() {
+        bail!("New name is empty");
+    }
+    let path = drive_item_path(drive_id, item_id);
+    let resp = client.graph_patch(&path, &rename_body(new_name)).await?;
+    let item: DriveItem = resp
+        .json()
+        .await
+        .context("Failed to parse rename response")?;
+    Ok(shared_from_item(item, None))
+}
+
+/// Move one driveItem to another folder in the same drive (PATCH
+/// parentReference). Returns the updated item.
+pub async fn move_file_data(
+    client: &TeamsClient,
+    drive_id: &str,
+    item_id: &str,
+    dest_folder_id: &str,
+) -> Result<SharedFile> {
+    if dest_folder_id.trim().is_empty() {
+        bail!("Destination folder id is empty");
+    }
+    let path = drive_item_path(drive_id, item_id);
+    let resp = client
+        .graph_patch(&path, &move_body(dest_folder_id))
+        .await?;
+    let item: DriveItem = resp.json().await.context("Failed to parse move response")?;
+    Ok(shared_from_item(item, None))
+}
+
+/// Copy one driveItem to another folder in the same drive (async on the
+/// server: Graph answers 202 + a `Location` monitor URL). Returns the
+/// monitor URL, or "" when the server omits it.
+pub async fn copy_file_data(
+    client: &TeamsClient,
+    drive_id: &str,
+    item_id: &str,
+    dest_folder_id: &str,
+    new_name: Option<&str>,
+) -> Result<String> {
+    if dest_folder_id.trim().is_empty() {
+        bail!("Destination folder id is empty");
+    }
+    let path = format!("{}/copy", drive_item_path(drive_id, item_id));
+    let resp = client
+        .graph_post(&path, &copy_body(drive_id, dest_folder_id, new_name))
+        .await?;
+    Ok(resp
+        .headers()
+        .get(reqwest::header::LOCATION)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string())
+}
+
+/// Delete one driveItem (DELETE; Graph answers 204, no body).
+pub async fn delete_file_data(client: &TeamsClient, drive_id: &str, item_id: &str) -> Result<()> {
+    let path = drive_item_path(drive_id, item_id);
+    client.graph_delete(&path).await?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -643,6 +744,28 @@ mod tests {
         let missing: DriveItem =
             serde_json::from_str(r#"{"id":"i3","name":"h.docx"}"#).unwrap();
         assert_eq!(shared_from_item(missing, None).attachment_id, None);
+    }
+
+    #[test]
+    fn manage_paths_and_bodies() {
+        // om-i3-manage: driveItem PATCH/DELETE manage shapes.
+        assert_eq!(drive_item_path("D1", "I1"), "/drives/D1/items/I1");
+        assert_eq!(
+            rename_body("plan v2.docx"),
+            serde_json::json!({"name": "plan v2.docx"})
+        );
+        assert_eq!(
+            move_body("F9"),
+            serde_json::json!({"parentReference": {"id": "F9"}})
+        );
+        assert_eq!(
+            copy_body("D1", "F9", Some("copy.docx")),
+            serde_json::json!({"parentReference": {"driveId": "D1", "id": "F9"}, "name": "copy.docx"})
+        );
+        assert_eq!(
+            copy_body("D1", "F9", None),
+            serde_json::json!({"parentReference": {"driveId": "D1", "id": "F9"}})
+        );
     }
 
     #[test]

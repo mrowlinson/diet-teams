@@ -268,6 +268,50 @@ public enum RustCore {
         }
     }
 
+    public static func sharedRename(driveID: String, itemID: String, newName: String) throws -> SharedFileManageResponse {
+        try driveID.withCString { dPtr in
+            try itemID.withCString { iPtr in
+                try newName.withCString { nPtr in
+                    try call(ostmac_files_rename(dPtr, iPtr, nPtr), as: SharedFileManageResponse.self)
+                }
+            }
+        }
+    }
+
+    public static func sharedMove(driveID: String, itemID: String, destFolderID: String) throws -> SharedFileManageResponse {
+        try driveID.withCString { dPtr in
+            try itemID.withCString { iPtr in
+                try destFolderID.withCString { fPtr in
+                    try call(ostmac_files_move(dPtr, iPtr, fPtr), as: SharedFileManageResponse.self)
+                }
+            }
+        }
+    }
+
+    public static func sharedCopy(driveID: String, itemID: String, destFolderID: String, newName: String?) throws -> SharedFileCopyResponse {
+        try driveID.withCString { dPtr in
+            try itemID.withCString { iPtr in
+                try destFolderID.withCString { fPtr in
+                    if let name = newName, !name.isEmpty {
+                        try name.withCString { nPtr in
+                            try call(ostmac_files_copy(dPtr, iPtr, fPtr, nPtr), as: SharedFileCopyResponse.self)
+                        }
+                    } else {
+                        try call(ostmac_files_copy(dPtr, iPtr, fPtr, nil), as: SharedFileCopyResponse.self)
+                    }
+                }
+            }
+        }
+    }
+
+    public static func sharedDelete(driveID: String, itemID: String) throws -> SharedFileDeleteResponse {
+        try driveID.withCString { dPtr in
+            try itemID.withCString { iPtr in
+                try call(ostmac_files_delete(dPtr, iPtr), as: SharedFileDeleteResponse.self)
+            }
+        }
+    }
+
     public static func presence() throws -> PresenceResponse {
         try call(ostmac_presence(), as: PresenceResponse.self)
     }
