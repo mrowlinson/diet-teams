@@ -370,6 +370,10 @@ final class AppState: ObservableObject {
             // Shot hook only: memory key store, never the real keychain
             // (--show-catchup precedent; no SecurityAgent prompt).
             catchUp = CatchUpStore(keyStore: CatchUpMemoryKeyStore())
+        } else if isDemo || args.contains(where: { $0.hasPrefix("--show-") }) {
+            // Demo/shot builds: memory key store always, never the
+            // real keychain (re-signed demo builds must not prompt).
+            catchUp = CatchUpStore(keyStore: CatchUpMemoryKeyStore())
         } else {
             catchUp = CatchUpStore()
         }

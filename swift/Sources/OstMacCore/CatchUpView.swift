@@ -246,6 +246,11 @@ public struct CatchUpSettingsSection: View {
                 .font(DietType.caption1)
                 .foregroundStyle(DietColor.textSecondaryColor)
         }
+        .onAppear {
+            // Lazy key read lands here for Settings (init never
+            // touches the keychain; launch stays prompt-free).
+            catchUp.ensureKeyLoaded()
+        }
     }
 
     /// Key-status caption: the CLI note asserts exclusive routing (a

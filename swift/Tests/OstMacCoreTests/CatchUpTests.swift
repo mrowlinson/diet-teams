@@ -188,6 +188,10 @@ final class CatchUpTests: XCTestCase {
             provider: .openCode, enabled: true,
             baseURL: "http://x/v1", model: "mm", apiKey: "kk"))
         let b = CatchUpStore(defaults: defaults, keyStore: keys)
+        // Lazy key: non-secret config restores at init, the key only
+        // after the first load trigger.
+        XCTAssertEqual(b.config.apiKey, "")
+        b.ensureKeyLoaded()
         XCTAssertEqual(b.config, CatchUpConfig(
             provider: .openCode, enabled: true,
             baseURL: "http://x/v1", model: "mm", apiKey: "kk"))
@@ -233,6 +237,9 @@ final class CatchUpTests: XCTestCase {
     func testKeyLoadsFromKeyStore() {
         let keys = CatchUpMemoryKeyStore(key: "zk")
         let store = CatchUpStore(defaults: defaults, keyStore: keys)
+        // Lazy: init leaves the key empty; the load trigger fills it.
+        XCTAssertEqual(store.config.apiKey, "")
+        store.ensureKeyLoaded()
         XCTAssertEqual(store.config.apiKey, "zk")
     }
 
@@ -258,6 +265,10 @@ final class CatchUpTests: XCTestCase {
         defaults.set("legacy-k", forKey: "catchup.apiKey")
         let keys = CatchUpMemoryKeyStore()
         let store = CatchUpStore(defaults: defaults, keyStore: keys)
+        // Lazy: migration waits for the first load trigger.
+        XCTAssertEqual(store.config.apiKey, "")
+        XCTAssertEqual(defaults.string(forKey: "catchup.apiKey"), "legacy-k")
+        store.ensureKeyLoaded()
         XCTAssertEqual(store.config.apiKey, "legacy-k")
         XCTAssertEqual(keys.load(), "legacy-k")
         XCTAssertNil(defaults.string(forKey: "catchup.apiKey"))
@@ -267,4 +278,103 @@ final class CatchUpTests: XCTestCase {
         XCTAssertEqual(CatchUpSystemKeychain.service, "dev.ostmac.OstMac.catchup")
         XCTAssertEqual(CatchUpSystemKeychain.account, "catchup-api-key")
     }
+
+    // MARK: - om-keychain-gate: lazy keychain
+
+    func testInitNeverTouchesKeyStore() {
+        let keys = CountingKeyStore(key: "zk")
+        let store = CatchUpStore(defaults: defaults, keyStore: keys)
+        XCTAssertEqual(keys.loads, 0)
+        XCTAssertEqual(keys.saves, 0)
+        XCTAssertEqual(store.config.apiKey, "")
+        // A keyless config change pre-load must not wipe the stored
+        // key (empty apiKey = "not loaded", not "no key").
+        store.selectProvider(.openCode)
+        XCTAssertEqual(keys.loads, 0)
+        XCTAssertEqual(keys.saves, 0)
+        XCTAssertEqual(keys.key, "zk")
+    }
+
+    func testSummarizeWithKeyProviderLoadsLazily() async {
+        let mock = CatchUpCannedTransport(stub: "TL;DR: lazy works.")
+        let keys = CountingKeyStore(key: "zk")
+        let store = CatchUpStore(
+            transport: mock, defaults: defaults, keyStore: keys)
+        store.adopt(CatchUpConfig(provider: .openCode, enabled: true, apiKey: ""))
+        XCTAssertEqual(keys.loads, 0)
+        await store.summarize(messages: thread(25))
+        XCTAssertEqual(keys.loads, 1)
+        XCTAssertEqual(store.config.apiKey, "zk")
+        XCTAssertEqual(mock.prompts.count, 1)
+        XCTAssertEqual(store.state, .loaded("TL;DR: lazy works."))
+        // Second run reuses the in-memory key (one read per store).
+        await store.summarize(messages: thread(25))
+        XCTAssertEqual(keys.loads, 1)
+    }
+
+    func testSummarizeWithCLIProviderNeverLoads() async {
+        let direct = CatchUpCannedTransport(stub: "SHOULD NOT APPEAR")
+        let runner = CatchUpMockCLIRunner(result: CatchUpCLIResult(
+            stdout: #"{"content":"TL;DR: cli works."}"#, stderr: "", exitCode: 0))
+        let keys = CountingKeyStore(key: "zk")
+        let store = CatchUpStore(
+            transport: direct,
+            cliTransport: OpenCodeCLICatchUpTransport(runner: runner),
+            defaults: defaults, keyStore: keys)
+        store.adopt(CatchUpConfig(provider: .openCodeCLI, enabled: true, apiKey: ""))
+        await store.summarize(messages: thread(25))
+        XCTAssertEqual(keys.loads, 0)
+        XCTAssertEqual(keys.saves, 0)
+        XCTAssertEqual(store.state, .loaded("TL;DR: cli works."))
+    }
+
+    func testDisabledSummarizeNeverLoads() async {
+        let mock = CatchUpCannedTransport(stub: "SHOULD NOT APPEAR")
+        let cliMock = CatchUpCannedTransport(stub: "SHOULD NOT APPEAR")
+        let keys = CountingKeyStore(key: "zk")
+        let store = CatchUpStore(
+            transport: mock, cliTransport: cliMock,
+            defaults: defaults, keyStore: keys)
+        store.adopt(CatchUpConfig(provider: .openCode, enabled: false, apiKey: ""))
+        await store.summarize(messages: thread(25))
+        XCTAssertEqual(keys.loads, 0)
+        XCTAssertEqual(keys.saves, 0)
+        XCTAssertEqual(store.state, .failed(CatchUpError.off.message))
+    }
+
+    func testExplicitKeyThenClearPropagates() {
+        let keys = CountingKeyStore()
+        let store = CatchUpStore(defaults: defaults, keyStore: keys)
+        // Explicit set persists even pre-load (marks state known).
+        store.adopt(CatchUpConfig(enabled: true, apiKey: "k"))
+        XCTAssertEqual(keys.saves, 1)
+        XCTAssertEqual(keys.key, "k")
+        // …so a later clear is a real clear, not a skipped write.
+        store.adopt(CatchUpConfig(enabled: true, apiKey: ""))
+        XCTAssertEqual(keys.saves, 2)
+        XCTAssertNil(keys.key)
+    }
+
+    func testLoadedKeyDoesNotWriteBack() {
+        let keys = CountingKeyStore(key: "zk")
+        let store = CatchUpStore(defaults: defaults, keyStore: keys)
+        store.ensureKeyLoaded()
+        XCTAssertEqual(store.config.apiKey, "zk")
+        XCTAssertEqual(keys.loads, 1)
+        XCTAssertEqual(keys.saves, 0)
+    }
+}
+
+/// Touch-counting key store: proves the lazy contract (zero
+/// keychain touches on init; reads only on key-needing runs).
+private final class CountingKeyStore: CatchUpKeyStore, @unchecked Sendable {
+    var key: String?
+    var loads = 0
+    var saves = 0
+
+    init(key: String? = nil) { self.key = key }
+
+    func load() -> String? { loads += 1; return key }
+    func save(_ key: String) { saves += 1; self.key = key.isEmpty ? nil : key }
+    func clear() { key = nil }
 }
