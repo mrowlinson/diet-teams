@@ -60,6 +60,30 @@ public final class CallStore: ObservableObject {
     private var countedRingIDs: Set<String> = []
     private var timeoutTimer: Timer?
     private let demo: Bool
+    /// Injected slot read (perf guards count/coalesce; default hits core).
+    public var statusFetcher: @Sendable () throws -> CallInfo? = {
+        try RustCore.callStatus().call
+    }
+    /// Injected media read (default hits core).
+    public var mediaFetcher: @Sendable () throws -> LiveMediaStats? = {
+        try RustCore.callMedia().media
+    }
+    /// Refresh coalescing: one in-flight re-read; overlapping
+    /// ticks/ingests set the queued flag and drain once.
+    private var refreshInflight = false
+    private var refreshQueued = false
+    /// In-Call/A-V window open (set by those views' appear/disappear).
+    /// The 1s media loop runs only while a media surface is up (the
+    /// banner's stats line or one of these windows) — never headless.
+    public var callWindowOpen = false {
+        didSet { if oldValue != callWindowOpen { syncMediaPoll() } }
+    }
+
+    /// Media loop state (perf guards).
+    public var isMediaPolling: Bool { mediaPolling }
+
+    /// Refresh in flight (perf guards: cleared after reconcile lands).
+    public var isRefreshInflight: Bool { refreshInflight }
 
     public init(demo: Bool = false) {
         self.demo = demo
@@ -87,17 +111,32 @@ public final class CallStore: ObservableObject {
         refresh()
     }
 
+    /// Re-read the slot. Single in-flight: overlapping ticks/ingests
+    /// collapse — the first runs, the rest set the queued flag, one
+    /// drain re-read follows (never N parallel FFIs).
     public func refresh() {
         if demo { return } // demo state is seeded, never re-read
+        if refreshInflight {
+            refreshQueued = true
+            return
+        }
+        refreshInflight = true
+        let fetch = statusFetcher
         Task {
             let fetched: CallInfo?
             do {
-                fetched = try await Task.detached { try RustCore.callStatus().call }.value
+                fetched = try await Task.detached { try fetch() }.value
             } catch {
                 fetched = nil
             }
-            await MainActor.run {
+            await MainActor.run { [weak self] in
+                guard let self else { return }
                 self.reconcile(fetched)
+                self.refreshInflight = false
+                if self.refreshQueued {
+                    self.refreshQueued = false
+                    self.refresh()
+                }
             }
         }
     }
@@ -109,7 +148,7 @@ public final class CallStore: ObservableObject {
         track(slot?.id)
         guard let slot else {
             cancelTimeout()
-            call = nil
+            if call != nil { call = nil }
             if phase == .ended { phase = .idle }
             // Event-adopted inviting with no slot yet (the feed beat the
             // read): keep the phase; the next refresh adopts the slot.
@@ -124,7 +163,7 @@ public final class CallStore: ObservableObject {
             syncMediaPoll()
             return
         }
-        call = slot
+        if call != slot { call = slot }
         if dismissedIDs.contains(slot.id) {
             // Hidden by dismiss/timeout: track terminal truth but never
             // re-raise the banner for this id.
@@ -141,7 +180,7 @@ public final class CallStore: ObservableObject {
             rings += 1
         }
         if mapped == .inviting { armTimeout(for: slot.id) } else { cancelTimeout() }
-        phase = mapped
+        if phase != mapped { phase = mapped }
         syncMediaPoll()
     }
 
@@ -167,6 +206,7 @@ public final class CallStore: ObservableObject {
         lastAction = "dismiss"
         phase = CallPhaseReducer.next(phase, .dismissed)
         cancelTimeout()
+        syncMediaPoll() // banner surface gone (window may keep the loop)
     }
 
     /// Re-show a dismissed banner (Diagnostics escape hatch).
@@ -177,6 +217,7 @@ public final class CallStore: ObservableObject {
         lastAction = "recall"
         phase = CallPhaseMapper.phase(for: c)
         if phase == .inviting { armTimeout(for: c.id) }
+        syncMediaPoll() // banner surface back (restarts a live loop)
     }
 
     /// Retire a ringing banner whose time is up (missed call). Called by
@@ -303,21 +344,31 @@ public final class CallStore: ObservableObject {
 
     public func dismissControlsError() { controlsError = nil }
 
-    /// Run the 1s media-stats loop exactly while a live call is up.
+    /// True while a live call is up AND a media surface reads it (the
+    /// banner's stats line or the In-Call/A-V window).
+    private var mediaWanted: Bool {
+        guard call?.liveMedia == true, call?.isActive == true else { return false }
+        return bannerVisible || callWindowOpen
+    }
+
+    /// Run the 1s media-stats loop exactly while a live call is up AND
+    /// a media surface is visible. Stopping for a lost surface keeps
+    /// the last stats (repopulated ≤1s after return); stopping for a
+    /// dead call clears them.
     private func syncMediaPoll() {
         if demo { return } // demo never touches core (no stats line)
-        let live = call?.liveMedia == true && (call?.isActive ?? false)
-        let polling = mediaPolling
-        if live, !polling {
+        let want = mediaWanted
+        if want, !mediaPolling {
             mediaPolling = true
             mediaGeneration += 1
             let gen = mediaGeneration
+            let fetch = mediaFetcher
             Task.detached(priority: .utility) { [weak self] in
                 while self?.mediaPolling == true, self?.mediaGeneration == gen {
                     try? await Task.sleep(nanoseconds: 1_000_000_000)
                     guard self?.mediaPolling == true, self?.mediaGeneration == gen else { return }
                     do {
-                        let m = try RustCore.callMedia().media
+                        let m = try fetch()
                         await MainActor.run { [weak self] in
                             guard let self, self.mediaGeneration == gen else { return }
                             self.media = m
@@ -327,10 +378,12 @@ public final class CallStore: ObservableObject {
                     }
                 }
             }
-        } else if !live, polling {
+        } else if !want, mediaPolling {
             mediaPolling = false
             mediaGeneration += 1 // supersede any parked loop
-            media = nil
+            if !(call?.liveMedia == true && (call?.isActive ?? false)) {
+                media = nil
+            }
         }
     }
 
@@ -486,6 +539,22 @@ public struct CallBanner: View {
     }
 
     public var body: some View {
+        Group {
+            bannerBody
+        }
+        .onChange(of: store.phase) { _, next in
+            // A connected call pops the in-call window (mute, camera,
+            // speaker); rings never auto-open. The banner's own store
+            // subscription drives it (was RootView's onChange).
+            if next == .active {
+                onOpenCallWindow?()
+            }
+        }
+    }
+
+    /// Banner/error rows (the phase subscription lives on body, above).
+    @ViewBuilder
+    private var bannerBody: some View {
         if let c = store.call, store.bannerVisible {
             VStack(alignment: .leading, spacing: DietSpace.xxs) {
                 HStack(spacing: DietSpace.sm) {

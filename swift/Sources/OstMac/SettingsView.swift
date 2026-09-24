@@ -9,6 +9,7 @@
 // ignores it).
 // Removed: Application (dup of About), Diagnostics (moved to the
 // Diagnostics window — Window ▸ Diagnostics).
+import OstMacChatList
 import OstMacCore
 import SwiftUI
 
@@ -17,8 +18,9 @@ struct SettingsView: View {
     @ObservedObject private var catchUp: CatchUpStore
     @ObservedObject private var notifs: MessageNotifications
     @ObservedObject private var rules: RulesStore
-    /// Roster snapshot (read-only; never triggers a chat-list refresh).
-    private let chats: [ChatItem]
+    /// Roster store, observed live (read-only; never triggers a
+    /// chat-list refresh). Ticks without an AppState forward.
+    @ObservedObject private var chats: ChatListViewModel
     @ObservedObject private var quiet: QuietHoursStore
     @ObservedObject private var blocked: BlockedStore
     @AppStorage("tenorAPIKey") private var tenorAPIKey = ""
@@ -30,7 +32,7 @@ struct SettingsView: View {
         catchUp: CatchUpStore = CatchUpStore(),
         notifs: MessageNotifications = MessageNotifications(),
         rules: RulesStore = RulesStore(),
-        chats: [ChatItem] = [],
+        chats: ChatListViewModel,
         quiet: QuietHoursStore = QuietHoursStore(),
         blocked: BlockedStore = BlockedStore(defaults: nil)
     ) {
@@ -38,7 +40,7 @@ struct SettingsView: View {
         _catchUp = ObservedObject(wrappedValue: catchUp)
         _notifs = ObservedObject(wrappedValue: notifs)
         _rules = ObservedObject(wrappedValue: rules)
-        self.chats = chats
+        _chats = ObservedObject(wrappedValue: chats)
         _quiet = ObservedObject(wrappedValue: quiet)
         _blocked = ObservedObject(wrappedValue: blocked)
         fixedAccount = nil
@@ -51,7 +53,7 @@ struct SettingsView: View {
         _catchUp = ObservedObject(wrappedValue: CatchUpStore())
         _notifs = ObservedObject(wrappedValue: MessageNotifications())
         _rules = ObservedObject(wrappedValue: RulesStore())
-        chats = []
+        _chats = ObservedObject(wrappedValue: ChatListViewModel())
         _quiet = ObservedObject(wrappedValue: QuietHoursStore())
         _blocked = ObservedObject(wrappedValue: BlockedStore(defaults: nil))
         fixedAccount = account
@@ -79,12 +81,12 @@ struct SettingsView: View {
                     LabeledContent("System permission", value: permissionText)
                 }
                 Section("Per-chat overrides") {
-                    if chats.isEmpty, rules.config.mutedChatIDs.isEmpty {
+                    if chats.chats.isEmpty, rules.config.mutedChatIDs.isEmpty {
                         Text("No chats loaded yet. Muted chats appear here once the chat list loads.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     } else {
-                        ForEach(chats) { chat in
+                        ForEach(chats.chats) { chat in
                             Toggle(chat.name, isOn: muteBinding(chat.id))
                                 .help(muteHelp(chatID: chat.id))
                         }
@@ -199,7 +201,7 @@ struct SettingsView: View {
     /// Muted ids with no roster row (renamed/left chats): still
     /// enforced, listed so they can be unmuted. Sorted for stability.
     private var orphanedMuteIDs: [String] {
-        let known = Set(chats.map(\.id))
+        let known = Set(chats.chats.map(\.id))
         return rules.config.mutedChatIDs.filter { !known.contains($0) }.sorted()
     }
 
