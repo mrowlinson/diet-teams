@@ -270,6 +270,19 @@ public enum RustCore {
         }
     }
 
+    /// Upcoming meetings (blocking FFI + network: call off main thread).
+    public static func meetings(limit: Int32 = 20) throws -> MeetingsResponse {
+        try call(ostmac_meetings(limit), as: MeetingsResponse.self)
+    }
+
+    /// Classify a pasted join string (pure core parse, no network).
+    /// Still crosses FFI: call off the main thread like every wrapper.
+    public static func meetingJoinParse(raw: String) throws -> JoinParseResponse {
+        try raw.withCString { ptr in
+            try call(ostmac_meeting_join_parse(ptr), as: JoinParseResponse.self)
+        }
+    }
+
     public static func notePage(pageID: String, groupID: String? = nil) throws -> NotePageResponse {
         try pageID.withCString { idPtr in
             try withOptionalCString(groupID) { ptr in

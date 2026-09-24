@@ -188,6 +188,37 @@ public enum DemoData {
         ReminderTasksResponse(ok: true, list_id: listID, tasks: reminderTasks(for: listID))
     }
 
+    /// Canned upcoming meetings for `--demo` (om-meet-join lane): one
+    /// joinable online meeting, one in-person event with no link.
+    public static let meetings: [MeetingItem] = [
+        MeetingItem(
+            meetingId: "demo-meet-standup", subject: "Engineering standup",
+            start: "2026-09-24T09:00:00.0000000",
+            end: "2026-09-24T09:15:00.0000000",
+            joinURL: "https://teams.microsoft.com/l/meetup-join/19:demo_standup@thread.v2/0",
+            organizer: "Doe, Jane", isOnline: true),
+        MeetingItem(
+            meetingId: "demo-meet-onsite", subject: "Design crit (Room 3B)",
+            start: "2026-09-24T14:00:00.0000000",
+            end: "2026-09-24T15:00:00.0000000",
+            organizer: "Lee, Sam"),
+    ]
+
+    public static func meetingsResponse() -> MeetingsResponse {
+        MeetingsResponse(ok: true, meetings: meetings)
+    }
+
+    /// Canned accepted join result for `--demo` (signaling-only echo).
+    public static func demoJoinResult(threadID: String) -> CallResult {
+        CallResult(
+            ok: true, placed: true, accepted: true,
+            call: CallInfo(
+                id: "demo-meet-call", dir: "out", peer: threadID,
+                peerName: "Engineering standup", thread: threadID,
+                state: "connected", startedAt: 1,
+                detail: "demo join · signaling only"))
+    }
+
     /// Canned own presence for --demo (Available, offline adopted).
     public static func ownPresence() -> PresenceResponse {
         PresenceResponse(ok: true, availability: "Available", activity: "Available")

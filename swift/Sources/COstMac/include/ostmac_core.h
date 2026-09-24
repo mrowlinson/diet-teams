@@ -116,6 +116,16 @@ char *ostmac_reminder_add(const char *list_id, const char *title);
 // Mark one task completed: {ok,task}. Caller frees.
 char *ostmac_reminder_done(const char *list_id, const char *task_id);
 
+// Upcoming meetings JSON (Graph calendarView, next 7 days, requires
+// sign-in): {ok,meetings:[{id,subject,start?,end?,join_url?,
+// organizer?,is_online}]}. Caller frees.
+char *ostmac_meetings(int limit);
+
+// Classify a pasted join string (pure, no network, no sign-in):
+// {ok,target:{kind,thread_id?,meeting_id?,url}}. kind is
+// thread|meeting-id|url|unknown. Caller frees.
+char *ostmac_meeting_join_parse(const char *raw);
+
 // Start background Trouter push: 0 ok, -1 running, -2 no auth, -3 rt fail.
 int ostmac_trouter_start(void);
 

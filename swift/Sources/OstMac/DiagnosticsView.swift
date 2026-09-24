@@ -6,6 +6,7 @@
 // Native grouped Form + LabeledContent throughout.
 
 import DietDesign
+import OstMacChatList
 import OstMacCore
 import SwiftUI
 
@@ -70,6 +71,9 @@ struct DiagnosticsView: View {
                     }
                 }
             }
+            Section("Meetings") {
+                MeetingsDiagRow(store: state.meetings)
+            }
             Section("Call") {
                 callRow
                 if let err = state.call.error {
@@ -109,6 +113,21 @@ struct DiagnosticsView: View {
             LabeledContent("Active", value: "no call")
                 .foregroundStyle(DietColor.textSecondaryColor)
         }
+    }
+}
+
+/// Meetings counters row (om-meet-join): observes the store so the
+/// counts tick as meetings load and joins start.
+struct MeetingsDiagRow: View {
+    @ObservedObject var store: MeetingsViewModel
+
+    var body: some View {
+        LabeledContent(
+            "Upcoming",
+            value: DiagnosticsFormat.meetingsLine(
+                fetched: store.fetchedCount, joins: store.joinCount,
+                lobby: store.lobby.rawValue))
+            .textSelection(.enabled)
     }
 }
 

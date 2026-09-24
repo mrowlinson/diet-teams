@@ -1388,6 +1388,59 @@ pub fn reminder_done_json(list_id: &str, task_id: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Meetings (om-meet-join lane: upcoming via Graph calendarView + join parse)
+// ---------------------------------------------------------------------------
+
+fn meeting_to_json(m: &ost::api::MeetingInfo) -> serde_json::Value {
+    json!({
+        "id": m.id,
+        "subject": m.subject,
+        "start": m.start,
+        "end": m.end,
+        "join_url": m.join_url,
+        "organizer": m.organizer,
+        "is_online": m.is_online,
+    })
+}
+
+/// Upcoming meetings as JSON. Requires sign-in; unsigned yields `{ok:false}`.
+pub fn meetings_json(limit: usize) -> String {
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let meetings = ost::api::list_upcoming_meetings_data(&client, limit)
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let items: Vec<_> = meetings.iter().map(meeting_to_json).collect();
+            Ok(json!({"ok": true, "meetings": items}).to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("meetings", e),
+    }
+}
+
+/// Classify a pasted join string. Pure (no network, no sign-in needed).
+/// Returns `{ok:true, target:{kind,thread_id?,meeting_id?,url}}`.
+pub fn meeting_join_parse_json(raw: &str) -> String {
+    let t = ost::api::parse_join_url(raw);
+    json!({
+        "ok": true,
+        "target": {
+            "kind": t.kind,
+            "thread_id": t.thread_id,
+            "meeting_id": t.meeting_id,
+            "url": t.url,
+        },
+    })
+    .to_string()
+}
+
+// ---------------------------------------------------------------------------
 // Notes (om-notes lane: OneNote read + paragraph append)
 // ---------------------------------------------------------------------------
 
@@ -2057,6 +2110,22 @@ pub extern "C" fn ostmac_reminder_done(
     };
     match cstr_to_string(task_id) {
         Ok(t) => string_to_c(reminder_done_json(&id, &t)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
+/// Upcoming meetings JSON (requires sign-in). Caller frees.
+#[no_mangle]
+pub extern "C" fn ostmac_meetings(limit: c_int) -> *mut c_char {
+    let lim = if limit <= 0 { 20 } else { limit as usize };
+    string_to_c(meetings_json(lim))
+}
+
+/// Classify a pasted join string (pure, no network). Caller frees.
+#[no_mangle]
+pub extern "C" fn ostmac_meeting_join_parse(raw: *const c_char) -> *mut c_char {
+    match cstr_to_string(raw) {
+        Ok(s) => string_to_c(meeting_join_parse_json(&s)),
         Err(e) => string_to_c(err_json("arg", e)),
     }
 }
@@ -3231,6 +3300,68 @@ mod tests {
             let v: serde_json::Value =
                 serde_json::from_str(&reminder_done_json(list, task)).unwrap();
             assert_eq!(v["ok"], false, "list={:?} task={:?}", list, task);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
+    fn meeting_to_json_shape() {
+        let m = ost::api::MeetingInfo {
+            id: "E1".to_string(),
+            subject: "Standup".to_string(),
+            start: Some("2026-09-24T09:00:00.0000000".to_string()),
+            end: None,
+            join_url: Some("https://teams.microsoft.com/l/meetup-join/x".to_string()),
+            organizer: Some("Doe, Jane".to_string()),
+            is_online: true,
+        };
+        let v = meeting_to_json(&m);
+        assert_eq!(v["id"], "E1");
+        assert_eq!(v["subject"], "Standup");
+        assert_eq!(v["start"], "2026-09-24T09:00:00.0000000");
+        assert!(v["end"].is_null());
+        assert_eq!(v["join_url"], "https://teams.microsoft.com/l/meetup-join/x");
+        assert_eq!(v["organizer"], "Doe, Jane");
+        assert_eq!(v["is_online"], true);
+    }
+
+    #[test]
+    fn join_parse_json_matrix() {
+        // Thread-shaped meetup link.
+        let v: serde_json::Value = serde_json::from_str(&meeting_join_parse_json(
+            "https://teams.microsoft.com/l/meetup-join/19%3Ameeting_abc%40thread.v2/0",
+        ))
+        .unwrap();
+        assert_eq!(v["ok"], true);
+        assert_eq!(v["target"]["kind"], "thread");
+        assert_eq!(v["target"]["thread_id"], "19:meeting_abc@thread.v2");
+        // Bare thread id.
+        let v: serde_json::Value =
+            serde_json::from_str(&meeting_join_parse_json("19:abc@thread.v2")).unwrap();
+        assert_eq!(v["target"]["kind"], "thread");
+        // Live meet id.
+        let v: serde_json::Value = serde_json::from_str(&meeting_join_parse_json(
+            "https://teams.live.com/meet/9347123456789",
+        ))
+        .unwrap();
+        assert_eq!(v["target"]["kind"], "meeting-id");
+        assert_eq!(v["target"]["meeting_id"], "9347123456789");
+        // Garbage never dials.
+        let v: serde_json::Value =
+            serde_json::from_str(&meeting_join_parse_json("hello")).unwrap();
+        assert_eq!(v["ok"], true);
+        assert_eq!(v["target"]["kind"], "unknown");
+        assert!(v["target"]["thread_id"].is_null());
+    }
+
+    #[test]
+    fn ffi_meeting_null_is_arg_error() {
+        unsafe {
+            let p = ostmac_meeting_join_parse(std::ptr::null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
             assert_eq!(v["error"], "arg");
         }
     }
