@@ -177,6 +177,9 @@ public final class SharedFilesStore: ObservableObject {
     /// Per-folder list cache: rootKey + crumb keys. Back/crumb jumps read
     /// here (no refetch); refresh() bypasses for the current level only.
     private var cache: [String: [SharedFile]] = [:]
+    /// Per-chat root cache (om-fix-tabs): reopening a chat shows its rows
+    /// instantly, then refreshes behind (tab switch never waits).
+    private var chatCache: [String: [SharedFile]] = [:]
     private static let rootKey = "root"
     private var currentKey: String { crumbs.last?.key ?? Self.rootKey }
     private let copyLinkFn: CopyLinkFn
@@ -253,28 +256,53 @@ public final class SharedFilesStore: ObservableObject {
 
     /// Open a chat/channel: fetch the shared list via core, replace files.
     /// Resets crumbs + cache. Stale completions are dropped (fast
-    /// chat-switching lands newest).
+    /// chat-switching lands newest). Cache hit: rows show instantly and
+    /// the fetch refreshes behind (no spinner flash, no blank).
     public func open(chatID: String, limit: Int32 = 20) {
+        stashRoot()
         self.chatID = chatID
         crumbs = []
         cache = [:]
         isDemo = false
-        state = .loading
         savedPath = nil
         openGeneration += 1
         let gen = openGeneration
+        if let hit = chatCache[chatID] {
+            cache[Self.rootKey] = hit
+            files = hit
+            state = hit.isEmpty ? .empty : .loaded
+        } else {
+            files = []
+            state = .loading
+        }
         Task {
             let fetcher = listFetcher
             do {
                 let resp = try await Task.detached { try fetcher(chatID, limit) }.value
                 guard gen == openGeneration else { return }
                 cache[Self.rootKey] = resp.files
+                chatCache[chatID] = resp.files
                 files = resp.files
                 state = resp.files.isEmpty ? .empty : .loaded
             } catch {
                 guard gen == openGeneration else { return }
-                state = .error(Self.message(for: error))
+                // Background-refresh failure keeps cached rows on screen;
+                // the error only blanks when data is truly absent.
+                if files.isEmpty {
+                    state = .error(Self.message(for: error))
+                }
             }
+        }
+    }
+
+    /// Stash the outgoing chat's root list for instant revisit. Live rows
+    /// win at root (manage ops mutate `files`, not the folder cache).
+    private func stashRoot() {
+        guard let old = chatID else { return }
+        if isRoot {
+            chatCache[old] = files
+        } else if let root = cache[Self.rootKey] {
+            chatCache[old] = root
         }
     }
 
@@ -369,9 +397,11 @@ public final class SharedFilesStore: ObservableObject {
 
     /// Demo mode: canned files offline (no core). Resets nav, seeds cache.
     public func showDemo(chatID: String, files: [SharedFile]) {
+        stashRoot()
         self.chatID = chatID
         crumbs = []
         cache = [Self.rootKey: files]
+        chatCache[chatID] = files
         self.files = files
         isDemo = true
         state = files.isEmpty ? .empty : .loaded
@@ -799,6 +829,13 @@ public struct SharedFilesView: View {
         self.store = store
     }
 
+    /// Skeleton gate (om-fix-tabs): spinner only when data is truly
+    /// absent (loading + no rows). A refresh over cached rows keeps the
+    /// list on screen — tab switches never blank. Pure, testable.
+    public nonisolated static func showsSkeleton(state: SharedFilesState, filesEmpty: Bool) -> Bool {
+        state == .loading && filesEmpty
+    }
+
     public var body: some View {
         VStack(spacing: 0) {
             toolbar
@@ -1018,14 +1055,23 @@ public struct SharedFilesView: View {
 
     @ViewBuilder
     private var content: some View {
-        switch store.state {
-        case .loading:
+        if Self.showsSkeleton(state: store.state, filesEmpty: store.files.isEmpty) {
             VStack {
                 Spacer()
                 ProgressView("Loading shared files…")
                 Spacer()
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            loadedContent
+        }
+    }
+
+    @ViewBuilder
+    private var loadedContent: some View {
+        switch store.state {
+        case .loading, .loaded:
+            fileList
         case .empty:
             VStack(spacing: 8) {
                 Spacer()
@@ -1053,8 +1099,11 @@ public struct SharedFilesView: View {
                 Spacer()
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-        case .loaded:
-            List(store.displayedFiles) { file in
+        }
+    }
+
+    private var fileList: some View {
+        List(store.displayedFiles) { file in
                 SharedFileRow(
                     file: file,
                     saving: store.savingIDs.contains(file.id),
@@ -1093,7 +1142,6 @@ public struct SharedFilesView: View {
                 }
             }
             .listStyle(.plain)
-        }
     }
 
     private func pickAndUpload() {
