@@ -197,6 +197,18 @@ public struct TeamsResponse: Decodable, Sendable {
     }
 }
 
+/// `{ok,channel}` from `ostmac_channel_create`.
+public struct ChannelCreateResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let channel: TeamChannel
+
+    /// Host-side construction (mocks, previews). Wire decoding is untouched.
+    public init(ok: Bool, channel: TeamChannel) {
+        self.ok = ok
+        self.channel = channel
+    }
+}
+
 public struct TrouterPoll: Decodable, Sendable {
     public let ok: Bool
     public let events: [AnyJSON]

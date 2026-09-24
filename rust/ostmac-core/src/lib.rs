@@ -519,6 +519,37 @@ pub fn teams_json() -> String {
     }
 }
 
+/// Create one standard channel in a team. Returns
+/// `{ok:true, channel:{id,name}}` or `{ok:false}`. Bad `team_id` and
+/// blank `name` are rejected before any network; a blank description
+/// is dropped (never sent).
+pub fn channel_create_json(team_id: &str, name: &str, description: Option<&str>) -> String {
+    if let Err(e) = todo_id_ok("team_id", team_id) {
+        return e;
+    }
+    if name.trim().is_empty() {
+        return err_json("arg", "empty name");
+    }
+    let desc = description.filter(|d| !d.trim().is_empty());
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let channel =
+                ost::api::create_channel_data(&client, team_id, name, desc)
+                    .await
+                    .map_err(|e| format!("{:#}", e))?;
+            Ok(json!({"ok": true, "channel": channel_to_json(&channel)}).to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("channel_create", e),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Messages (one chat: history + send)
 // ---------------------------------------------------------------------------
@@ -1864,6 +1895,28 @@ pub extern "C" fn ostmac_teams() -> *mut c_char {
     string_to_c(teams_json())
 }
 
+/// Create one channel in a team. `description` may be NULL (no
+/// description). See [`channel_create_json`]. Caller frees.
+#[no_mangle]
+pub extern "C" fn ostmac_channel_create(
+    team_id: *const c_char,
+    name: *const c_char,
+    description: *const c_char,
+) -> *mut c_char {
+    let id = match cstr_to_string(team_id) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    let nm = match cstr_to_string(name) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    match opt_cstr_to_string(description) {
+        Ok(d) => string_to_c(channel_create_json(&id, &nm, d.as_deref())),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
 /// Message history JSON for one chat. See [`messages_json`].
 #[no_mangle]
 pub extern "C" fn ostmac_messages(chat_id: *const c_char, limit: c_int) -> *mut c_char {
@@ -2467,6 +2520,33 @@ mod tests {
         let v = team_to_json(&t);
         assert_eq!(v["name"], "Lonely");
         assert_eq!(v["channels"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn channel_create_rejects_bad_args_without_network() {
+        for (team_id, name, desc) in [
+            ("", "General 2", None),
+            ("   ", "General 2", None),
+            ("team/a", "General 2", None),
+            ("team-1", "", None),
+            ("team-1", "   ", Some("d")),
+        ] {
+            let v: serde_json::Value =
+                serde_json::from_str(&channel_create_json(team_id, name, desc)).unwrap();
+            assert_eq!(v["ok"], false, "team {:?} name {:?}", team_id, name);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
+    fn channel_create_envelope_shape() {
+        let c = ost::api::ChannelInfo {
+            id: "19:new@thread.tacv2".to_string(),
+            name: "New room".to_string(),
+        };
+        let v = channel_to_json(&c);
+        assert_eq!(v["id"], "19:new@thread.tacv2");
+        assert_eq!(v["name"], "New room");
     }
 
     #[test]

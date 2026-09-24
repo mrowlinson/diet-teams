@@ -67,6 +67,22 @@ public enum RustCore {
         try call(ostmac_teams(), as: TeamsResponse.self)
     }
 
+    /// Create one standard channel in a team (nil/blank description is
+    /// dropped by core). Blocking FFI (network): call off the main thread.
+    public static func channelCreate(
+        teamID: String, name: String, description: String? = nil
+    ) throws -> ChannelCreateResponse {
+        try teamID.withCString { idPtr in
+            try name.withCString { namePtr in
+                try withOptionalCString(description) { descPtr in
+                    try call(
+                        ostmac_channel_create(idPtr, namePtr, descPtr),
+                        as: ChannelCreateResponse.self)
+                }
+            }
+        }
+    }
+
     public static func messages(chatID: String, limit: Int32 = 50) throws -> MessagesResponse {
         try chatID.withCString { ptr in
             try call(ostmac_messages(ptr, limit), as: MessagesResponse.self)

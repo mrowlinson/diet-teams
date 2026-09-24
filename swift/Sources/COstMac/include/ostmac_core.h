@@ -46,6 +46,12 @@ char *ostmac_chats(int limit);
 // Joined teams + channels JSON (requires sign-in). Caller frees.
 char *ostmac_teams(void);
 
+// Create one standard channel in a team (Graph POST, requires sign-in):
+// {ok,channel:{id,name}}. description may be NULL (no description).
+// Caller frees.
+char *ostmac_channel_create(
+    const char *team_id, const char *name, const char *description);
+
 // Message history JSON for one chat (requires sign-in). Caller frees.
 char *ostmac_messages(const char *chat_id, int limit);
 

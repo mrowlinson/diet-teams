@@ -18,6 +18,8 @@ public struct TeamsBrowser: View {
     @State private var searchText = ""
     /// Collapsed team ids. Empty = all expanded (new teams arrive open).
     @State private var collapsedTeamIDs: Set<String> = []
+    /// New-channel sheet visibility (om-h3-create).
+    @State private var showCreate = false
 
     public init(
         model: TeamsViewModel, openChatID: String? = nil,
@@ -98,9 +100,19 @@ public struct TeamsBrowser: View {
         let visible = TeamsViewModel.filtered(model.teams, query: searchText)
         let filtering = !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         return VStack(spacing: 0) {
-            DietSearchField("Filter teams", text: $searchText)
-                .padding(.horizontal, DietSpace.sm)
-                .padding(.vertical, DietSpace.sm)
+            HStack(spacing: DietSpace.xs) {
+                DietSearchField("Filter teams", text: $searchText)
+                Button {
+                    showCreate = true
+                } label: {
+                    Image(systemName: "plus")
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("New channel")
+                .help("Create a channel in one of your teams")
+            }
+            .padding(.horizontal, DietSpace.sm)
+            .padding(.vertical, DietSpace.sm)
             DietSeamH()
             if visible.isEmpty {
                 DietEmptyState(
@@ -171,6 +183,11 @@ public struct TeamsBrowser: View {
                 // system-default animation (rows match/unmatch plus
                 // pinned-open expansion). Standard SwiftUI only.
                 .animation(.default, value: searchText)
+            }
+        }
+        .sheet(isPresented: $showCreate) {
+            ChannelCreateSheet(model: model) {
+                showCreate = false
             }
         }
     }
