@@ -17,6 +17,8 @@
 // (counts on bubbles, picker via right-click — shot hook).
 // --demo-botposts is --demo preselected on the bot-posts thread
 // (RSS digest rows, card row, unparseable placeholder — shot hook).
+// --demo-showcase is --demo preselected on the showcase thread (every
+// rich feature in one conversation + two seeded pins — shot hook).
 // --chat preselects (or opens directly when absent from the list).
 // --say auto-sends once into the open chat. In live mode that is a REAL
 // send via core — never use it on shared chats for testing.
@@ -278,6 +280,8 @@ final class AppState: ObservableObject {
     let showNotifLive: Bool
     /// --show-pins: demo 1:1 thread + two seeded pins (strip shot).
     let showPins: Bool
+    /// --demo-showcase: showcase thread + two seeded pins (hero shot).
+    let showShowcase: Bool
     @Published var openChatID: String?
     @Published var signedIn: Bool?
     @Published var coreVersion = "?"
@@ -320,6 +324,7 @@ final class AppState: ObservableObject {
         isDemo = args.contains("--demo") || args.contains("--demo-rich")
             || args.contains("--demo-reactions") || args.contains("--show-sidebarchurn")
             || args.contains("--demo-botposts") || args.contains("--show-pins")
+            || args.contains("--demo-showcase")
         showNotes = args.contains("--show-notes")
         showJump = args.contains("--show-jump") // shot hook: palette open at launch
         call = CallStore(demo: isDemo)
@@ -331,7 +336,8 @@ final class AppState: ObservableObject {
         showHistory = args.contains("--show-history") || showHistoryError
         showNotifLive = args.contains("--show-notif-live")
         showPins = args.contains("--show-pins")
-        if showPins {
+        showShowcase = args.contains("--demo-showcase")
+        if showPins || showShowcase {
             // Shot hook only: throwaway defaults (never the real pins).
             pinnedMessages = PinnedMessageStore(
                 defaults: UserDefaults(suiteName: "shot-pins") ?? .standard)
@@ -367,6 +373,8 @@ final class AppState: ObservableObject {
             preselectID = DemoData.repliesID
         } else if args.contains("--show-pins") {
             preselectID = DemoData.avaID
+        } else if args.contains("--demo-showcase") {
+            preselectID = DemoData.showcaseID
         } else if args.contains("--demo-rich") {
             preselectID = DemoData.richID
         } else if args.contains("--demo-reactions") {
@@ -774,8 +782,9 @@ final class AppState: ObservableObject {
                 let target = msgs.first(where: { $0.id == "rep-2" }) ?? msgs.first
                 if let target { conv.beginReply(to: target) }
             }
-            // Shot hook: seed two pins on the 1:1 thread (the strip shot).
-            if showPins {
+            // Shot hook: seed two pins on the 1:1 thread (the strip
+            // shot) or the showcase thread (the hero shot).
+            if showPins || (showShowcase && id == DemoData.showcaseID) {
                 for m in msgs.prefix(2) {
                     pinnedMessages.pin(chatID: id, message: m)
                 }
