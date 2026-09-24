@@ -56,10 +56,7 @@ public struct TeamCreateSheet: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: DietSpace.sm) {
-            Text("New team")
-                .font(DietType.headline)
-                .foregroundStyle(DietColor.textPrimaryColor)
+        DietSheet("New team") {
             switch phase {
             case .editing, .creating, .failed:
                 formBody
@@ -67,12 +64,10 @@ public struct TeamCreateSheet: View {
                 createdBody(teamName: teamName)
             }
         }
-        .padding(DietSpace.md)
-        .frame(minWidth: 320, idealWidth: 400)
     }
 
     private var formBody: some View {
-        Group {
+        VStack(alignment: .leading, spacing: DietSpace.sm) {
             TextField("Team name", text: $name)
                 .textFieldStyle(.plain)
                 .font(DietType.body)
@@ -106,13 +101,13 @@ public struct TeamCreateSheet: View {
             HStack {
                 Spacer()
                 Button("Cancel", role: .cancel) { onDone() }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.dietSecondary)
                     .keyboardShortcut(.cancelAction)
                     .disabled(phase.isCreating)
                 Button(phase.failureMessage == nil ? "Create" : "Retry") {
                     runCreate()
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.dietPrimary)
                 .keyboardShortcut(.defaultAction)
                 .disabled(!Self.canCreate(name: name) || phase.isCreating)
             }
@@ -120,7 +115,7 @@ public struct TeamCreateSheet: View {
     }
 
     private func createdBody(teamName: String) -> some View {
-        Group {
+        VStack(alignment: .leading, spacing: DietSpace.sm) {
             HStack(spacing: DietSpace.xs) {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundStyle(.green)
@@ -131,7 +126,7 @@ public struct TeamCreateSheet: View {
             HStack {
                 Spacer()
                 Button("Done") { onDone() }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.dietPrimary)
                     .keyboardShortcut(.defaultAction)
             }
         }

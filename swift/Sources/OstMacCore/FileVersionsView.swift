@@ -9,6 +9,7 @@
 //   store.restore(version)   // old version becomes current
 //   store.save(version)      // old bytes to ~/Downloads
 // Tests inject mock fetchers (same seam as SharedFilesStore).
+import DietDesign
 import Foundation
 import SwiftUI
 
@@ -242,7 +243,7 @@ public struct FileVersionsView: View {
                     .textSelection(.enabled)
                     .padding(.horizontal)
                 Button("Retry") { store.refresh() }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.dietSecondary)
                 Spacer()
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)

@@ -21,6 +21,8 @@ public struct SidebarColumn: View {
     @ObservedObject private var rules: RulesStore
     private let openChatID: String?
     private let initialFilter: String
+    private let channelCreateOpen: Bool
+    private let teamCreateOpen: Bool
     private let onOpenChannel: (String, String) -> Void
     @State private var section: SidebarSection
 
@@ -34,6 +36,8 @@ public struct SidebarColumn: View {
         openChatID: String? = nil,
         initialSection: SidebarSection = .chats,
         initialFilter: String = "",
+        channelCreateOpen: Bool = false,
+        teamCreateOpen: Bool = false,
         onOpenChannel: @escaping (String, String) -> Void
     ) {
         self.chats = chats
@@ -45,6 +49,8 @@ public struct SidebarColumn: View {
         self.rules = rules
         self.openChatID = openChatID
         self.initialFilter = initialFilter
+        self.channelCreateOpen = channelCreateOpen
+        self.teamCreateOpen = teamCreateOpen
         _section = State(initialValue: initialSection)
         self.onOpenChannel = onOpenChannel
     }
@@ -62,7 +68,10 @@ public struct SidebarColumn: View {
             case .teams:
                 TeamsBrowser(
                     model: teams, openChatID: openChatID, unread: unread,
-                    initialFilter: initialFilter, onOpen: onOpenChannel)
+                    initialFilter: initialFilter,
+                    channelCreateOpen: channelCreateOpen,
+                    teamCreateOpen: teamCreateOpen,
+                    onOpen: onOpenChannel)
                     .transition(.opacity)
             case .reminders:
                 RemindersBrowser(model: reminders)

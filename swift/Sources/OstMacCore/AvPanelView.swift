@@ -739,7 +739,7 @@ public struct AvPanelView: View {
                                         startCamera()
                                     }
                                 }
-                                .buttonStyle(.dietPrimary)
+                                .buttonStyle(.dietSecondary)
                             }
                             .padding(.top, DietSpace.xxs)
                         }

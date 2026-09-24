@@ -30,12 +30,16 @@ public struct TeamsBrowser: View {
         model: TeamsViewModel, openChatID: String? = nil,
         unread: UnreadStore = UnreadStore(),
         initialFilter: String = "",
+        channelCreateOpen: Bool = false,
+        teamCreateOpen: Bool = false,
         onOpen: @escaping (String, String) -> Void
     ) {
         self.model = model
         self.unread = unread
         self.openChatID = openChatID
         _searchText = State(initialValue: initialFilter)
+        _showCreate = State(initialValue: channelCreateOpen)
+        _showTeamCreate = State(initialValue: teamCreateOpen)
         self.onOpen = onOpen
     }
 
@@ -130,7 +134,7 @@ public struct TeamsBrowser: View {
                 } label: {
                     Image(systemName: "plus")
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(DietSecondaryButtonStyle())
                 .accessibilityLabel("New channel")
                 .help("Create a channel in one of your teams")
                 Button {
@@ -285,32 +289,29 @@ struct JoinTeamSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        VStack(spacing: DietSpace.sm) {
-            Text("Join a team")
-                .font(DietType.title3)
-                .foregroundStyle(DietColor.textPrimaryColor)
-            Text("Paste the team ID. You join as a member.")
-                .font(DietType.callout)
-                .foregroundStyle(DietColor.textSecondaryColor)
-            TextField("Team ID", text: $teamID)
-                .textFieldStyle(.roundedBorder)
-                .disabled(joining)
-            if let error {
-                Text(error)
+        DietSheet("Join a team") {
+            VStack(spacing: DietSpace.sm) {
+                Text("Paste the team ID. You join as a member.")
                     .font(DietType.callout)
-                    .foregroundStyle(Color(nsColor: DietColor.danger))
-            }
-            HStack(spacing: DietSpace.xs) {
-                Button("Cancel") { dismiss() }
-                    .buttonStyle(DietSecondaryButtonStyle())
+                    .foregroundStyle(DietColor.textSecondaryColor)
+                TextField("Team ID", text: $teamID)
+                    .textFieldStyle(.roundedBorder)
                     .disabled(joining)
-                Button(joining ? "Joining…" : "Join") { onJoin() }
-                    .buttonStyle(DietPrimaryButtonStyle())
-                    .disabled(joining || teamID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                if let error {
+                    Text(error)
+                        .font(DietType.callout)
+                        .foregroundStyle(Color(nsColor: DietColor.danger))
+                }
+                HStack(spacing: DietSpace.xs) {
+                    Button("Cancel") { dismiss() }
+                        .buttonStyle(DietSecondaryButtonStyle())
+                        .disabled(joining)
+                    Button(joining ? "Joining…" : "Join") { onJoin() }
+                        .buttonStyle(DietPrimaryButtonStyle())
+                        .disabled(joining || teamID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
             }
         }
-        .padding(DietSpace.md)
-        .frame(minWidth: 320)
     }
 }
 

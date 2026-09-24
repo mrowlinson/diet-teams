@@ -9,6 +9,7 @@
 // sheet cannot dismiss on click-outside) with Done + Esc +
 // click-outside dismiss; every close resets the summary state.
 import AppKit
+import DietDesign
 import SwiftUI
 
 // MARK: - Sheet dismissal routing
@@ -82,7 +83,7 @@ public struct CatchUpView: View {
                 // (no focus trap). Summarize keeps .defaultAction (Return);
                 // the two shortcuts never conflict.
                 Button("Done", action: onDone)
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.dietSecondary)
                     .keyboardShortcut(.cancelAction)
             }
             Text(CatchUp.privacyNote)

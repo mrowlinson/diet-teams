@@ -183,7 +183,7 @@ struct CallDiagRows: View {
             LabeledContent("Active", value: "ended (\(call.lastAction))")
                 .foregroundStyle(DietColor.textSecondaryColor)
             Button("Clear") { call.clearEnded() }
-                .buttonStyle(.bordered)
+                .buttonStyle(.dietSecondary)
         } else if !isDemo, signedIn == true {
             HStack {
                 Button("Echo test") { call.echo() }
@@ -232,7 +232,7 @@ struct CallDiagRows: View {
                     Button("Recall banner") { call.recall() }
                 }
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(.dietSecondary)
         } else {
             HStack {
                 Button("End") { call.end() }
@@ -241,7 +241,7 @@ struct CallDiagRows: View {
                     Button("Recall banner") { call.recall() }
                 }
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(.dietSecondary)
         }
     }
 }

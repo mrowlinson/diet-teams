@@ -29,56 +29,53 @@ public struct ChannelCreateSheet: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: DietSpace.sm) {
-            Text("New channel")
-                .font(DietType.headline)
-                .foregroundStyle(DietColor.textPrimaryColor)
-            Picker("Team", selection: $teamID) {
-                ForEach(model.teams) { team in
-                    Text(team.name).tag(team.teamId)
-                }
-            }
-            .pickerStyle(.menu)
-            TextField("Channel name", text: $name)
-                .textFieldStyle(.plain)
-                .font(DietType.body)
-                .foregroundStyle(DietColor.textPrimaryColor)
-                .padding(DietSpace.sm)
-                .background(DietColor.wellColor)
-                .clipShape(RoundedRectangle(cornerRadius: DietRadius.control))
-            TextField("Description (optional)", text: $description)
-                .textFieldStyle(.plain)
-                .font(DietType.body)
-                .foregroundStyle(DietColor.textPrimaryColor)
-                .padding(DietSpace.sm)
-                .background(DietColor.wellColor)
-                .clipShape(RoundedRectangle(cornerRadius: DietRadius.control))
-            if let error = model.createError {
-                Text(error)
-                    .font(DietType.callout)
-                    .foregroundStyle(.red)
-            }
-            HStack {
-                Spacer()
-                Button("Cancel", role: .cancel) { onDone() }
-                    .buttonStyle(.bordered)
-                    .keyboardShortcut(.cancelAction)
-                Button("Create") {
-                    creating = true
-                    Task {
-                        await model.createChannel(
-                            teamID: teamID, name: name,
-                            description: description.isEmpty ? nil : description)
-                        creating = false
-                        if model.createError == nil { onDone() }
+        DietSheet("New channel") {
+            VStack(alignment: .leading, spacing: DietSpace.sm) {
+                Picker("Team", selection: $teamID) {
+                    ForEach(model.teams) { team in
+                        Text(team.name).tag(team.teamId)
                     }
                 }
-                .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.defaultAction)
-                .disabled(!Self.canCreate(name: name) || teamID.isEmpty || creating)
+                .pickerStyle(.menu)
+                TextField("Channel name", text: $name)
+                    .textFieldStyle(.plain)
+                    .font(DietType.body)
+                    .foregroundStyle(DietColor.textPrimaryColor)
+                    .padding(DietSpace.sm)
+                    .background(DietColor.wellColor)
+                    .clipShape(RoundedRectangle(cornerRadius: DietRadius.control))
+                TextField("Description (optional)", text: $description)
+                    .textFieldStyle(.plain)
+                    .font(DietType.body)
+                    .foregroundStyle(DietColor.textPrimaryColor)
+                    .padding(DietSpace.sm)
+                    .background(DietColor.wellColor)
+                    .clipShape(RoundedRectangle(cornerRadius: DietRadius.control))
+                if let error = model.createError {
+                    Text(error)
+                        .font(DietType.callout)
+                        .foregroundStyle(.red)
+                }
+                HStack {
+                    Spacer()
+                    Button("Cancel", role: .cancel) { onDone() }
+                        .buttonStyle(.dietSecondary)
+                        .keyboardShortcut(.cancelAction)
+                    Button("Create") {
+                        creating = true
+                        Task {
+                            await model.createChannel(
+                                teamID: teamID, name: name,
+                                description: description.isEmpty ? nil : description)
+                            creating = false
+                            if model.createError == nil { onDone() }
+                        }
+                    }
+                    .buttonStyle(.dietPrimary)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(!Self.canCreate(name: name) || teamID.isEmpty || creating)
+                }
             }
         }
-        .padding(DietSpace.md)
-        .frame(minWidth: 320, idealWidth: 400)
     }
 }

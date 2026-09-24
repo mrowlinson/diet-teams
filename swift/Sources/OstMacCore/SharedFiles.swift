@@ -17,6 +17,7 @@
 //   store.displayedFiles           // filter + sort applied
 // Tests inject mock fetchers (same seam as ChatListViewModel.Fetcher).
 import AppKit
+import DietDesign
 import Foundation
 import SwiftUI
 
@@ -1040,8 +1041,7 @@ public struct SharedFilesView: View {
                 HStack(spacing: 6) {
                     ForEach(SharedFilesTypeFilter.allCases, id: \.self) { kind in
                         Button(kind.label) { store.filter = kind }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
+                            .buttonStyle(.dietSecondary)
                             .opacity(store.filter == kind ? 1 : 0.55)
                             .help("Show \(kind.label.lowercased()) files")
                     }
@@ -1095,7 +1095,7 @@ public struct SharedFilesView: View {
                     .textSelection(.enabled)
                     .padding(.horizontal)
                 Button("Retry") { store.refresh() }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.dietSecondary)
                 Spacer()
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)

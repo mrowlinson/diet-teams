@@ -29,6 +29,8 @@
 // --show-meetings opens the Meetings window at launch (shot hook).
 // --av-mic-denied seeds the Call A/V panel's mic-denied hint (shot hook).
 // --show-teams opens the sidebar on the Teams browser (shot hook).
+// --show-channel-create / --show-team-create open the sidebar on
+// Teams with that create sheet open (shot hooks, demo offline).
 // --show-shared opens the conversation on the Shared files tab (shot hook).
 // --show-reminders opens the sidebar on the Reminders browser (shot hook).
 // --show-notes opens the conversation on the Notes tab (shot hook).
@@ -1285,10 +1287,13 @@ struct RootView: View {
     @Environment(\.openSettings) private var openSettings
 
     /// Shot-hook section: --show-reminders wins over --show-teams.
+    /// The create-sheet hooks also land on teams (the sheets hang there).
     static var initialSection: SidebarSection {
         let args = CommandLine.arguments
         if args.contains("--show-reminders") { return .reminders }
         if args.contains("--show-teams") { return .teams }
+        if args.contains("--show-channel-create") { return .teams }
+        if args.contains("--show-team-create") { return .teams }
         return .chats
     }
 
@@ -1309,6 +1314,8 @@ struct RootView: View {
                         openChatID: state.openChatID,
                         initialSection: RootView.initialSection,
                         initialFilter: OstMacAppMain.filterQuery(args: CommandLine.arguments),
+                        channelCreateOpen: CommandLine.arguments.contains("--show-channel-create"),
+                        teamCreateOpen: CommandLine.arguments.contains("--show-team-create"),
                         onOpenChannel: { id, name in state.openChannel(channelID: id, channelName: name) }
                     )
                     .navigationSplitViewColumnWidth(min: 240, ideal: 300, max: 420)

@@ -77,7 +77,7 @@ public struct MeetingsBrowser: View {
                     ProgressView().controlSize(.small)
                 } else {
                     Button(model.joinLabel) { model.submitJoin() }
-                        .buttonStyle(.dietPrimary)
+                        .buttonStyle(.dietSecondary)
                         .disabled(
                             model.joinText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         .help("Parse the link, then join or open it")
