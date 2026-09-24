@@ -1164,6 +1164,7 @@ fn shared_file_to_json(f: &ost::api::SharedFile) -> serde_json::Value {
         "modified": f.modified,
         "sender": f.sender,
         "attachment_id": f.attachment_id,
+        "share_url": f.share_url,
     })
 }
 
@@ -1217,6 +1218,36 @@ pub fn files_upload_json(chat_id: &str, path: &str) -> String {
     match run() {
         Ok(s) => s,
         Err(e) => err_json("files_upload", e),
+    }
+}
+
+/// Create a view-only sharing link for one driveItem (Graph
+/// createLink, om-i1-links). `scope` is `organization` (default) or
+/// `anonymous`; blank/unknown normalizes to `organization` in ost.
+/// Empty ids are rejected before any network.
+/// Returns `{ok:true, link, scope}`.
+pub fn files_link_json(drive_id: &str, item_id: &str, scope: &str) -> String {
+    if drive_id.trim().is_empty() {
+        return err_json("arg", "empty drive_id");
+    }
+    if item_id.trim().is_empty() {
+        return err_json("arg", "empty item_id");
+    }
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let link = ost::api::create_link_data(&client, drive_id, item_id, scope)
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            Ok(json!({"ok": true, "link": link.url, "scope": link.scope}).to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("files_link", e),
     }
 }
 
@@ -2383,6 +2414,28 @@ pub extern "C" fn ostmac_reminder_tasks(
     let lim = if limit <= 0 { 50 } else { limit as usize };
     match cstr_to_string(list_id) {
         Ok(id) => string_to_c(reminder_tasks_json(&id, lim)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
+/// Create a view-only sharing link for one driveItem.
+/// See [`files_link_json`]. `scope` may be NULL/empty (organization).
+#[no_mangle]
+pub extern "C" fn ostmac_files_link(
+    drive_id: *const c_char,
+    item_id: *const c_char,
+    scope: *const c_char,
+) -> *mut c_char {
+    let drive = match cstr_to_string(drive_id) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    let item = match cstr_to_string(item_id) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    match opt_cstr_to_string(scope) {
+        Ok(s) => string_to_c(files_link_json(&drive, &item, s.as_deref().unwrap_or(""))),
         Err(e) => string_to_c(err_json("arg", e)),
     }
 }
@@ -4116,6 +4169,7 @@ mod tests {
             modified: None,
             sender: Some("Priya Nair".to_string()),
             attachment_id: Some("550E8400-E29B-41D4-A716-446655440000".to_string()),
+            share_url: Some("https://sp/share/ABC".to_string()),
         };
         let v = shared_file_to_json(&f);
         assert_eq!(v["id"], "item-1");
@@ -4125,6 +4179,7 @@ mod tests {
         assert_eq!(v["drive_id"], "D1");
         assert_eq!(v["sender"], "Priya Nair");
         assert_eq!(v["attachment_id"], "550E8400-E29B-41D4-A716-446655440000");
+        assert_eq!(v["share_url"], "https://sp/share/ABC");
         assert!(v["modified"].is_null());
     }
 
@@ -4145,6 +4200,13 @@ mod tests {
         for (d, i, dst) in [("", "i", "/tmp/x"), ("d", "", "/tmp/x"), ("d", "i", "")] {
             let v: serde_json::Value =
                 serde_json::from_str(&files_download_json(d, i, dst)).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
+        // Link: empty ids rejected; scope never rejects (normalizes).
+        for (d, i) in [("", "i"), ("d", ""), ("  ", "i")] {
+            let v: serde_json::Value =
+                serde_json::from_str(&files_link_json(d, i, "organization")).unwrap();
             assert_eq!(v["ok"], false);
             assert_eq!(v["error"], "arg");
         }
@@ -4209,6 +4271,30 @@ mod tests {
         let it = CString::new("I1").unwrap();
         unsafe {
             let p = ostmac_files_download(d.as_ptr(), it.as_ptr(), std::ptr::null());
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
+    fn ffi_files_link_null_ids_are_arg_error() {
+        let d = CString::new("D1").unwrap();
+        let it = CString::new("I1").unwrap();
+        unsafe {
+            // NULL drive id -> arg error.
+            let p = ostmac_files_link(std::ptr::null(), it.as_ptr(), std::ptr::null());
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+            // NULL item id -> arg error.
+            let p = ostmac_files_link(d.as_ptr(), std::ptr::null(), std::ptr::null());
             assert!(!p.is_null());
             let s = CStr::from_ptr(p).to_string_lossy().into_owned();
             ostmac_free(p);

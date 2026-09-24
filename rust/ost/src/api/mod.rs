@@ -49,7 +49,7 @@ pub use calendar::{
     calendar_view_path, list_upcoming_meetings_data, lobby_next, parse_calendar_view,
     parse_join_url,
 };
-pub use files::{download_file_data, list_chat_files_data, upload_file_data};
+pub use files::{create_link_data, download_file_data, list_chat_files_data, upload_file_data};
 pub use media::{fetch_media_data, MediaBytes, MAX_BYTES};
 pub use me::whoami_data;
 pub use notes::{
@@ -166,6 +166,11 @@ pub async fn download_file(drive_id: &str, item_id: &str, dest: &str) -> Result<
 /// Upload a local file to a chat or channel
 pub async fn upload_file(chat_id: &str, local_path: &str) -> Result<()> {
     files::upload_file(chat_id, local_path).await
+}
+
+/// Create a view-only sharing link for a shared file (om-i1-links)
+pub async fn create_link(drive_id: &str, item_id: &str, scope: &str) -> Result<()> {
+    files::create_link(drive_id, item_id, scope).await
 }
 
 /// List Microsoft To Do lists

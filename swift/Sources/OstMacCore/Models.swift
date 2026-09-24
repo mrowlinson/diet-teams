@@ -844,13 +844,18 @@ public struct SharedFile: Decodable, Sendable, Identifiable, Equatable {
     /// bubble-match key for `<attachment id>` refs. Nil on old core builds
     /// and for items whose eTag carries no GUID.
     public let attachment_id: String?
+    /// Sharing link from createLink (om-i1-links). Nil at list time: core
+    /// never fills it; the store caches the created link per file id.
+    /// Optional so old core payloads (no key) still decode.
+    public let share_url: String?
 
     public init(
         id: String, name: String, size: UInt64 = 0,
         mime: String? = nil, web_url: String? = nil,
         download_url: String? = nil, drive_id: String? = nil,
         created: String? = nil, modified: String? = nil,
-        sender: String? = nil, attachment_id: String? = nil
+        sender: String? = nil, attachment_id: String? = nil,
+        share_url: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -863,6 +868,17 @@ public struct SharedFile: Decodable, Sendable, Identifiable, Equatable {
         self.modified = modified
         self.sender = sender
         self.attachment_id = attachment_id
+        self.share_url = share_url
+    }
+
+    /// Copy with a sharing link attached (store caches createLink results).
+    public func withShareURL(_ url: String) -> SharedFile {
+        SharedFile(
+            id: id, name: name, size: size, mime: mime,
+            web_url: web_url, download_url: download_url,
+            drive_id: drive_id, created: created, modified: modified,
+            sender: sender, attachment_id: attachment_id, share_url: url
+        )
     }
 
     /// "48211" -> "47.1 KB" (1 decimal, B/KB/MB/GB).
@@ -927,6 +943,21 @@ public struct SharedFileDownloadResponse: Decodable, Sendable {
     public let ok: Bool
     public let path: String
     public let bytes: UInt64
+}
+
+/// Sharing-link result from core `ostmac_files_link` (om-i1-links):
+/// view-only link for one driveItem. `scope` echoes the applied scope
+/// (organization|anonymous).
+public struct SharedFileLinkResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let link: String
+    public let scope: String?
+
+    public init(ok: Bool, link: String, scope: String? = nil) {
+        self.ok = ok
+        self.link = link
+        self.scope = scope
+    }
 }
 
 // MARK: - Presence (om-presence lane)

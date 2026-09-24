@@ -27,12 +27,16 @@ public final class SharedFilesStore: ObservableObject {
     public typealias ListFetcher = @Sendable (String, Int32) throws -> SharedFilesResponse
     public typealias UploadFetcher = @Sendable (String, String) throws -> SharedFileUploadResponse
     public typealias DownloadFetcher = @Sendable (String, String, String) throws -> SharedFileDownloadResponse
+    public typealias LinkFetcher = @Sendable (String, String, String) throws -> SharedFileLinkResponse
     public typealias OpenURLFn = @Sendable (URL) -> Bool
+    public typealias CopyLinkFn = @Sendable (String) -> Void
 
     @Published public private(set) var files: [SharedFile] = []
     @Published public private(set) var state: SharedFilesState = .loading
     @Published public private(set) var uploading = false
     @Published public private(set) var savingIDs: Set<String> = []
+    @Published public private(set) var linkingIDs: Set<String> = []
+    @Published public private(set) var links: [String: String] = [:]
     @Published public private(set) var savedPath: String?
     public private(set) var chatID: String?
     public private(set) var isDemo = false
@@ -40,7 +44,9 @@ public final class SharedFilesStore: ObservableObject {
     private let listFetcher: ListFetcher
     private let uploadFetcher: UploadFetcher
     private let downloadFetcher: DownloadFetcher
+    private let linkFetcher: LinkFetcher
     private let openURLFn: OpenURLFn
+    private let copyLinkFn: CopyLinkFn
     private var openGeneration = 0
 
     /// Default URL opener. No-op (returns false) under XCTest so tests never
@@ -51,18 +57,33 @@ public final class SharedFilesStore: ObservableObject {
         return NSWorkspace.shared.open(url)
     }
 
+    /// Default link copier. No-op under XCTest so tests never touch the
+    /// live pasteboard; tests inject a capturing closure instead.
+    public nonisolated static let defaultCopyLink: CopyLinkFn = { text in
+        if NSClassFromString("XCTestCase") != nil { return }
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(text, forType: .string)
+    }
+
     public nonisolated init(
         list: @escaping ListFetcher = { try RustCore.sharedFiles(chatID: $0, limit: $1) },
         upload: @escaping UploadFetcher = { try RustCore.sharedUpload(chatID: $0, path: $1) },
         download: @escaping DownloadFetcher = {
             try RustCore.sharedDownload(driveID: $0, itemID: $1, dest: $2)
         },
-        openURL: @escaping OpenURLFn = SharedFilesStore.defaultOpenURL
+        link: @escaping LinkFetcher = {
+            try RustCore.sharedLink(driveID: $0, itemID: $1, scope: $2)
+        },
+        openURL: @escaping OpenURLFn = SharedFilesStore.defaultOpenURL,
+        copyLink: @escaping CopyLinkFn = SharedFilesStore.defaultCopyLink
     ) {
         self.listFetcher = list
         self.uploadFetcher = upload
         self.downloadFetcher = download
+        self.linkFetcher = link
         self.openURLFn = openURL
+        self.copyLinkFn = copyLink
     }
 
     /// Open a chat/channel: fetch the shared list via core, replace files.
@@ -157,6 +178,48 @@ public final class SharedFilesStore: ObservableObject {
             }
         } else if let s = file.download_url, let url = URL(string: s) {
             _ = openURLFn(url) // browser downloads the pre-signed URL
+        }
+    }
+
+    /// Cached sharing link for one file (createLink result, or the
+    /// row's own share_url when core filled it). Nil until linked.
+    public func link(for file: SharedFile) -> String? {
+        links[file.id] ?? file.share_url
+    }
+
+    /// Create a view-only sharing link via core and copy it to the
+    /// pasteboard (injected writer). Cached links re-copy without
+    /// refetching (createLink is idempotent server-side anyway).
+    /// No-op without a drive_id; demo mode fabricates a stable link.
+    public func shareLink(_ file: SharedFile, scope: String = "organization") {
+        if let cached = link(for: file) {
+            copyLinkFn(cached)
+            return
+        }
+        guard let drive = file.drive_id else { return }
+        if isDemo {
+            let demo = SharedFileLink.demoLink(for: file.id)
+            links[file.id] = demo
+            files = files.map { $0.id == file.id ? $0.withShareURL(demo) : $0 }
+            copyLinkFn(demo)
+            return
+        }
+        guard !linkingIDs.contains(file.id) else { return }
+        linkingIDs.insert(file.id)
+        let fetcher = linkFetcher
+        let itemID = file.id
+        Task {
+            defer { linkingIDs.remove(itemID) }
+            do {
+                let resp = try await Task.detached {
+                    try fetcher(drive, itemID, scope)
+                }.value
+                links[itemID] = resp.link
+                files = files.map { $0.id == itemID ? $0.withShareURL(resp.link) : $0 }
+                copyLinkFn(resp.link)
+            } catch {
+                state = .error(Self.message(for: error))
+            }
         }
     }
 
@@ -267,8 +330,11 @@ public struct SharedFilesView: View {
                 SharedFileRow(
                     file: file,
                     saving: store.savingIDs.contains(file.id),
+                    linking: store.linkingIDs.contains(file.id),
+                    linked: store.link(for: file) != nil,
                     onOpen: { store.open(file) },
-                    onSave: { store.save(file) }
+                    onSave: { store.save(file) },
+                    onLink: { store.shareLink(file) }
                 )
             }
             .listStyle(.plain)
@@ -289,8 +355,11 @@ public struct SharedFilesView: View {
 struct SharedFileRow: View {
     let file: SharedFile
     var saving: Bool = false
+    var linking: Bool = false
+    var linked: Bool = false
     var onOpen: () -> Void = {}
     var onSave: () -> Void = {}
+    var onLink: () -> Void = {}
 
     var body: some View {
         HStack(spacing: 10) {
@@ -330,6 +399,9 @@ struct SharedFileRow: View {
                         .buttonStyle(.link)
                         .font(.caption)
                         .help("Save to ~/Downloads")
+                }
+                if file.drive_id != nil {
+                    SharedFileLinkButton(linking: linking, linked: linked, onTap: onLink)
                 }
             }
         }
