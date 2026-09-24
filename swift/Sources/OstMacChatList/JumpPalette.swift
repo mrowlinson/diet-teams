@@ -145,6 +145,53 @@ public enum FuzzyMatch {
     }
 }
 
+/// Flat ↑↓ navigation across the palette's stacked sections
+/// (om-lt4-palettenav): the main rows (chats, or message hits) followed
+/// by the visible Files rows then the visible People rows. The view keeps
+/// one `highlight` over the concatenated rows; `resolve` maps it back.
+/// Counts passed in are VISIBLE rows (files/people already capped and
+/// zeroed when their section is hidden or unwired).
+public enum PaletteNav {
+    public enum Row: Equatable, Sendable {
+        case main(Int)
+        case file(Int)
+        case person(Int)
+    }
+
+    /// Rows shown per Files/People section before the "+N more" note.
+    public static let sectionRowCap = 5
+
+    /// Visible rows for a section holding `count` hits.
+    public static func visibleCount(_ count: Int) -> Int {
+        min(max(count, 0), sectionRowCap)
+    }
+
+    /// Total navigable rows across all three sections.
+    public static func total(mainCount: Int, fileCount: Int, personCount: Int) -> Int {
+        max(mainCount, 0) + max(fileCount, 0) + max(personCount, 0)
+    }
+
+    /// Clamped step; stays put at the ends (0 when nothing to move on).
+    public static func move(current: Int, delta: Int, total: Int) -> Int {
+        guard total > 0 else { return 0 }
+        return min(max(current + delta, 0), total - 1)
+    }
+
+    /// Section + row for a flat index (nil when out of range).
+    public static func resolve(
+        _ index: Int, mainCount: Int, fileCount: Int, personCount: Int
+    ) -> Row? {
+        guard index >= 0 else { return nil }
+        let main = max(mainCount, 0)
+        let files = max(fileCount, 0)
+        let people = max(personCount, 0)
+        if index < main { return .main(index) }
+        if index < main + files { return .file(index - main) }
+        if index < main + files + people { return .person(index - main - files) }
+        return nil
+    }
+}
+
 public extension Notification.Name {
     /// Posted by the Go-menu Cmd+K command; RootView sheets the palette.
     static let showJumpPalette = Notification.Name("om-cmdk.showJumpPalette")
