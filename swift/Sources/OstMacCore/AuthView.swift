@@ -149,7 +149,7 @@ public struct AuthView: View {
                 .font(DietType.callout)
                 .foregroundStyle(DietColor.textSecondaryColor)
             Button("Sign out") { Task { await model.signOut() } }
-                .buttonStyle(.dietSecondary)
+                .buttonStyle(.bordered)
                 .padding(.top, DietSpace.xs)
         }
     }
@@ -169,9 +169,9 @@ public struct AuthView: View {
                 .textSelection(.enabled)
             HStack(spacing: DietSpace.sm) {
                 Button("Retry refresh") { Task { await model.retryRefresh() } }
-                    .buttonStyle(.dietPrimary)
+                    .buttonStyle(.borderedProminent)
                 Button("Sign in again") { Task { await model.signIn() } }
-                    .buttonStyle(.dietSecondary)
+                    .buttonStyle(.bordered)
             }
             .padding(.top, DietSpace.xs)
             Button("Use browser sign-in instead") {
@@ -197,9 +197,9 @@ public struct AuthView: View {
                 .textSelection(.enabled)
             HStack(spacing: DietSpace.sm) {
                 Button("Try again") { Task { await model.retry() } }
-                    .buttonStyle(.dietPrimary)
+                    .buttonStyle(.borderedProminent)
                 Button("Back") { model.cancel() }
-                    .buttonStyle(.dietSecondary)
+                    .buttonStyle(.bordered)
             }
             .padding(.top, DietSpace.xs)
             Button("Try browser sign-in instead") {

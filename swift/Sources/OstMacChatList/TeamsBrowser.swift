@@ -32,12 +32,16 @@ public struct TeamsBrowser: View {
         model: TeamsViewModel, openChatID: String? = nil,
         unread: UnreadStore = UnreadStore(),
         initialFilter: String = "",
+        channelCreateOpen: Bool = false,
+        teamCreateOpen: Bool = false,
         onOpen: @escaping (String, String) -> Void
     ) {
         self.model = model
         self.unread = unread
         self.openChatID = openChatID
         _searchText = State(initialValue: initialFilter)
+        _showCreate = State(initialValue: channelCreateOpen)
+        _showTeamCreate = State(initialValue: teamCreateOpen)
         self.onOpen = onOpen
     }
 
@@ -141,7 +145,7 @@ public struct TeamsBrowser: View {
                 } label: {
                     Image(systemName: "person.badge.plus")
                 }
-                .buttonStyle(DietSecondaryButtonStyle())
+                .buttonStyle(.borderless)
                 .accessibilityLabel("Join a team")
                 .help("Join a team by ID")
                 Button {
@@ -149,7 +153,7 @@ public struct TeamsBrowser: View {
                 } label: {
                     Image(systemName: "person.3.fill")
                 }
-                .buttonStyle(DietSecondaryButtonStyle())
+                .buttonStyle(.borderless)
                 .accessibilityLabel("New team")
                 .help("Create a team")
             }
@@ -306,10 +310,10 @@ struct JoinTeamSheet: View {
             }
             HStack(spacing: DietSpace.xs) {
                 Button("Cancel") { dismiss() }
-                    .buttonStyle(DietSecondaryButtonStyle())
+                    .buttonStyle(.bordered)
                     .disabled(joining)
                 Button(joining ? "Joining…" : "Join") { onJoin() }
-                    .buttonStyle(DietPrimaryButtonStyle())
+                    .buttonStyle(.borderedProminent)
                     .disabled(joining || teamID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }

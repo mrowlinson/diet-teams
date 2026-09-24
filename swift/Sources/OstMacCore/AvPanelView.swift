@@ -607,7 +607,7 @@ public struct AvPanelView: View {
                             Button("Test Microphone", systemImage: "mic") {
                                 model.runMicTest()
                             }
-                            .buttonStyle(.dietSecondary)
+                            .buttonStyle(.bordered)
                             .disabled(model.micPhase.isRunning)
                             phaseStatus(model.micPhase, model.micResult)
                         }
@@ -629,7 +629,7 @@ public struct AvPanelView: View {
                                 ) {
                                     openURL(MicAccess.privacyURL)
                                 }
-                                .buttonStyle(.dietSecondary)
+                                .buttonStyle(.bordered)
                             }
                         }
                         LabeledContent("Input level") {
@@ -662,7 +662,7 @@ public struct AvPanelView: View {
                             ) {
                                 model.runTonePlay()
                             }
-                            .buttonStyle(.dietSecondary)
+                            .buttonStyle(.bordered)
                             .disabled(model.speakerPhase.isRunning)
                             phaseStatus(
                                 model.speakerPhase, model.speakerResult)
@@ -739,7 +739,7 @@ public struct AvPanelView: View {
                                         startCamera()
                                     }
                                 }
-                                .buttonStyle(.dietPrimary)
+                                .buttonStyle(.bordered)
                             }
                             .padding(.top, DietSpace.xxs)
                         }
