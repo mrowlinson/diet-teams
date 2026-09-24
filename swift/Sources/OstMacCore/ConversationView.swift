@@ -518,7 +518,7 @@ public struct ConversationView: View {
     }
 
     /// Staged-file rows above the send row: name, size, per-file state
-    /// (cap gate / progress / sent / failed+retry), remove, and the upload
+    /// (size flag / progress / sent / failed+retry), remove, and the upload
     /// error banner. No counts (Diagnostics only) — just the rows.
     private var attachmentStrip: some View {
         Group {
@@ -560,9 +560,14 @@ public struct ConversationView: View {
             case let .tooLarge(actual):
                 Text(ComposeAttachments.capMessage(actual: actual))
                     .font(DietType.caption1)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(DietColor.textSecondaryColor)
                     .lineLimit(1)
             case .uploading:
+                if let frac = attachments.uploadProgress[file.id] {
+                    Text("\(Int((frac * 100).rounded()))%")
+                        .font(DietType.captionMono)
+                        .foregroundStyle(DietColor.textSecondaryColor)
+                }
                 ProgressView().controlSize(.small)
             case .uploaded:
                 Image(systemName: "checkmark.circle.fill")

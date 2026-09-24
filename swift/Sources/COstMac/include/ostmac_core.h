@@ -132,7 +132,8 @@ char *ostmac_files_opts(const char *chat_id, int limit, int include_folders);
 // Caller frees.
 char *ostmac_files_children(const char *drive_id, const char *item_id, int limit);
 
-// Upload a local file (<4 MB) to a chat/channel + post reference message.
+// Upload a local file to a chat/channel + post reference message
+// (<=4 MB one PUT, larger via a resumable upload session).
 // Returns {ok, file}. Caller frees.
 char *ostmac_files_upload(const char *chat_id, const char *path);
 
@@ -140,6 +141,11 @@ char *ostmac_files_upload(const char *chat_id, const char *path);
 // scope NULL/empty = organization (org-only); "anonymous" = anyone link.
 // Returns {ok, link, scope}. Caller frees.
 char *ostmac_files_link(const char *drive_id, const char *item_id, const char *scope);
+
+// Current upload progress (pure read, no network, never fails):
+// {ok, uploaded, total, percent, active}. Poll while an upload
+// spinner runs. Caller frees.
+char *ostmac_files_upload_progress(void);
 
 // Download one driveItem's content to dest path.
 // Returns {ok, path, bytes}. Caller frees.

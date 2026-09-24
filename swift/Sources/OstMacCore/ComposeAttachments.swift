@@ -4,13 +4,13 @@
 // files-upload path (RustCore.sharedUpload → ostmac_files_upload). Chat ids
 // skip the team scan in core (files.rs upload_file_data routes on
 // is_channel_id: channels resolve the team folder, chats go straight to the
-// sender's OneDrive chat-files folder). The 4 MB simple-upload ceiling is
-// gated BEFORE any upload call: over-cap files stage as .tooLarge and never
-// reach the fetcher.
+// sender's OneDrive chat-files folder). Files over 4 MB stage as .tooLarge
+// and ride core's resumable session path (om-i4-bigup); % polls the core
+// gauge per in-flight file while its spinner runs.
 //
 //   let a = ComposeAttachmentsStore()
-//   a.stage(urls: panel.urls)          // probe sizes, gate the cap
-//   await a.uploadPending(chatID: id)  // staged only, in order
+//   a.stage(urls: panel.urls)          // probe sizes, flag large files
+//   await a.uploadPending(chatID: id)  // staged + large, in order
 //
 // Tests inject mock upload/size seams (same pattern as SharedFilesStore).
 import AppKit
@@ -21,7 +21,7 @@ import SwiftUI
 public enum ComposeAttachmentState: Equatable, Sendable {
     /// Under the cap, ready to upload on Send.
     case staged
-    /// Over the cap: surfaced in the composer, never uploaded.
+    /// Over the cap: rides core's resumable session path on Send.
     case tooLarge(actual: UInt64)
     /// Upload in flight (row shows a spinner; Send is disabled).
     case uploading
@@ -52,22 +52,22 @@ public struct ComposeAttachment: Identifiable, Equatable, Sendable {
     }
 }
 
-/// Pure composer-attachment helpers (cap gate + picker model).
+/// Pure composer-attachment helpers (size flag + picker model).
 public enum ComposeAttachments {
-    /// Simple-upload ceiling, mirrors Rust MAX_SIMPLE_UPLOAD (files.rs).
-    /// Core rejects larger files; the composer gates them first (no call).
+    /// Simple/session routing threshold, mirrors Rust MAX_SIMPLE_UPLOAD
+    /// (files.rs). Core simple-PUTs at-or-under and resumable-uploads over.
     public static let maxUploadBytes: UInt64 = 4 * 1024 * 1024
 
-    /// True when `size` exceeds the ceiling (exactly 4 MB still uploads:
-    /// core rejects `len > MAX_SIMPLE_UPLOAD`).
+    /// True when `size` exceeds the threshold (exactly 4 MB still takes
+    /// the simple path: core sessions only `len > MAX_SIMPLE_UPLOAD`).
     public static func isTooLarge(size: UInt64) -> Bool {
         size > maxUploadBytes
     }
 
-    /// Cap message surfaced in the composer before upload.
-    /// `"File is 5.0 MB; uploads are limited to 4.0 MB"`.
+    /// Large-file note surfaced in the composer before upload.
+    /// `"File is 5.0 MB; large files use resumable upload"`.
     public static func capMessage(actual: UInt64) -> String {
-        "File is \(SharedFile.sizeLabel(actual)); uploads are limited to \(SharedFile.sizeLabel(maxUploadBytes))"
+        "File is \(SharedFile.sizeLabel(actual)); large files use resumable upload"
     }
 
     /// Last path component (`/tmp/a b.pdf` → `a b.pdf`).
@@ -75,8 +75,8 @@ public enum ComposeAttachments {
         (path as NSString).lastPathComponent
     }
 
-    /// Pure picker model: one path + probed size → a staged (or cap-gated)
-    /// attachment. The store's `stage` maps panel URLs through this.
+    /// Pure picker model: one path + probed size → a staged (or
+    /// large-flagged) attachment. The store's `stage` maps URLs through this.
     public static func staged(path: String, size: UInt64) -> ComposeAttachment {
         ComposeAttachment(
             path: path, name: displayName(path: path), size: size,
@@ -94,11 +94,15 @@ public final class ComposeAttachmentsStore: ObservableObject {
     @Published public private(set) var attachments: [ComposeAttachment] = []
     /// True while `uploadPending` runs (composer shows progress, Send locks).
     @Published public private(set) var uploading = false
-    /// Last upload failure (composer banner). Cap gates stay per-row.
+    /// Per-file 0...1 fraction while in flight (keyed by attachment id;
+    /// entries clear on completion; spinner stays regardless).
+    @Published public private(set) var uploadProgress: [String: Double] = [:]
+    /// Last upload failure (composer banner). Size flags stay per-row.
     @Published public private(set) var error: String?
 
     private let uploadFetcher: UploadFetcher
     private let sizeProbe: SizeProbe
+    private let progressFetcher: SharedFilesStore.ProgressFetcher
 
     /// Default size probe (FileManager; test seam overrides it).
     /// Public: Swift requires default-argument callees of a public init to be public.
@@ -109,14 +113,16 @@ public final class ComposeAttachmentsStore: ObservableObject {
 
     public nonisolated init(
         upload: @escaping UploadFetcher = { try RustCore.sharedUpload(chatID: $0, path: $1) },
-        sizeProbe: @escaping SizeProbe = ComposeAttachmentsStore.defaultSizeProbe
+        sizeProbe: @escaping SizeProbe = ComposeAttachmentsStore.defaultSizeProbe,
+        progress: @escaping SharedFilesStore.ProgressFetcher = { try RustCore.sharedUploadProgress() }
     ) {
         self.uploadFetcher = upload
         self.sizeProbe = sizeProbe
+        self.progressFetcher = progress
     }
 
-    /// Stage native-picker URLs: probe sizes now, gate the cap immediately.
-    /// Over-cap files stage as .tooLarge (surfaced, never uploaded).
+    /// Stage native-picker URLs: probe sizes now, flag large files (.tooLarge
+    /// rides the resumable session path on Send).
     public func stage(urls: [URL]) {
         stage(paths: urls.map(\.path))
     }
@@ -158,24 +164,36 @@ public final class ComposeAttachmentsStore: ObservableObject {
         attachments[i].state = .staged
     }
 
-    /// Rows ready to upload (cap-gated, in pick order).
+    /// Rows ready to upload (standard-size, in pick order).
     public var staged: [ComposeAttachment] {
         attachments.filter { $0.state == .staged }
     }
 
-    /// True when Send has files to upload (enables Send with an empty draft).
-    public var hasStaged: Bool {
-        attachments.contains { $0.state == .staged }
+    /// Rows Send will upload: staged + large-flagged, in pick order.
+    public var pendingUploads: [ComposeAttachment] {
+        attachments.filter { $0.state == .staged || Self.isLarge($0.state) }
     }
 
-    /// Upload every staged file via the existing files-upload path, in pick
-    /// order, skipping .tooLarge/.failed/.uploaded rows (the fetcher is never
-    /// called for them). Failures mark the row and set `error` but don't stop
-    /// later files. Demo mode fabricates success without touching core.
+    /// True when Send has files to upload (enables Send with an empty draft).
+    public var hasStaged: Bool {
+        !pendingUploads.isEmpty
+    }
+
+    /// True for the large-file flag (resumable session path).
+    static func isLarge(_ state: ComposeAttachmentState) -> Bool {
+        if case .tooLarge = state { return true }
+        return false
+    }
+
+    /// Upload every pending file via the existing files-upload path, in pick
+    /// order (staged + large; core routes >4 MB through a resumable session),
+    /// skipping .failed/.uploaded rows. Per-file `%` polls the core gauge
+    /// while its spinner runs. Failures mark the row and set `error` but
+    /// don't stop later files. Demo mode fabricates success without core.
     /// Returns the uploaded files (demo-fabricated or core-echoed).
     @discardableResult
     public func uploadPending(chatID: String, isDemo: Bool = false) async -> [SharedFile] {
-        let pending = staged
+        let pending = pendingUploads
         guard !pending.isEmpty, !uploading else { return [] }
         uploading = true
         defer { uploading = false }
@@ -188,6 +206,7 @@ public final class ComposeAttachmentsStore: ObservableObject {
                     id: "demo-up-\(item.name)", name: item.name, size: item.size))
                 continue
             }
+            let poll = startProgressPoll(id: item.id)
             do {
                 let fetcher = uploadFetcher
                 let path = item.path
@@ -199,8 +218,27 @@ public final class ComposeAttachmentsStore: ObservableObject {
                 setState(id: item.id, .failed(msg))
                 self.error = msg
             }
+            poll.cancel()
+            uploadProgress.removeValue(forKey: item.id)
         }
         return done
+    }
+
+    /// Poll the core gauge every 200 ms until cancelled, recording the
+    /// fraction under `id`. Throwers keep the last value.
+    private func startProgressPoll(id: String) -> Task<Void, Never> {
+        let fetcher = progressFetcher
+        return Task { @MainActor in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 200_000_000)
+                if Task.isCancelled { break }
+                if let p = try? await Task.detached { try fetcher() }.value,
+                   let frac = SharedFilesStore.progressFraction(uploaded: p.uploaded, total: p.total)
+                {
+                    self.uploadProgress[id] = frac
+                }
+            }
+        }
     }
 
     private func setState(id: String, _ state: ComposeAttachmentState) {

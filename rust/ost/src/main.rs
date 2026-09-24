@@ -179,7 +179,7 @@ enum Commands {
         out: String,
     },
 
-    /// Upload a local file to a chat or channel (<4 MB)
+    /// Upload a local file to a chat or channel (large files use a resumable session)
     FilesUpload {
         /// Chat or channel ID (from `chats` / `teams` output)
         #[arg(short, long)]

@@ -9,8 +9,9 @@
 //!
 //! Auth: existing Graph token (Teams client `/.default`). No scope widening:
 //! the Teams desktop app registration already grants Files.Read/Write for
-//! delegated flows. Upload is small-file PUT only (<4 MB); larger files need
-//! an upload session (not implemented, rejected with a clear error).
+//! delegated flows. Uploads <=4 MB use a single simple PUT; larger files
+//! use a resumable upload session (`createUploadSession` + fragment PUTs)
+//! with per-fragment progress reports.
 
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
@@ -19,6 +20,43 @@ use super::client::TeamsClient;
 
 const CHAT_FILES_FOLDER: &str = "Microsoft Teams Chat Files";
 const MAX_SIMPLE_UPLOAD: u64 = 4 * 1024 * 1024;
+/// Resumable-upload fragment size (16 x 320 KiB; Graph requires multiples
+/// of 320 KiB except the tail).
+const UPLOAD_CHUNK: u64 = 5 * 1024 * 1024;
+
+/// Upload progress sink: `(bytes_sent, bytes_total)` after each fragment
+/// (simple PUT reports once at completion).
+pub type UploadProgress<'a> = dyn Fn(u64, u64) + Sync + 'a;
+
+/// Inclusive `(start, end)` fragment ranges covering `total` bytes in
+/// `chunk`-sized fragments with a short tail. Empty for empty files.
+pub fn upload_chunk_ranges(total: u64, chunk: u64) -> Vec<(u64, u64)> {
+    let chunk = chunk.max(1);
+    let mut out = Vec::new();
+    let mut start = 0u64;
+    while start < total {
+        let end = (start + chunk).min(total) - 1;
+        out.push((start, end));
+        start = end + 1;
+    }
+    out
+}
+
+/// `Content-Range` header value for one fragment (inclusive `end`).
+pub fn content_range_value(start: u64, end: u64, total: u64) -> String {
+    format!("bytes {}-{}/{}", start, end, total)
+}
+
+/// `createUploadSession` body. `replace` matches simple-PUT semantics
+/// (same-name uploads overwrite, never fork copies).
+pub fn upload_session_body(name: &str) -> serde_json::Value {
+    serde_json::json!({
+        "item": {
+            "@microsoft.graph.conflictBehavior": "replace",
+            "name": name,
+        }
+    })
+}
 
 // -- Wire types --
 
@@ -553,20 +591,31 @@ pub async fn download_file_version_data(
 // -- Upload --
 
 /// Upload a local file to a chat or channel and post it as a `reference`
-/// attachment message. Small files only (<4 MB). Returns the uploaded item.
+/// attachment message. Files <=4 MB use one simple PUT; larger files use
+/// a resumable upload session. Returns the uploaded item.
 pub async fn upload_file_data(
     client: &TeamsClient,
     chat_id: &str,
     local_path: &str,
 ) -> Result<SharedFile> {
+    upload_file_data_with_progress(client, chat_id, local_path, None).await
+}
+
+/// [`upload_file_data`] with per-fragment progress reports
+/// (`(bytes_sent, bytes_total)`; simple PUT reports once at completion).
+pub async fn upload_file_data_with_progress(
+    client: &TeamsClient,
+    chat_id: &str,
+    local_path: &str,
+    progress: Option<&UploadProgress<'_>>,
+) -> Result<SharedFile> {
     let bytes = std::fs::read(local_path)
         .with_context(|| format!("Failed to read {}", local_path))?;
-    if bytes.len() as u64 > MAX_SIMPLE_UPLOAD {
-        bail!(
-            "File is {} bytes; simple upload supports <4 MB only (upload sessions not implemented)",
-            bytes.len()
-        );
-    }
+    let report = |sent: u64, total: u64| {
+        if let Some(cb) = progress {
+            cb(sent, total);
+        }
+    };
     let filename = std::path::Path::new(local_path)
         .file_name()
         .and_then(|s| s.to_str())
@@ -578,9 +627,9 @@ pub async fn upload_file_data(
     // (the scan costs joinedTeams + one channels call per team).
     if is_channel_id(chat_id) {
         let team_id = find_team_for_channel(client, chat_id).await?;
-        upload_to_channel(client, &team_id, chat_id, filename, bytes).await
+        upload_to_channel(client, &team_id, chat_id, filename, bytes, &report).await
     } else {
-        upload_to_chat(client, chat_id, filename, bytes).await
+        upload_to_chat(client, chat_id, filename, bytes, &report).await
     }
 }
 
@@ -589,14 +638,24 @@ async fn upload_to_chat(
     chat_id: &str,
     filename: &str,
     bytes: Vec<u8>,
+    report: &impl Fn(u64, u64),
 ) -> Result<SharedFile> {
     let folder = encode_segment(CHAT_FILES_FOLDER);
     let fname = encode_segment(filename);
-    let upath = format!("/me/drive/root:/{}/{}:/content", folder, fname);
-    let resp = client
-        .graph_put_bytes(&upath, bytes, "application/octet-stream")
-        .await?;
-    let item: DriveItem = resp.json().await.context("Failed to parse upload response")?;
+    let item = if bytes.len() as u64 > MAX_SIMPLE_UPLOAD {
+        let spath = format!("/me/drive/root:/{}/{}:/createUploadSession", folder, fname);
+        upload_via_session(client, &spath, filename, &bytes, report).await?
+    } else {
+        let upath = format!("/me/drive/root:/{}/{}:/content", folder, fname);
+        let total = bytes.len() as u64;
+        let resp = client
+            .graph_put_bytes(&upath, bytes, "application/octet-stream")
+            .await?;
+        report(total, total);
+        resp.json()
+            .await
+            .context("Failed to parse upload response")?
+    };
     post_reference_message(
         client,
         &format!("/me/chats/{}/messages", chat_id),
@@ -613,6 +672,7 @@ async fn upload_to_channel(
     channel_id: &str,
     filename: &str,
     bytes: Vec<u8>,
+    report: &impl Fn(u64, u64),
 ) -> Result<SharedFile> {
     let fpath = format!("/teams/{}/channels/{}/filesFolder", team_id, channel_id);
     let resp = client.graph_get(&fpath).await?;
@@ -626,14 +686,26 @@ async fn upload_to_channel(
         .and_then(|p| p.drive_id.clone())
         .context("filesFolder response missing parent driveId")?;
     let fname = encode_segment(filename);
-    let upath = format!(
-        "/drives/{}/items/{}:/{}:/content",
-        drive_id, folder.id, fname
-    );
-    let resp = client
-        .graph_put_bytes(&upath, bytes, "application/octet-stream")
-        .await?;
-    let item: DriveItem = resp.json().await.context("Failed to parse upload response")?;
+    let item = if bytes.len() as u64 > MAX_SIMPLE_UPLOAD {
+        let spath = format!(
+            "/drives/{}/items/{}:/{}:/createUploadSession",
+            drive_id, folder.id, fname
+        );
+        upload_via_session(client, &spath, filename, &bytes, report).await?
+    } else {
+        let upath = format!(
+            "/drives/{}/items/{}:/{}:/content",
+            drive_id, folder.id, fname
+        );
+        let total = bytes.len() as u64;
+        let resp = client
+            .graph_put_bytes(&upath, bytes, "application/octet-stream")
+            .await?;
+        report(total, total);
+        resp.json()
+            .await
+            .context("Failed to parse upload response")?
+    };
     post_reference_message(
         client,
         &format!("/teams/{}/channels/{}/messages", team_id, channel_id),
@@ -642,6 +714,53 @@ async fn upload_to_channel(
     )
     .await?;
     Ok(shared_from_item(item, None))
+}
+
+#[derive(Debug, Deserialize)]
+struct UploadSessionResponse {
+    #[serde(rename = "uploadUrl")]
+    upload_url: String,
+}
+
+/// Resumable upload: create the session, PUT fragments sequentially
+/// (reporting `(sent, total)` after each), return the final driveItem.
+/// Non-final fragments answer 202; the last answers 200/201 with the item.
+async fn upload_via_session(
+    client: &TeamsClient,
+    session_path: &str,
+    filename: &str,
+    bytes: &[u8],
+    report: &impl Fn(u64, u64),
+) -> Result<DriveItem> {
+    let resp = client
+        .graph_post(session_path, &upload_session_body(filename))
+        .await?;
+    let session: UploadSessionResponse = resp
+        .json()
+        .await
+        .context("Failed to parse createUploadSession response")?;
+    let total = bytes.len() as u64;
+    let mut last: Option<DriveItem> = None;
+    for (start, end) in upload_chunk_ranges(total, UPLOAD_CHUNK) {
+        let resp = client
+            .drive_session_put(
+                &session.upload_url,
+                &bytes[start as usize..=end as usize],
+                start,
+                end,
+                total,
+            )
+            .await?;
+        report(end + 1, total);
+        if resp.status().is_success() && resp.status() != reqwest::StatusCode::ACCEPTED {
+            last = Some(
+                resp.json()
+                    .await
+                    .context("Failed to parse session-upload response")?,
+            );
+        }
+    }
+    last.context("Upload session finished without a driveItem response")
 }
 
 fn reference_attachment(item: &DriveItem, filename: &str) -> Result<serde_json::Value> {
@@ -676,10 +795,17 @@ async fn post_reference_message(
     Ok(())
 }
 
-/// Upload a local file (prints to stdout).
+/// Upload a local file (streams `%` progress, prints to stdout).
 pub async fn upload_file(chat_id: &str, local_path: &str) -> Result<()> {
+    use std::io::Write;
     let client = TeamsClient::new().await?;
-    let file = upload_file_data(&client, chat_id, local_path).await?;
+    let progress = |sent: u64, total: u64| {
+        let pct = if total == 0 { 100 } else { sent * 100 / total };
+        eprint!("\rUploading {}% ({}/{})", pct, sent, total);
+        let _ = std::io::stderr().flush();
+    };
+    let file = upload_file_data_with_progress(&client, chat_id, local_path, Some(&progress)).await?;
+    eprintln!();
     println!("Uploaded {} ({} bytes, id {})", file.name, file.size, file.id);
     Ok(())
 }
@@ -1177,5 +1303,39 @@ mod tests {
         assert!(!is_channel_id(""));
         assert!(!is_channel_id("19:general@thread.tacv2.evil"));
         assert!(!is_channel_id("general"));
+    }
+
+    #[test]
+    fn chunk_ranges_cover_total_with_short_tail() {
+        // Exact multiple: no tail.
+        assert_eq!(
+            upload_chunk_ranges(10, 5),
+            vec![(0, 4), (5, 9)]
+        );
+        // Short tail keeps the byte count exact.
+        assert_eq!(
+            upload_chunk_ranges(12, 5),
+            vec![(0, 4), (5, 9), (10, 11)]
+        );
+        // Single chunk when the file fits.
+        assert_eq!(upload_chunk_ranges(3, 5), vec![(0, 2)]);
+        // Empty file: no ranges (simple PUT handles it).
+        assert!(upload_chunk_ranges(0, 5).is_empty());
+    }
+
+    #[test]
+    fn content_range_value_is_inclusive() {
+        assert_eq!(content_range_value(0, 4, 12), "bytes 0-4/12");
+        assert_eq!(content_range_value(10, 11, 12), "bytes 10-11/12");
+    }
+
+    #[test]
+    fn session_body_replaces_like_simple_put() {
+        let body = upload_session_body("a b.pdf");
+        assert_eq!(
+            body["item"]["@microsoft.graph.conflictBehavior"],
+            "replace"
+        );
+        assert_eq!(body["item"]["name"], "a b.pdf");
     }
 }
