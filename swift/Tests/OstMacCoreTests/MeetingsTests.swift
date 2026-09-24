@@ -15,8 +15,8 @@ final class MeetingsTests: XCTestCase {
     nonisolated static func meetingsJSON() -> MeetingsResponse {
         let json = """
             {"ok":true,"meetings":[\
-            {"id":"E1","subject":"Standup","start":"2026-09-24T09:00:00.0000000",\
-            "end":"2026-09-24T09:15:00.0000000",\
+            {"id":"E1","subject":"Standup","start":"2024-05-06T09:00:00.0000000",\
+            "end":"2024-05-06T09:15:00.0000000",\
             "join_url":"https://teams.microsoft.com/l/meetup-join/19:abc@thread.v2/0",\
             "organizer":"Doe, Jane","is_online":true},\
             {"id":"E2","subject":"Room lunch","start":null,"end":null,\
@@ -45,11 +45,13 @@ final class MeetingsTests: XCTestCase {
         let first = response.meetings[0]
         XCTAssertEqual(first.id, "E1")
         XCTAssertEqual(first.subject, "Standup")
-        XCTAssertEqual(first.start, "2026-09-24T09:00:00.0000000")
+        XCTAssertEqual(first.start, "2024-05-06T09:00:00.0000000")
         XCTAssertEqual(first.organizer, "Doe, Jane")
         XCTAssertTrue(first.isOnline)
         XCTAssertTrue(first.isJoinable)
-        XCTAssertEqual(first.displayStart, "09:00 24 Sep")
+        // Fixed past date: shortTime renders time-only on "today", so the
+        // fixture must never equal the run date (2026-09-24 failed).
+        XCTAssertEqual(first.displayStart, "09:00 6 May")
         let second = response.meetings[1]
         XCTAssertFalse(second.isOnline)
         XCTAssertFalse(second.isJoinable)
