@@ -1,10 +1,11 @@
 // Notifications.swift — om-notif: macOS user notifications for realtime chat.
 //
-// Pipeline: AppState.handleRealtime forwards every live event; the pure
-// gate (edits, own messages, open chat) decides, and the backend posts
-// through UNUserNotificationCenter. Click returns to the chat via
-// NotificationCenter (.omNotifOpenChat); the message category carries
-// an inline reply action (.omNotifReply → core send).
+// Pipeline: the pure gate (edits, own messages, open chat) decides,
+// and the backend posts through UNUserNotificationCenter. Click returns
+// to the chat via NotificationCenter (.omNotifOpenChat); the message
+// category carries an inline reply action (.omNotifReply → core send).
+// Routing, thread grouping, and lock-screen redaction are shared with
+// the rules path through NcDelivery (same route map, both userInfo keys).
 //
 // The backend is injectable: SystemNotificationCenter (real UNUser
 // center) in the app, FakeNotificationCenter (in-memory log) in tests.
@@ -19,17 +20,20 @@ public extension Notification.Name {
 }
 
 /// One posted chat notification (backend record + delivered log entry).
+/// `threadIdentifier` groups banners per thread (defaults to the chatID).
 public struct PostedNotification: Sendable, Equatable {
     public let id: String // msgId (also the UN request identifier)
     public let chatID: String
     public let title: String
     public let body: String
+    public let threadIdentifier: String
 
-    public init(id: String, chatID: String, title: String, body: String) {
+    public init(id: String, chatID: String, title: String, body: String, threadIdentifier: String? = nil) {
         self.id = id
         self.chatID = chatID
         self.title = title
         self.body = body
+        self.threadIdentifier = threadIdentifier ?? chatID
     }
 }
 
@@ -69,6 +73,7 @@ public final class SystemNotificationCenter: NotificationPosting, @unchecked Sen
         content.title = note.title
         content.body = note.body
         content.categoryIdentifier = Self.categoryID
+        content.threadIdentifier = note.threadIdentifier
         content.userInfo = [
             Self.chatIDKey: note.chatID,
             Self.msgIDKey: note.id,
@@ -165,25 +170,34 @@ public final class MessageNotifications: ObservableObject {
     /// post is invisible (the bubble/list already updated).
     public func handle(
         _ msg: RealtimeMessage, chatName: String? = nil,
-        openChatID: String? = nil, ownDisplayName: String? = nil
+        openChatID: String? = nil, ownDisplayName: String? = nil,
+        screenLocked: Bool = false
     ) async {
         guard enabled else { return }
         guard let note = Self.makeNotification(
             for: msg, chatName: chatName,
-            openChatID: openChatID, ownDisplayName: ownDisplayName)
+            openChatID: openChatID, ownDisplayName: ownDisplayName,
+            screenLocked: screenLocked)
         else { return }
         await backend.post(note)
     }
 
     /// Pure gate + format. Nil = suppressed (edit, own message, or the
     /// chat is already open — its bubbles updated in place instead).
+    /// Locked screens redact to generic title/body (no sender/text leak).
     nonisolated public static func makeNotification(
         for msg: RealtimeMessage, chatName: String? = nil,
-        openChatID: String? = nil, ownDisplayName: String? = nil
+        openChatID: String? = nil, ownDisplayName: String? = nil,
+        screenLocked: Bool = false
     ) -> PostedNotification? {
         if msg.isEdit { return nil }
         if let own = ownDisplayName, msg.sender == own { return nil }
         if let open = openChatID, msg.chatID == open { return nil }
+        if screenLocked {
+            return PostedNotification(
+                id: msg.msgId, chatID: msg.chatID,
+                title: NcDelivery.redactedTitle, body: NcDelivery.redactedBody)
+        }
         let title: String
         if let name = chatName, !name.isEmpty, name != msg.sender {
             title = "\(msg.sender) in \(name)"
@@ -200,28 +214,25 @@ public final class MessageNotifications: ObservableObject {
     }
 
     /// Map a center response to a route + Foundation broadcast.
-    /// Returns the route (tests assert it directly).
+    /// Returns the route (tests assert it directly). Routes through the
+    /// shared map, so both backend userInfo keys open/reply.
     @discardableResult
     nonisolated public static func dispatch(
         actionID: String, userInfo: [AnyHashable: Any], replyText: String? = nil
     ) -> NotificationRoute {
-        guard let chat = userInfo[SystemNotificationCenter.chatIDKey] as? String else {
-            return .none
-        }
-        if actionID == SystemNotificationCenter.replyActionID,
-           let text = replyText, !text.isEmpty
-        {
+        switch NcDelivery.route(actionID: actionID, userInfo: userInfo, replyText: replyText) {
+        case .reply(let chat, let text):
             NotificationCenter.default.post(
                 name: .omNotifReply, object: nil,
                 userInfo: ["chatID": chat, "text": text])
             return .reply(chatID: chat, text: text)
-        }
-        if actionID == UNNotificationDefaultActionIdentifier {
+        case .open(let chat):
             NotificationCenter.default.post(
                 name: .omNotifOpenChat, object: nil, userInfo: ["chatID": chat])
             return .open(chatID: chat)
+        case .none:
+            return .none
         }
-        return .none
     }
 }
 
