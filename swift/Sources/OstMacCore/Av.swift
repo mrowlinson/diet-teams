@@ -63,16 +63,27 @@ public struct CameraStats: Decodable, Sendable {
     public let last_bytes: Int
 }
 
-public struct RemoteFrame: Decodable, Sendable {
+public struct RemoteFrame: Sendable {
     public let width: Int
     public let height: Int
-    /// Planar I420 bytes, base64.
-    public let data: String
+    /// Planar I420 bytes (zero-copy view of the core payload).
+    public let data: Data
+
+    public init(width: Int, height: Int, data: Data) {
+        self.width = width
+        self.height = height
+        self.data = data
+    }
 }
 
-public struct RemotePoll: Decodable, Sendable {
+public struct RemotePoll: Sendable {
     public let ok: Bool
     public let frame: RemoteFrame?
+
+    public init(ok: Bool, frame: RemoteFrame?) {
+        self.ok = ok
+        self.frame = frame
+    }
 }
 
 public struct BlackIframe: Decodable, Sendable {
@@ -128,15 +139,87 @@ public struct LiveMediaPoll: Decodable, Sendable {
     public let media: LiveMediaStats
 }
 
-public struct IncomingAu: Decodable, Sendable {
-    /// Raw H.264 NALs (no start codes), base64. First AU carries SPS+PPS.
-    public let nals: [String]
+public struct IncomingAu: Sendable {
+    /// Raw H.264 NALs (no start codes). First AU carries SPS+PPS.
+    /// Zero-copy slices of the polled core payload.
+    public let nals: [Data]
+
+    public init(nals: [Data]) {
+        self.nals = nals
+    }
 }
 
-public struct IncomingPoll: Decodable, Sendable {
+public struct IncomingPoll: Sendable {
     public let ok: Bool
     public let au: IncomingAu?
     public let dropped: Int
+
+    public init(ok: Bool, au: IncomingAu?, dropped: Int) {
+        self.ok = ok
+        self.au = au
+        self.dropped = dropped
+    }
+}
+
+/// Length-prefixed NAL framing for the byte+len FFI ABI (om-s3-mediahot):
+/// `u32LE nal_count (1..=32)`, then per NAL `u32LE len + raw bytes`.
+/// Mirrors `frame_nals`/`unframe_nals` in core. Decode slices the payload
+/// without copying (Data slicing shares storage).
+public enum NalFraming {
+    public static let maxNALs = 32
+    public static let maxBytes = 4 * 1024 * 1024
+
+    /// Frame NALs for `videoSendPush`. Nil when the unit is out of limits.
+    public static func encode(_ nals: [Data]) -> Data? {
+        guard !nals.isEmpty, nals.count <= maxNALs else { return nil }
+        var total = 0
+        for n in nals {
+            guard !n.isEmpty, n.count <= maxBytes else { return nil }
+            total += n.count
+            guard total <= maxBytes else { return nil }
+        }
+        var out = Data()
+        out.reserveCapacity(4 + 4 * nals.count + total)
+        var count = UInt32(nals.count).littleEndian
+        out.append(Data(bytes: &count, count: 4))
+        for n in nals {
+            var len = UInt32(n.count).littleEndian
+            out.append(Data(bytes: &len, count: 4))
+            out.append(n)
+        }
+        return out
+    }
+
+    /// Parse a polled payload into NAL slices. Nil when malformed.
+    public static func decode(_ data: Data) -> [Data]? {
+        guard data.count >= 4 else { return nil }
+        let n = Int(data.u32LE(at: 0))
+        guard n >= 1, n <= maxNALs else { return nil }
+        var nals: [Data] = []
+        nals.reserveCapacity(n)
+        var off = 4
+        var total = 0
+        for _ in 0 ..< n {
+            guard off + 4 <= data.count else { return nil }
+            let len = Int(data.u32LE(at: off))
+            off += 4
+            guard len >= 1, len <= maxBytes, off + len <= data.count else { return nil }
+            total += len
+            guard total <= maxBytes else { return nil }
+            nals.append(data[off ..< off + len])
+            off += len
+        }
+        guard off == data.count else { return nil }
+        return nals
+    }
+}
+
+private extension Data {
+    /// Little-endian u32 at a byte offset (caller bounds-checks).
+    func u32LE(at off: Int) -> UInt32 {
+        UInt32(self[off]) | (UInt32(self[off + 1]) << 8)
+            | (UInt32(self[off + 2]) << 16) | (UInt32(self[off + 3]) << 24)
+    }
 }
 
 public struct SendPushResult: Decodable, Sendable {
@@ -241,20 +324,18 @@ public extension RustCore {
         try call(ostmac_camera_begin(width, height, fps), as: CameraBegin.self)
     }
 
-    static func cameraPush(pixelsB64: String, width: Int32, height: Int32, fmt: String) throws -> CameraStats {
-        try pixelsB64.withCString { b64Ptr in
-            try fmt.withCString { fmtPtr in
-                try call(
-                    ostmac_camera_push(b64Ptr, width, height, fmtPtr),
+    /// Push one camera frame by pointer+len (no encode; core borrows).
+    static func cameraPush(pixels: Data, width: Int, height: Int, fmt: String) throws -> CameraStats {
+        try fmt.withCString { fmtPtr in
+            try pixels.withUnsafeBytes { (buf: UnsafeRawBufferPointer) in
+                // Empty Data has no base address; core treats len 0 as empty.
+                let ptr = buf.baseAddress?.assumingMemoryBound(to: UInt8.self)
+                return try call(
+                    ostmac_camera_push_bytes(
+                        ptr, pixels.count, Int32(width), Int32(height), fmtPtr),
                     as: CameraStats.self)
             }
         }
-    }
-
-    static func cameraPush(pixels: Data, width: Int, height: Int, fmt: String) throws -> CameraStats {
-        try cameraPush(
-            pixelsB64: pixels.base64EncodedString(),
-            width: Int32(width), height: Int32(height), fmt: fmt)
     }
 
     static func cameraStats() throws -> CameraStats {
@@ -268,15 +349,33 @@ public extension RustCore {
 
     static func videoPushRemote(i420: Data, width: Int, height: Int) throws {
         struct OkBytes: Decodable { let ok: Bool; let bytes: Int }
-        let _: OkBytes = try i420.base64EncodedString().withCString { ptr in
+        let _: OkBytes = try i420.withUnsafeBytes { (buf: UnsafeRawBufferPointer) in
             try call(
-                ostmac_video_push_remote(ptr, Int32(width), Int32(height)),
+                ostmac_video_push_remote_bytes(
+                    buf.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                    i420.count, Int32(width), Int32(height)),
                 as: OkBytes.self)
         }
     }
 
+    /// Drain the latest remote frame. The payload is adopted without
+    /// copying (freed back to core when the Data dies).
     static func videoPollRemote() throws -> RemotePoll {
-        try call(ostmac_video_poll_remote(), as: RemotePoll.self)
+        var w: Int32 = 0
+        var h: Int32 = 0
+        var out: UnsafeMutablePointer<UInt8>?
+        var outLen = 0
+        let rc = ostmac_video_poll_remote_bytes(&w, &h, &out, &outLen)
+        guard rc >= 0 else { throw CoreCallError.failed("remote poll failed") }
+        guard rc == 1, let ptr = out, outLen > 0 else {
+            return RemotePoll(ok: true, frame: nil)
+        }
+        let data = Data(
+            bytesNoCopy: ptr, count: outLen,
+            deallocator: .custom({ _, _ in ostmac_bytes_free(ptr, outLen) }))
+        return RemotePoll(
+            ok: true,
+            frame: RemoteFrame(width: Int(w), height: Int(h), data: data))
     }
 
     static func avBlackIframe() throws -> BlackIframe {
@@ -309,17 +408,39 @@ public extension RustCore {
         }
     }
 
-    /// Push one send-side access unit (raw NALs, no start codes).
+    /// Push one send-side access unit (raw NALs, no start codes),
+    /// framed once; core borrows the bytes.
     static func videoSendPush(nals: [Data]) throws -> SendPushResult {
-        let arr = nals.map { $0.base64EncodedString() }
-        let json = String(data: try JSONEncoder().encode(arr), encoding: .utf8) ?? "[]"
-        return try json.withCString { ptr in
-            try call(ostmac_video_send_push(ptr), as: SendPushResult.self)
+        guard let framed = NalFraming.encode(nals) else {
+            throw CoreCallError.failed("send unit out of limits")
+        }
+        return try framed.withUnsafeBytes { (buf: UnsafeRawBufferPointer) in
+            try call(
+                ostmac_video_send_push_bytes(
+                    buf.baseAddress!.assumingMemoryBound(to: UInt8.self),
+                    framed.count),
+                as: SendPushResult.self)
         }
     }
 
+    /// Drain the newest incoming access unit. NALs slice the adopted
+    /// core payload without copying.
     static func videoPollIncoming() throws -> IncomingPoll {
-        try call(ostmac_video_poll_incoming(), as: IncomingPoll.self)
+        var out: UnsafeMutablePointer<UInt8>?
+        var outLen = 0
+        var dropped: Int32 = 0
+        let rc = ostmac_video_poll_incoming_bytes(&out, &outLen, &dropped)
+        guard rc >= 0 else { throw CoreCallError.failed("incoming poll failed") }
+        guard rc == 1, let ptr = out, outLen > 0 else {
+            return IncomingPoll(ok: true, au: nil, dropped: Int(dropped))
+        }
+        let payload = Data(
+            bytesNoCopy: ptr, count: outLen,
+            deallocator: .custom({ _, _ in ostmac_bytes_free(ptr, outLen) }))
+        guard let nals = NalFraming.decode(payload) else {
+            throw CoreCallError.failed("incoming framing corrupt")
+        }
+        return IncomingPoll(ok: true, au: IncomingAu(nals: nals), dropped: Int(dropped))
     }
 
     /// Offline join check: queued send units through packetize -> SRTP ->

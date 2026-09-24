@@ -1,7 +1,12 @@
 // ostmac_core.h — C ABI of the ostmac-core Rust staticlib.
 // JSON over the boundary; every returned string freed with ostmac_free.
+// Frame/media payloads travel byte+len (no base64 on the hot path);
+// poll payloads are freed with ostmac_bytes_free.
 #ifndef OSTMAC_CORE_H
 #define OSTMAC_CORE_H
+
+#include <stddef.h>
+#include <stdint.h>
 
 // Static version string ("1.0.0"). Never freed.
 const char *ostmac_version(void);
@@ -309,14 +314,17 @@ char *ostmac_call_mute(int muted);
 // on failure. Caller frees. No network.
 char *ostmac_call_speaker(const char *name);
 
-// Push one send-side access unit: JSON array of base64 NALs (no start
-// codes). Over-cap pushes drop the oldest unit. Returns {ok, queued}.
-// Caller frees.
-char *ostmac_video_send_push(const char *nals_json);
+// Framed NAL payload (both directions): u32LE nal_count (1..=32), then
+// per NAL u32LE len + raw bytes (no start codes). Total fits 4 MiB.
+// Push one send-side access unit in that layout. Over-cap pushes drop
+// the oldest unit. Returns {ok, queued}. Caller frees.
+char *ostmac_video_send_push_bytes(const uint8_t *data, size_t len);
 
-// Drain the newest incoming access unit:
-// {ok, au:{nals:[b64..]}|null, dropped}. Caller frees.
-char *ostmac_video_poll_incoming(void);
+// Drain the newest incoming access unit into a framed NAL payload:
+// 1 = AU present (*out set, caller frees with ostmac_bytes_free),
+// 0 = none (*out NULL), -1 = null out-param. *dropped counts the stale
+// units discarded ahead of the newest.
+int ostmac_video_poll_incoming_bytes(uint8_t **out, size_t *out_len, int *dropped);
 
 // Offline loopback: run queued send units through packetize -> SRTP ->
 // depacketize -> incoming queue (no network/auth/hardware).
@@ -373,10 +381,11 @@ char *ostmac_mic_level(int msecs, const char *input);
 // Begin a camera run (Swift AVCapture feeds frames). Caller frees.
 char *ostmac_camera_begin(int width, int height, int fps);
 
-// Push one camera frame: base64 pixels, fmt i420|nv12|bgra (420v|32bgra
+// Push one camera frame: raw pixels, fmt i420|nv12|bgra (420v|32bgra
 // aliases). Convert failures count as drops. Returns stats JSON.
 // Caller frees.
-char *ostmac_camera_push(const char *b64, int width, int height, const char *fmt);
+char *ostmac_camera_push_bytes(
+    const uint8_t *pixels, size_t len, int width, int height, const char *fmt);
 
 // Camera stats JSON. Caller frees.
 char *ostmac_camera_stats(void);
@@ -384,12 +393,14 @@ char *ostmac_camera_stats(void);
 // End the camera run. Caller frees.
 char *ostmac_camera_end(void);
 
-// Push one decoded remote I420 frame (base64) for display. Caller frees.
-char *ostmac_video_push_remote(const char *b64, int width, int height);
+// Push one decoded remote I420 frame (raw bytes) for display. Caller frees.
+char *ostmac_video_push_remote_bytes(
+    const uint8_t *data, size_t len, int width, int height);
 
-// Drain latest remote frame: {ok, frame:{width,height,data}|null}.
-// Caller frees.
-char *ostmac_video_poll_remote(void);
+// Drain latest remote frame: 1 = frame (*out set, caller frees with
+// ostmac_bytes_free), 0 = none (*out NULL), -1 = null out-param.
+int ostmac_video_poll_remote_bytes(
+    int *width, int *height, uint8_t **out, size_t *out_len);
 
 // Black 176x144 IDR access unit as base64 NALs (VideoToolbox target).
 // Caller frees.
@@ -401,5 +412,9 @@ char *ostmac_call_dry_run(void);
 
 // Free a string from any ostmac_* call. Null-safe.
 void ostmac_free(char *s);
+
+// Free a byte payload from any *_bytes poll call. Null-safe; len must
+// be the length the poll reported.
+void ostmac_bytes_free(uint8_t *ptr, size_t len);
 
 #endif

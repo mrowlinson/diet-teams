@@ -17,16 +17,29 @@ public actor RichMediaCache {
     /// Byte source for a URL. Default handles `demo://` fixtures + core.
     public typealias Fetcher = @Sendable (String) async throws -> Data
 
+    /// Disk-cache ceilings (om-s3-mediahot): the dir never grows past
+    /// these — writes past the cap evict least-recently-read entries.
+    public static let defaultDiskCapBytes = 256 * 1024 * 1024
+    public static let defaultDiskCapFiles = 2000
+
     private let memory = NSCache<NSString, NSData>()
     private var inFlight: [String: Task<Data, Error>] = [:]
     private let diskDir: URL?
+    private let diskCapBytes: Int
+    private let diskCapFiles: Int
 
     public init(memoryLimitMB: Int = 64) {
         self.init(diskDir: Self.defaultDiskDir(), memoryLimitMB: memoryLimitMB)
     }
 
-    public init(diskDir: URL?, memoryLimitMB: Int = 64) {
+    public init(
+        diskDir: URL?, memoryLimitMB: Int = 64,
+        diskCapBytes: Int = RichMediaCache.defaultDiskCapBytes,
+        diskCapFiles: Int = RichMediaCache.defaultDiskCapFiles
+    ) {
         self.diskDir = diskDir
+        self.diskCapBytes = diskCapBytes
+        self.diskCapFiles = diskCapFiles
         memory.totalCostLimit = memoryLimitMB * 1024 * 1024
     }
 
@@ -114,11 +127,66 @@ public actor RichMediaCache {
 
     private func readDisk(key: String) -> Data? {
         guard let u = diskURL(key: key) else { return nil }
-        return try? Data(contentsOf: u)
+        guard let d = try? Data(contentsOf: u) else { return nil }
+        // LRU touch: reads refresh recency for the trim below.
+        try? FileManager.default.setAttributes(
+            [.modificationDate: Date()], ofItemAtPath: u.path)
+        return d
     }
 
     private func writeDisk(key: String, data: Data) {
         guard let u = diskURL(key: key) else { return }
         try? data.write(to: u, options: .atomic)
+        trimDisk()
+    }
+
+    /// Evict least-recently-modified files until the dir fits both caps.
+    /// Best-effort (a racing reader just refetches); failures are silent.
+    private func trimDisk() {
+        guard let dir = diskDir else { return }
+        let keys: [URLResourceKey] = [.fileSizeKey, .contentModificationDateKey, .isRegularFileKey]
+        guard let urls = try? FileManager.default.contentsOfDirectory(
+            at: dir, includingPropertiesForKeys: keys, options: .skipsHiddenFiles)
+        else { return }
+        var entries: [(url: URL, size: Int, mtime: Date)] = []
+        entries.reserveCapacity(urls.count)
+        var total = 0
+        for u in urls {
+            guard let v = try? u.resourceValues(forKeys: Set(keys)),
+                  v.isRegularFile == true,
+                  let size = v.fileSize
+            else { continue }
+            total += size
+            entries.append((u, size, v.contentModificationDate ?? .distantPast))
+        }
+        guard total > diskCapBytes || entries.count > diskCapFiles else { return }
+        entries.sort { $0.mtime < $1.mtime } // oldest (least-recent) first
+        var i = 0
+        while (total > diskCapBytes || entries.count - i > diskCapFiles)
+            && i < entries.count
+        {
+            try? FileManager.default.removeItem(at: entries[i].url)
+            total -= entries[i].size
+            i += 1
+        }
+    }
+
+    /// Disk footprint (file count + bytes) for tests/diagnostics.
+    func diskUsage() -> (files: Int, bytes: Int) {
+        guard let dir = diskDir else { return (0, 0) }
+        let keys: [URLResourceKey] = [.fileSizeKey, .isRegularFileKey]
+        guard let urls = try? FileManager.default.contentsOfDirectory(
+            at: dir, includingPropertiesForKeys: keys, options: .skipsHiddenFiles)
+        else { return (0, 0) }
+        var files = 0
+        var bytes = 0
+        for u in urls {
+            guard let v = try? u.resourceValues(forKeys: Set(keys)),
+                  v.isRegularFile == true, let size = v.fileSize
+            else { continue }
+            files += 1
+            bytes += size
+        }
+        return (files, bytes)
     }
 }

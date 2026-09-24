@@ -24,15 +24,22 @@ final class LiveAvTests: XCTestCase {
         XCTAssertNil(v.media.error)
     }
 
-    func testIncomingPollNullAndAu() throws {
-        let n = try JSONDecoder().decode(
-            IncomingPoll.self, from: Data(#"{"ok":true,"au":null,"dropped":2}"#.utf8))
+    func testNalFramingWireFormat() throws {
+        // Absent AU is nil with its dropped count (no JSON envelope).
+        let n = IncomingPoll(ok: true, au: nil, dropped: 2)
         XCTAssertNil(n.au)
         XCTAssertEqual(n.dropped, 2)
-        let f = try JSONDecoder().decode(
-            IncomingPoll.self,
-            from: Data(#"{"ok":true,"au":{"nals":["QUJD","REVG"]},"dropped":0}"#.utf8))
-        XCTAssertEqual(f.au?.nals, ["QUJD", "REVG"])
+        // Framing round-trips bit-identical with prefix-only overhead.
+        let nals = [Data([0x67, 0x42]), Data([0x68]), Data([0x65, 0, 1, 2, 3])]
+        let framed = try XCTUnwrap(NalFraming.encode(nals))
+        XCTAssertEqual(framed.count, 4 + 4 * nals.count + nals.map(\.count).reduce(0, +))
+        XCTAssertEqual(NalFraming.decode(framed), nals)
+        // Malformed payloads reject.
+        XCTAssertNil(NalFraming.encode([]))
+        XCTAssertNil(NalFraming.decode(Data()))
+        XCTAssertNil(NalFraming.decode(Data([1, 0, 0])))
+        XCTAssertNil(NalFraming.decode(framed + Data([0])))
+        XCTAssertNil(NalFraming.decode(framed.dropLast()))
     }
 
     func testLoopbackResultDecode() throws {
@@ -140,15 +147,9 @@ final class LiveAvTests: XCTestCase {
         let poll = try RustCore.videoPollIncoming()
         let au = try XCTUnwrap(poll.au)
         XCTAssertEqual(au.nals.count, nals.count)
-        let raw = try au.nals.map {
-            guard let d = Data(base64Encoded: $0) else {
-                throw CoreCallError.failed("incoming NAL base64")
-            }
-            return d
-        }
         // NALs survive the engine path bit-identical.
-        XCTAssertEqual(raw, nals)
-        let img = try XCTUnwrap(H264StreamDecoder().decode(nals: raw))
+        XCTAssertEqual(au.nals, nals)
+        let img = try XCTUnwrap(H264StreamDecoder().decode(nals: au.nals))
         XCTAssertEqual(img.width, w)
         XCTAssertEqual(img.height, h)
         XCTAssertNil(try RustCore.videoPollIncoming().au) // drained

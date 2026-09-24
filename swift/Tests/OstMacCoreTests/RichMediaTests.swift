@@ -170,6 +170,87 @@ final class RichMediaTests: XCTestCase {
         XCTAssertEqual(hit, bytes)
     }
 
+    // MARK: - Disk caps (om-s3-mediahot)
+
+    private func scratchDir() throws -> URL {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("om-rmcap-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    private func plantFile(
+        in dir: URL, name: String, bytes: Int, age: TimeInterval
+    ) throws {
+        let u = dir.appendingPathComponent(name, isDirectory: false)
+        try Data(repeating: 0xAB, count: bytes).write(to: u, options: .atomic)
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date().addingTimeInterval(-age)],
+            ofItemAtPath: u.path)
+    }
+
+    private func diskNames(in dir: URL) throws -> Set<String> {
+        Set(try FileManager.default.contentsOfDirectory(atPath: dir.path))
+    }
+
+    func testDiskFileCapTrimsOldest() async throws {
+        let dir = try scratchDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try plantFile(in: dir, name: "oldest", bytes: 10, age: 300)
+        try plantFile(in: dir, name: "middle", bytes: 10, age: 200)
+        try plantFile(in: dir, name: "newer", bytes: 10, age: 100)
+        let cache = RichMediaCache(diskDir: dir, diskCapFiles: 3)
+        _ = try await cache.data(
+            url: "https://h/fresh.png", messageID: "m",
+            fetcher: { _ in Data(repeating: 1, count: 10) })
+        // 4 entries vs cap 3: exactly the oldest goes.
+        let names = try diskNames(in: dir)
+        XCTAssertEqual(names.count, 3)
+        XCTAssertFalse(names.contains("oldest"))
+        XCTAssertTrue(names.contains("middle"))
+        let usage = await cache.diskUsage()
+        XCTAssertEqual(usage.files, 3)
+    }
+
+    func testDiskTrimIsLRU() async throws {
+        let dir = try scratchDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        // Two disk entries under their real keys; A is older than B.
+        let keyA = RichMediaCache.key(url: "https://h/a.png", messageID: "m")
+        let keyB = RichMediaCache.key(url: "https://h/b.png", messageID: "m")
+        try plantFile(in: dir, name: keyA, bytes: 8, age: 300)
+        try plantFile(in: dir, name: keyB, bytes: 8, age: 200)
+        let cache = RichMediaCache(diskDir: dir, diskCapFiles: 2)
+        // Reading A refreshes its recency (served from disk, no fetch).
+        let hit = try await cache.data(
+            url: "https://h/a.png", messageID: "m",
+            fetcher: { _ in throw MediaFetchError.failed("must not refetch") })
+        XCTAssertEqual(hit, Data(repeating: 0xAB, count: 8))
+        // A new write overflows the cap: B (least-recently-read) goes, A stays.
+        _ = try await cache.data(
+            url: "https://h/c.png", messageID: "m",
+            fetcher: { _ in Data(repeating: 3, count: 8) })
+        let names = try diskNames(in: dir)
+        XCTAssertEqual(names.count, 2)
+        XCTAssertTrue(names.contains(keyA))
+        XCTAssertFalse(names.contains(keyB))
+    }
+
+    func testDiskByteCapTrims() async throws {
+        let dir = try scratchDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try plantFile(in: dir, name: "stale", bytes: 20, age: 300)
+        let cache = RichMediaCache(diskDir: dir, diskCapBytes: 25)
+        _ = try await cache.data(
+            url: "https://h/fresh.png", messageID: "m",
+            fetcher: { _ in Data(repeating: 1, count: 10) })
+        // 30 bytes vs cap 25: the stale 20 goes, the fresh 10 stays.
+        let usage = await cache.diskUsage()
+        XCTAssertEqual(usage.files, 1)
+        XCTAssertEqual(usage.bytes, 10)
+        XCTAssertFalse(try diskNames(in: dir).contains("stale"))
+    }
+
     // MARK: - Demo fixtures
 
     func testDemoMediaDecodes() throws {

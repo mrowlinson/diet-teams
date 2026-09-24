@@ -3395,6 +3395,20 @@ pub extern "C" fn ostmac_free(s: *mut c_char) {
     }
 }
 
+/// Free a byte payload from any `*_bytes` poll call. Null-safe; `len`
+/// must be the length the poll reported.
+#[no_mangle]
+pub extern "C" fn ostmac_bytes_free(ptr: *mut u8, len: usize) {
+    if ptr.is_null() {
+        return;
+    }
+    unsafe {
+        drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(
+            ptr, len,
+        )));
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests (deterministic: no network, no sign-in dependency)
 // ---------------------------------------------------------------------------
@@ -4957,6 +4971,7 @@ mod tests {
             modified: None,
             sender: None,
             is_folder: true,
+            share_url: None,
             attachment_id: None,
             share_url: None,
         };
