@@ -108,6 +108,19 @@ public struct LiveMediaStats: Decodable, Sendable {
     public let ice_video: String
     public let error: String?
     public let started_at: UInt64
+    /// Mic mute flag (om-call-ux). Nil on old core builds — treat as unmuted.
+    public let muted: Bool?
+    /// Effective speaker route, nil = system default (nil on old builds too).
+    public let speaker: String?
+    /// Last speaker-reroute failure (nil when the route is healthy).
+    public let speakerError: String?
+
+    enum CodingKeys: String, CodingKey {
+        case running, audio_sent, audio_recv, video_sent, video_recv
+        case send_queued, send_dropped, recv_pending, recv_dropped
+        case ice_audio, ice_video, error, started_at, muted, speaker
+        case speakerError = "speaker_error"
+    }
 }
 
 public struct LiveMediaPoll: Decodable, Sendable {
@@ -151,6 +164,18 @@ public struct MicLevel: Decodable, Sendable {
     public let ok: Bool
     public let peak_db: Double
     public let has_input: Bool
+}
+
+/// `{ok, muted}` from `ostmac_call_mute` (om-call-ux in-call window).
+public struct MuteResult: Decodable, Sendable {
+    public let ok: Bool
+    public let muted: Bool
+}
+
+/// `{ok, speaker?}` from `ostmac_call_speaker` (nil = system default).
+public struct SpeakerResult: Decodable, Sendable {
+    public let ok: Bool
+    public let speaker: String?
 }
 
 // MARK: - RustCore wrappers
@@ -268,6 +293,20 @@ public extension RustCore {
 
     static func callMediaStop() throws -> LiveMediaPoll {
         try call(ostmac_call_media_stop(), as: LiveMediaPoll.self)
+    }
+
+    /// Set live-call mic mute (sticky; stored when idle). Fast, but call
+    /// off-main with the other core calls.
+    static func callMute(muted: Bool) throws -> MuteResult {
+        try call(ostmac_call_mute(muted ? 1 : 0), as: MuteResult.self)
+    }
+
+    /// Select the call speaker route (nil/"" = system default). Stored
+    /// always; reroutes a live call without dropping audio on failure.
+    static func callSpeaker(name: String?) throws -> SpeakerResult {
+        try withOptCString(name) { ptr in
+            try call(ostmac_call_speaker(ptr), as: SpeakerResult.self)
+        }
     }
 
     /// Push one send-side access unit (raw NALs, no start codes).

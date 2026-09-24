@@ -152,6 +152,10 @@ struct OstMacAppMain: App {
             AvPanelView()
         }
         .defaultSize(width: 600, height: 740)
+        Window("Call", id: AppIdentity.callWindowID) {
+            InCallView(call: state.call)
+        }
+        .defaultSize(width: 420, height: 560)
         Window("Diagnostics", id: AppIdentity.diagWindowID) {
             DiagnosticsView()
                 .environmentObject(state)
@@ -180,6 +184,7 @@ private struct OstMacCommands: Commands {
             Divider()
         }
         CommandMenu("Call") {
+            Button("In-Call Window") { openWindow(id: AppIdentity.callWindowID) }
             Button("Call A/V Test") { openWindow(id: AppIdentity.avWindowID) }
         }
         CommandMenu("Go") {
@@ -354,6 +359,12 @@ final class AppState: ObservableObject {
             .store(in: &cancellables)
         // om-receipts: forward receipt changes so Diagnostics counts update.
         receipts.objectWillChange
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &cancellables)
+        // om-call-ux: forward call changes (Diagnostics phase/counters
+        // rows, in-call window auto-open trigger).
+        call.objectWillChange
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.objectWillChange.send() }
             .store(in: &cancellables)
@@ -821,7 +832,16 @@ struct RootView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            CallBanner(store: state.call)
+            CallBanner(store: state.call) {
+                openWindow(id: AppIdentity.callWindowID)
+            }
+            .onChange(of: state.call.phase) { _, next in
+                // A connected call pops the in-call window (mute,
+                // camera, speaker); rings never auto-open.
+                if next == .active {
+                    openWindow(id: AppIdentity.callWindowID)
+                }
+            }
             if state.isDemo || state.auth.state.allowsContent {
                 NavigationSplitView {
                     SidebarColumn(

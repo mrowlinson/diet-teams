@@ -89,6 +89,10 @@ struct DiagnosticsView: View {
 
     /// Active call one-liner, else the echo test buttons (live signed-in
     /// only) — both moved verbatim from the old status bar.
+    /// om-call-ux: phase + session counters (Diagnostics is the only
+    /// place counters live) + the never-trap escape hatch: a dismissed
+    /// ring stays actionable here (Accept/Decline/Recall), ended
+    /// records Clear back to idle.
     @ViewBuilder
     private var callRow: some View {
         if let c = state.call.call, c.isActive {
@@ -96,6 +100,12 @@ struct DiagnosticsView: View {
                 "Active",
                 value: "call: \(c.state) · \(c.displayPeer)")
                 .textSelection(.enabled)
+            callEscapeHatch(for: c)
+        } else if state.call.phase == .ended {
+            LabeledContent("Active", value: "ended (\(state.call.lastAction))")
+                .foregroundStyle(DietColor.textSecondaryColor)
+            Button("Clear") { state.call.clearEnded() }
+                .buttonStyle(.bordered)
         } else if !state.isDemo, state.signedIn == true {
             HStack {
                 Button("Echo test") { state.call.echo() }
@@ -108,6 +118,52 @@ struct DiagnosticsView: View {
         } else {
             LabeledContent("Active", value: "no call")
                 .foregroundStyle(DietColor.textSecondaryColor)
+        }
+        LabeledContent(
+            "Phase",
+            value: "\(state.call.phase.rawValue) · last: \(state.call.lastAction.isEmpty ? "—" : state.call.lastAction)")
+            .textSelection(.enabled)
+        LabeledContent(
+            "Session",
+            value: "rings \(state.call.rings) · accepts \(state.call.accepts) · declines \(state.call.declines) · dismissals \(state.call.dismissals) · timeouts \(state.call.timeouts)")
+            .textSelection(.enabled)
+        LabeledContent(
+            "Controls",
+            value: "muted \(state.call.muted ? "yes" : "no") · camera \(state.call.cameraOn ? "on" : "off") · speaker \(state.call.speaker ?? "default")")
+            .textSelection(.enabled)
+    }
+
+    /// Dismissed-but-live calls stay actionable here so dismissing the
+    /// banner never strands a ring; live calls get the same actions.
+    @ViewBuilder
+    private func callEscapeHatch(for c: CallInfo) -> some View {
+        let dismissed = state.call.dismissedIDs.contains(c.id)
+        if dismissed {
+            LabeledContent("Banner", value: "dismissed (actions below still work)")
+                .foregroundStyle(DietColor.textSecondaryColor)
+        }
+        if c.dir == "in", c.state == "ringing" {
+            HStack {
+                Button("Accept live") { state.call.acceptLive() }
+                    .disabled(state.call.busy)
+                Button("Accept") { state.call.accept() }
+                    .disabled(state.call.busy)
+                Button("Decline") { state.call.end() }
+                    .disabled(state.call.busy)
+                if dismissed {
+                    Button("Recall banner") { state.call.recall() }
+                }
+            }
+            .buttonStyle(.bordered)
+        } else {
+            HStack {
+                Button("End") { state.call.end() }
+                    .disabled(state.call.busy)
+                if dismissed {
+                    Button("Recall banner") { state.call.recall() }
+                }
+            }
+            .buttonStyle(.bordered)
         }
     }
 }

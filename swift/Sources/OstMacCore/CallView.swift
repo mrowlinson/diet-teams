@@ -7,6 +7,11 @@
 // banner says so.
 // om-reskin-call: DietDesign banner (tokens + button styles;
 // error row is a DietBanner).
+// om-call-ux: UX phase machine (idle/inviting/active/ended, see
+// CallCenter.swift) + never-trap banner (dismiss + ring timeout) +
+// in-call controls (mute, camera, speaker select). Phases reduce from
+// trouter CallEvents (TEAMS_MANUAL_CALLS path: the core parks the
+// invite, the UI owns the decision) and slot reconciliation.
 import DietDesign
 import SwiftUI
 
@@ -16,20 +21,69 @@ public final class CallStore: ObservableObject {
     @Published public private(set) var error: String?
     @Published public private(set) var lastAction = ""
     @Published public private(set) var media: LiveMediaStats?
+    /// UX phase (CallCenter machine). Reduced from feed events and
+    /// slot reconciliation — never set from the view layer directly.
+    @Published public private(set) var phase: CallPhase = .idle
+    /// Call ids the user dismissed (or the timeout retired). The banner
+    /// stays hidden for these while the slot still shows them; the set
+    /// resets when a new call id arrives.
+    @Published public private(set) var dismissedIDs: Set<String> = []
+    // -- in-call controls (om-call-ux; the InCallView window binds these)
+    @Published public private(set) var muted = false
+    @Published public private(set) var cameraOn = false
+    /// Selected speaker route (nil = system default). Persisted under
+    /// the A/V panel's key so both surfaces agree.
+    @Published public private(set) var speaker: String?
+    @Published public private(set) var speakerDevices: [String] = []
+    @Published public private(set) var speakersLoaded = false
+    @Published public private(set) var controlsError: String?
+    // -- session counters (Diagnostics only — never in the banner)
+    @Published public private(set) var rings = 0
+    @Published public private(set) var accepts = 0
+    @Published public private(set) var declines = 0
+    @Published public private(set) var dismissals = 0
+    @Published public private(set) var timeouts = 0
+    /// Camera hardware hook, installed by the in-call window (which owns
+    /// the AVCapture session). Nil in tests/headless — the toggle still
+    /// flips state so it stays exercisable without hardware.
+    public var cameraHook: ((Bool) -> Void)?
     private var generation = 0
     private var mediaGeneration = 0
     private var mediaPolling = false
+    /// Slot id the local sets below were recorded against. All three
+    /// reset when the slot id changes (track(_:)).
+    private var trackedID: String?
+    /// Terminal call ids cleared via clearEnded (stay idle locally
+    /// until a new call id arrives).
+    private var retiredIDs: Set<String> = []
+    /// Incoming ring ids already counted (rings counts each ring once).
+    private var countedRingIDs: Set<String> = []
+    private var timeoutTimer: Timer?
     private let demo: Bool
 
     public init(demo: Bool = false) {
         self.demo = demo
+        self.speaker = UserDefaults.standard.string(forKey: AvPanelModel.speakerKey)
     }
+
+    deinit { timeoutTimer?.invalidate() }
 
     public var isDemo: Bool { demo }
 
-    /// Feed hook: a call event landed — re-read the slot.
+    /// True when the banner should show (live phase, non-dismissed call).
+    public var bannerVisible: Bool {
+        CallRingPolicy.bannerVisible(
+            phase: phase, call: call, dismissedIDs: dismissedIDs)
+    }
+
+    /// Feed hook: a call event landed — reduce the machine, then re-read
+    /// the slot. The optimistic reduction keeps the banner responsive;
+    /// reconciliation with the parked slot is the authority.
     public func ingest(_ event: CallEvent) {
         lastAction = "event:\(event.kind)"
+        if let ev = CallPhaseMapper.event(for: event) {
+            phase = CallPhaseReducer.next(phase, ev)
+        }
         refresh()
     }
 
@@ -43,14 +97,215 @@ public final class CallStore: ObservableObject {
                 fetched = nil
             }
             await MainActor.run {
-                self.call = fetched
-                self.syncMediaPoll()
+                self.reconcile(fetched)
             }
         }
     }
 
+    /// Adopt a freshly read slot: reset per-call sets on id change,
+    /// honor dismiss/retire for the current id, else adopt the mapped
+    /// phase (counting each incoming ring once, arming the timeout).
+    private func reconcile(_ slot: CallInfo?) {
+        track(slot?.id)
+        guard let slot else {
+            cancelTimeout()
+            call = nil
+            if phase == .ended { phase = .idle }
+            // Event-adopted inviting with no slot yet (the feed beat the
+            // read): keep the phase; the next refresh adopts the slot.
+            syncMediaPoll()
+            return
+        }
+        if retiredIDs.contains(slot.id) {
+            // Cleared locally: stay idle until a new call id arrives.
+            call = nil
+            phase = .idle
+            cancelTimeout()
+            syncMediaPoll()
+            return
+        }
+        call = slot
+        if dismissedIDs.contains(slot.id) {
+            // Hidden by dismiss/timeout: track terminal truth but never
+            // re-raise the banner for this id.
+            if slot.state == "ended" || slot.state == "failed" {
+                phase = .ended
+                cancelTimeout()
+            }
+            syncMediaPoll()
+            return
+        }
+        let mapped = CallPhaseMapper.phase(for: slot)
+        if mapped == .inviting, slot.dir == "in", !countedRingIDs.contains(slot.id) {
+            countedRingIDs.insert(slot.id)
+            rings += 1
+        }
+        if mapped == .inviting { armTimeout(for: slot.id) } else { cancelTimeout() }
+        phase = mapped
+        syncMediaPoll()
+    }
+
+    /// Reset per-call local sets when the slot id changes.
+    private func track(_ id: String?) {
+        if trackedID != id {
+            trackedID = id
+            dismissedIDs.removeAll()
+            retiredIDs.removeAll()
+            countedRingIDs.removeAll()
+        }
+    }
+
+    // MARK: - Never-trap paths (dismiss + ring timeout)
+
+    /// Hide the banner for the current call. The call keeps its server
+    /// state (a ring keeps ringing — answer it from Diagnostics); only
+    /// the banner goes away. Recall() brings it back.
+    public func dismiss() {
+        guard let c = call, phase == .inviting || phase == .active else { return }
+        dismissedIDs.insert(c.id)
+        dismissals += 1
+        lastAction = "dismiss"
+        phase = CallPhaseReducer.next(phase, .dismissed)
+        cancelTimeout()
+    }
+
+    /// Re-show a dismissed banner (Diagnostics escape hatch).
+    /// Re-adopts the live slot phase (a dismissed ring invites again).
+    public func recall() {
+        guard let c = call, dismissedIDs.contains(c.id), c.isActive else { return }
+        dismissedIDs.remove(c.id)
+        lastAction = "recall"
+        phase = CallPhaseMapper.phase(for: c)
+        if phase == .inviting { armTimeout(for: c.id) }
+    }
+
+    /// Retire a ringing banner whose time is up (missed call). Called by
+    /// the armed timer and directly by tests with a synthetic clock.
+    public func checkTimeout(now: TimeInterval) {
+        guard phase == .inviting, let c = call, !dismissedIDs.contains(c.id) else { return }
+        guard CallRingPolicy.isExpired(startedAt: c.startedAt, now: now) else { return }
+        dismissedIDs.insert(c.id)
+        phase = CallPhaseReducer.next(phase, .timedOut)
+        timeouts += 1
+        lastAction = "timeout"
+        cancelTimeout()
+    }
+
+    /// Clear a terminal call record back to idle (Diagnostics button).
+    /// The slot's ended record stays server-side; locally we retire the
+    /// id so refresh() stops re-adopting it. Refuses live slots (a
+    /// dismissed ring is ended locally but still ringing — end it,
+    /// don't clear it).
+    public func clearEnded() {
+        guard phase == .ended else { return }
+        if let c = call, c.isActive { return }
+        if let c = call {
+            retiredIDs.insert(c.id)
+            dismissedIDs.remove(c.id)
+        }
+        call = nil
+        phase = .idle
+        lastAction = "clear"
+        cancelTimeout()
+        syncMediaPoll()
+    }
+
+    private func armTimeout(for id: String) {
+        timeoutTimer?.invalidate()
+        timeoutTimer = Timer.scheduledTimer(
+            withTimeInterval: CallRingPolicy.timeoutSecs, repeats: false
+        ) { [weak self] _ in
+            self?.checkTimeout(now: Date().timeIntervalSince1970)
+        }
+    }
+
+    private func cancelTimeout() {
+        timeoutTimer?.invalidate()
+        timeoutTimer = nil
+    }
+
+    // MARK: - In-call controls
+
+    /// Mute/unmute the live-call mic (sticky in core; stored when idle).
+    public func setMuted(_ on: Bool) {
+        if demo {
+            muted = on
+            lastAction = on ? "demo:mute" : "demo:unmute"
+            return
+        }
+        Task {
+            do {
+                let r = try await Task.detached { try RustCore.callMute(muted: on) }.value
+                await MainActor.run {
+                    self.muted = r.muted
+                    self.controlsError = nil
+                }
+            } catch {
+                await MainActor.run {
+                    self.controlsError = "Mute failed: \(error)"
+                }
+            }
+        }
+    }
+
+    /// Camera on/off. Flips state always; the in-call window's hook
+    /// starts/stops capture (nil headless — the toggle still works).
+    public func setCameraOn(_ on: Bool) {
+        cameraOn = on
+        lastAction = on ? "camera-on" : "camera-off"
+        cameraHook?(on)
+    }
+
+    /// Select the speaker route (nil = system default). Persisted under
+    /// the shared A/V key; the core reroutes a live call without
+    /// dropping audio on failure.
+    public func setSpeaker(_ name: String?) {
+        speaker = name
+        UserDefaults.standard.set(name, forKey: AvPanelModel.speakerKey)
+        if demo { return }
+        Task {
+            do {
+                _ = try await Task.detached { try RustCore.callSpeaker(name: name) }.value
+                await MainActor.run { self.controlsError = nil }
+            } catch {
+                await MainActor.run {
+                    self.controlsError = "Speaker select failed: \(error)"
+                }
+            }
+        }
+    }
+
+    /// Reload output devices (always completes; empty list headless).
+    public func refreshSpeakers() {
+        if demo {
+            speakerDevices = ["Demo Speaker"]
+            speakersLoaded = true
+            return
+        }
+        Task {
+            do {
+                let d = try await Task.detached { try RustCore.audioDevices() }.value
+                await MainActor.run {
+                    self.speakerDevices = d.outputs
+                    self.speakersLoaded = true
+                    if self.speaker == nil { self.speaker = d.default_output }
+                    self.controlsError = nil
+                }
+            } catch {
+                await MainActor.run {
+                    self.speakerDevices = []
+                    self.speakersLoaded = true
+                    self.controlsError = "Speaker list unavailable: \(error)"
+                }
+            }
+        }
+    }
+
+    public func dismissControlsError() { controlsError = nil }
+
     /// Run the 1s media-stats loop exactly while a live call is up.
     private func syncMediaPoll() {
+        if demo { return } // demo never touches core (no stats line)
         let live = call?.liveMedia == true && (call?.isActive ?? false)
         let polling = mediaPolling
         if live, !polling {
@@ -80,12 +335,20 @@ public final class CallStore: ObservableObject {
     }
 
     /// Seed offline demo state (shot hook: --show-call incoming|active).
-    public func seedDemo(state: String) {
+    /// `startedAt` dates the seeded ring for timeout shots/tests.
+    /// Seeds a fresh world: per-call local sets reset first so shots
+    /// and tests are deterministic.
+    public func seedDemo(state: String, startedAt: UInt64 = 0) {
+        cancelTimeout()
+        dismissedIDs.removeAll()
+        retiredIDs.removeAll()
+        countedRingIDs.removeAll()
         switch state {
         case "incoming":
             call = CallInfo(
                 id: "demo-call", dir: "in", peer: "8:orgid:demo",
                 peerName: "Doe, Jane", thread: "", state: "ringing",
+                startedAt: startedAt,
                 detail: "modalities: Audio")
         case "active":
             call = CallInfo(
@@ -100,12 +363,28 @@ public final class CallStore: ObservableObject {
                 state: "connected", controller: "https://demo/conv/x",
                 startedAt: 1, detail: "echo bot · a/v flowing",
                 liveMedia: true)
+        case "ended":
+            call = CallInfo(
+                id: "demo-call", dir: "in", peer: "8:orgid:demo",
+                peerName: "Doe, Jane", thread: "", state: "ended",
+                startedAt: 1, detail: "Call ended")
         default:
             call = nil
         }
+        track(call?.id)
+        phase = CallPhaseMapper.phase(for: call)
+        if let c = call, phase == .inviting, c.dir == "in",
+            !countedRingIDs.contains(c.id)
+        {
+            countedRingIDs.insert(c.id)
+            rings += 1
+            armTimeout(for: c.id)
+        }
+        syncMediaPoll()
     }
 
     private func run(_ label: String, _ work: @escaping () throws -> CallResult) {
+        let wasIncomingRing = call?.dir == "in" && call?.state == "ringing"
         if demo {
             // Offline echo: flip local state so the banner is exercisable.
             lastAction = "demo:\(label)"
@@ -114,11 +393,18 @@ public final class CallStore: ObservableObject {
                 let live = label.hasSuffix("-live")
                 if var c = call { c = CallInfo(id: c.id, dir: c.dir, peer: c.peer, peerName: c.peerName, thread: c.thread, state: "connected", controller: c.controller, startedAt: c.startedAt, detail: c.detail, liveMedia: live ? true : c.liveMedia); call = c }
                 else { call = CallInfo(id: "demo-call", dir: "out", peer: "", peerName: "Doe, Jane", state: "connected", liveMedia: live ? true : nil) }
+                if label.hasPrefix("accept") { accepts += 1 }
             case "end":
                 call = nil
+                if wasIncomingRing { declines += 1 }
             default:
                 break
             }
+            track(call?.id)
+            phase = CallPhaseMapper.phase(for: call)
+            if phase == .inviting, let c = call { armTimeout(for: c.id) }
+            else { cancelTimeout() }
+            syncMediaPoll()
             return
         }
         busy = true
@@ -137,9 +423,10 @@ public final class CallStore: ObservableObject {
             switch result {
             case let .success(r):
                 lastAction = label
+                if label.hasPrefix("accept") { accepts += 1 }
+                if label == "end", wasIncomingRing { declines += 1 }
                 if let c = r.call {
-                    call = c
-                    syncMediaPoll()
+                    reconcile(c)
                 } else { refresh() }
                 if let rej = r.rejection, r.accepted == false { error = rej }
             case let .failure(e):
@@ -185,16 +472,21 @@ public final class CallStore: ObservableObject {
 }
 
 /// Active-call banner: incoming accept/decline, outgoing progress,
-/// connected end/record. Hidden when no call is active.
+/// connected end/record. Hidden when no call is active — and always
+/// dismissable: Dismiss hides it (the call keeps ringing; answer from
+/// Diagnostics), and the ring timeout retires it as a missed call.
 public struct CallBanner: View {
     @ObservedObject public var store: CallStore
+    /// Opens the in-call window (nil hides the button — e.g. previews).
+    public var onOpenCallWindow: (() -> Void)?
 
-    public init(store: CallStore) {
+    public init(store: CallStore, onOpenCallWindow: (() -> Void)? = nil) {
         self.store = store
+        self.onOpenCallWindow = onOpenCallWindow
     }
 
     public var body: some View {
-        if let c = store.call, c.isActive {
+        if let c = store.call, store.bannerVisible {
             VStack(alignment: .leading, spacing: DietSpace.xxs) {
                 HStack(spacing: DietSpace.sm) {
                     Image(systemName: icon(for: c))
@@ -211,6 +503,16 @@ public struct CallBanner: View {
                             .clipShape(Capsule())
                             .accessibilityLabel("Live media active")
                     }
+                    if store.phase == .active, store.muted {
+                        Text("MUTED")
+                            .font(DietType.caption2).bold()
+                            .padding(.horizontal, DietSpace.sm)
+                            .padding(.vertical, DietSpace.xxs)
+                            .background(DietColor.wellColor)
+                            .foregroundStyle(DietColor.textSecondaryColor)
+                            .clipShape(Capsule())
+                            .accessibilityLabel("Microphone muted")
+                    }
                     VStack(alignment: .leading, spacing: DietSpace.xxs) {
                         Text(title(for: c)).font(DietType.subheadline).bold()
                             .foregroundStyle(DietColor.textPrimaryColor)
@@ -222,6 +524,12 @@ public struct CallBanner: View {
                     Spacer()
                     if store.busy { ProgressView().controlSize(.small) }
                     buttons(for: c)
+                }
+                if c.dir == "in", c.state == "ringing" {
+                    Text("Dismiss keeps it ringing (answer from Diagnostics) · auto-dismisses after \(Int(CallRingPolicy.timeoutSecs))s")
+                        .font(DietType.caption2)
+                        .foregroundStyle(DietColor.textSecondaryColor)
+                        .lineLimit(1)
                 }
                 if c.liveMedia == true, let m = store.media {
                     Text(mediaLine(m))
@@ -290,12 +598,20 @@ public struct CallBanner: View {
             Button("Decline") { store.end() }
                 .buttonStyle(.dietDestructive)
                 .disabled(store.busy)
+            Button("Dismiss") { store.dismiss() }
+                .buttonStyle(.dietSecondary)
+                .help("Hide this banner — the call keeps ringing (answer from Diagnostics)")
         } else {
             if c.state == "connected", c.dir == "out" {
                 Button("● Rec") { store.injectRecorder() }
                     .buttonStyle(.dietSecondary)
                     .disabled(store.busy)
                     .help("Inject the recorder bot (signaling only)")
+            }
+            if c.state == "connected", let open = onOpenCallWindow {
+                Button("Call…") { open() }
+                    .buttonStyle(.dietSecondary)
+                    .help("Open the in-call window (mute, camera, speaker)")
             }
             Button("End") { store.end() }
                 .buttonStyle(.dietDestructive)
