@@ -49,7 +49,10 @@ pub use calendar::{
     calendar_view_path, list_upcoming_meetings_data, lobby_next, parse_calendar_view,
     parse_join_url,
 };
-pub use files::{download_file_data, list_chat_files_data, upload_file_data};
+pub use files::{
+    content_range_value, download_file_data, list_chat_files_data, upload_chunk_ranges,
+    upload_file_data, upload_file_data_with_progress, upload_session_body, UploadProgress,
+};
 pub use media::{fetch_media_data, MediaBytes, MAX_BYTES};
 pub use me::whoami_data;
 pub use notes::{

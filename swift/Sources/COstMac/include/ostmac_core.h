@@ -122,9 +122,15 @@ char *ostmac_media_fetch(const char *url);
 // Shared files JSON for one chat/channel (requires sign-in). Caller frees.
 char *ostmac_files(const char *chat_id, int limit);
 
-// Upload a local file (<4 MB) to a chat/channel + post reference message.
+// Upload a local file to a chat/channel + post reference message
+// (<=4 MB one PUT, larger via a resumable upload session).
 // Returns {ok, file}. Caller frees.
 char *ostmac_files_upload(const char *chat_id, const char *path);
+
+// Current upload progress (pure read, no network, never fails):
+// {ok, uploaded, total, percent, active}. Poll while an upload
+// spinner runs. Caller frees.
+char *ostmac_files_upload_progress(void);
 
 // Download one driveItem's content to dest path.
 // Returns {ok, path, bytes}. Caller frees.

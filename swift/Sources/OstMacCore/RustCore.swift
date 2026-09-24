@@ -258,6 +258,13 @@ public enum RustCore {
         }
     }
 
+    /// Current upload-progress gauge (pure core read, no network).
+    /// Poll while an upload spinner runs. Never blocks meaningfully,
+    /// but still crosses FFI: call off the main thread like every wrapper.
+    public static func sharedUploadProgress() throws -> UploadProgressResponse {
+        try call(ostmac_files_upload_progress(), as: UploadProgressResponse.self)
+    }
+
     public static func sharedDownload(driveID: String, itemID: String, dest: String) throws -> SharedFileDownloadResponse {
         try driveID.withCString { dPtr in
             try itemID.withCString { iPtr in

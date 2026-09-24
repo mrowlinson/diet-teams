@@ -3,7 +3,8 @@
 // Chat files (OneDrive "Microsoft Teams Chat Files" via message attachments)
 // and channel files (SharePoint filesFolder) share one list model. Swift
 // opens web_url in the browser and saves via core (drive download to
-// ~/Downloads); upload posts a reference attachment message (<4 MB).
+// ~/Downloads); upload posts a reference attachment message (<=4 MB one
+// PUT, larger via a resumable session; % polls the core gauge).
 //
 //   let store = SharedFilesStore()
 //   store.open(chatID: "19:...")   // list via core (replaces files)
@@ -27,11 +28,14 @@ public final class SharedFilesStore: ObservableObject {
     public typealias ListFetcher = @Sendable (String, Int32) throws -> SharedFilesResponse
     public typealias UploadFetcher = @Sendable (String, String) throws -> SharedFileUploadResponse
     public typealias DownloadFetcher = @Sendable (String, String, String) throws -> SharedFileDownloadResponse
+    public typealias ProgressFetcher = @Sendable () throws -> UploadProgressResponse
     public typealias OpenURLFn = @Sendable (URL) -> Bool
 
     @Published public private(set) var files: [SharedFile] = []
     @Published public private(set) var state: SharedFilesState = .loading
     @Published public private(set) var uploading = false
+    /// 0...1 while an upload streams (nil when idle/unknown; spinner stays).
+    @Published public private(set) var uploadProgress: Double?
     @Published public private(set) var savingIDs: Set<String> = []
     @Published public private(set) var savedPath: String?
     public private(set) var chatID: String?
@@ -40,6 +44,7 @@ public final class SharedFilesStore: ObservableObject {
     private let listFetcher: ListFetcher
     private let uploadFetcher: UploadFetcher
     private let downloadFetcher: DownloadFetcher
+    private let progressFetcher: ProgressFetcher
     private let openURLFn: OpenURLFn
     private var openGeneration = 0
 
@@ -57,11 +62,13 @@ public final class SharedFilesStore: ObservableObject {
         download: @escaping DownloadFetcher = {
             try RustCore.sharedDownload(driveID: $0, itemID: $1, dest: $2)
         },
+        progress: @escaping ProgressFetcher = { try RustCore.sharedUploadProgress() },
         openURL: @escaping OpenURLFn = SharedFilesStore.defaultOpenURL
     ) {
         self.listFetcher = list
         self.uploadFetcher = upload
         self.downloadFetcher = download
+        self.progressFetcher = progress
         self.openURLFn = openURL
     }
 
@@ -101,8 +108,9 @@ public final class SharedFilesStore: ObservableObject {
         state = files.isEmpty ? .empty : .loaded
     }
 
-    /// Upload a local file (<4 MB core limit) and prepend the result.
-    /// Demo mode fabricates the row locally.
+    /// Upload a local file (any size: core routes >4 MB through a
+    /// resumable session) and prepend the result. While the spinner runs,
+    /// `%` polls the core progress gauge. Demo mode fabricates the row.
     public func upload(path: String) {
         guard !uploading, let id = chatID else { return }
         if isDemo {
@@ -112,8 +120,16 @@ public final class SharedFilesStore: ObservableObject {
             return
         }
         uploading = true
+        uploadProgress = nil
+        let poll = startProgressPoll { [weak self] frac in
+            self?.uploadProgress = frac
+        }
         Task {
-            defer { uploading = false }
+            defer {
+                poll.cancel()
+                uploading = false
+                uploadProgress = nil
+            }
             let fetcher = uploadFetcher
             do {
                 let resp = try await Task.detached { try fetcher(id, path) }.value
@@ -121,6 +137,21 @@ public final class SharedFilesStore: ObservableObject {
                 state = .loaded
             } catch {
                 state = .error(Self.message(for: error))
+            }
+        }
+    }
+
+    /// Poll the core gauge every 200 ms until cancelled (upload %).
+    /// The closure runs on the main actor; throwers keep the last value.
+    func startProgressPoll(onTick: @escaping @MainActor (Double?) -> Void) -> Task<Void, Never> {
+        let fetcher = progressFetcher
+        return Task { @MainActor in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 200_000_000)
+                if Task.isCancelled { break }
+                if let p = try? await Task.detached { try fetcher() }.value {
+                    await onTick(Self.progressFraction(uploaded: p.uploaded, total: p.total))
+                }
             }
         }
     }
@@ -164,6 +195,13 @@ public final class SharedFilesStore: ObservableObject {
     public static func downloadDestination(filename: String) -> String {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         return (home as NSString).appendingPathComponent("Downloads/\(filename)")
+    }
+
+    /// Gauge bytes → 0...1 fraction (nil while the total is unknown;
+    /// over-report clamps to 1). Pure, testable.
+    public static func progressFraction(uploaded: UInt64, total: UInt64) -> Double? {
+        guard total > 0 else { return nil }
+        return min(1.0, Double(uploaded) / Double(total))
     }
 
     /// Pure upsert: same id replaces in place, new id prepends (newest first).
@@ -212,11 +250,18 @@ public struct SharedFilesView: View {
                     .textSelection(.enabled)
             }
             Spacer()
-            if store.uploading { ProgressView().controlSize(.small) }
+            if store.uploading {
+                if let frac = store.uploadProgress {
+                    Text("\(Int((frac * 100).rounded()))%")
+                        .font(.caption).monospaced()
+                        .foregroundStyle(.secondary)
+                }
+                ProgressView().controlSize(.small)
+            }
             Button("Upload…") { pickAndUpload() }
                 .font(.caption)
                 .disabled(store.uploading || store.chatID == nil)
-                .help("Upload a file (<4 MB) to this chat")
+                .help("Upload a file to this chat (large files use resumable upload)")
             Button("Refresh") { store.refresh() }
                 .font(.caption)
                 .disabled(store.chatID == nil)

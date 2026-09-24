@@ -929,6 +929,26 @@ public struct SharedFileDownloadResponse: Decodable, Sendable {
     public let bytes: UInt64
 }
 
+/// Upload-progress gauge from core `ostmac_files_upload_progress`
+/// (om-i4-bigup): pure read, polled while an upload spinner runs.
+/// `active` is true only while a core upload is in flight.
+public struct UploadProgressResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let uploaded: UInt64
+    public let total: UInt64
+    public let percent: UInt64
+    public let active: Bool
+
+    /// Host-side construction (mock progress fetchers).
+    public init(ok: Bool, uploaded: UInt64, total: UInt64, percent: UInt64, active: Bool) {
+        self.ok = ok
+        self.uploaded = uploaded
+        self.total = total
+        self.percent = percent
+        self.active = active
+    }
+}
+
 // MARK: - Presence (om-presence lane)
 
 /// Own presence from core `ostmac_presence` / `ostmac_presence_set`

@@ -21,7 +21,7 @@
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -1193,8 +1193,10 @@ pub fn files_json(chat_id: &str, limit: usize) -> String {
 }
 
 /// Upload a local file to a chat/channel and post it as a `reference`
-/// attachment. Small files only (<4 MB, ost rejects larger). Empty args
-/// are rejected before any network. Returns `{ok:true, file:{...}}`.
+/// attachment. Files <=4 MB use one simple PUT; larger files use a
+/// resumable upload session (ost routes on size). Per-fragment progress
+/// lands in the upload-progress store (see [`upload_progress_json`]).
+/// Empty args are rejected before any network. Returns `{ok:true, file}`.
 pub fn files_upload_json(chat_id: &str, path: &str) -> String {
     if chat_id.trim().is_empty() {
         return err_json("arg", "empty chat_id");
@@ -1202,22 +1204,81 @@ pub fn files_upload_json(chat_id: &str, path: &str) -> String {
     if path.trim().is_empty() {
         return err_json("arg", "empty path");
     }
+    upload_progress_reset();
     let run = || -> Result<String, String> {
         let rt = rt()?;
         rt.block_on(async {
             let client = ost::api::client::TeamsClient::new()
                 .await
                 .map_err(|e| format!("{:#}", e))?;
-            let file = ost::api::upload_file_data(&client, chat_id, path)
-                .await
-                .map_err(|e| format!("{:#}", e))?;
+            let file = ost::api::upload_file_data_with_progress(
+                &client,
+                chat_id,
+                path,
+                Some(&upload_progress_report),
+            )
+            .await
+            .map_err(|e| format!("{:#}", e))?;
             Ok(json!({"ok": true, "file": shared_file_to_json(&file)}).to_string())
         })
     };
-    match run() {
+    let out = match run() {
         Ok(s) => s,
         Err(e) => err_json("files_upload", e),
+    };
+    upload_progress_finish();
+    out
+}
+
+// ---------------------------------------------------------------------------
+// Upload progress (om-i4-bigup: polled % while the Swift spinner runs)
+// ---------------------------------------------------------------------------
+
+/// Process-wide upload progress: `files_upload_json` reports per-fragment
+/// `(sent, total)` here; Swift polls [`upload_progress_json`] on a timer
+/// while its spinner runs. One upload at a time per process (the composer
+/// uploads sequentially; a concurrent Shared-tab upload steals the gauge).
+static UPLOAD_SENT: AtomicU64 = AtomicU64::new(0);
+static UPLOAD_TOTAL: AtomicU64 = AtomicU64::new(0);
+static UPLOAD_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+fn upload_progress_reset() {
+    UPLOAD_SENT.store(0, Ordering::Relaxed);
+    UPLOAD_TOTAL.store(0, Ordering::Relaxed);
+    UPLOAD_ACTIVE.store(true, Ordering::Relaxed);
+}
+
+fn upload_progress_report(sent: u64, total: u64) {
+    UPLOAD_SENT.store(sent, Ordering::Relaxed);
+    UPLOAD_TOTAL.store(total, Ordering::Relaxed);
+}
+
+fn upload_progress_finish() {
+    UPLOAD_ACTIVE.store(false, Ordering::Relaxed);
+}
+
+/// Whole-percent progress, clamped to 0..=100 (unknown total reads 0).
+pub fn upload_percent(sent: u64, total: u64) -> u64 {
+    if total == 0 {
+        return 0;
     }
+    (sent.saturating_mul(100) / total).min(100)
+}
+
+/// Current upload progress as JSON (pure read, no network, never fails):
+/// `{ok:true, uploaded, total, percent, active}`. `active` is true only
+/// while a `files_upload_json` call is in flight.
+pub fn upload_progress_json() -> String {
+    let sent = UPLOAD_SENT.load(Ordering::Relaxed);
+    let total = UPLOAD_TOTAL.load(Ordering::Relaxed);
+    json!({
+        "ok": true,
+        "uploaded": sent,
+        "total": total,
+        "percent": upload_percent(sent, total),
+        "active": UPLOAD_ACTIVE.load(Ordering::Relaxed),
+    })
+    .to_string()
 }
 
 /// Download one driveItem's content to `dest`. Empty args are rejected
@@ -2365,6 +2426,13 @@ pub extern "C" fn ostmac_files_upload(
         Ok(p) => string_to_c(files_upload_json(&id, &p)),
         Err(e) => string_to_c(err_json("arg", e)),
     }
+}
+
+/// Current upload progress JSON (pure read, no network).
+/// See [`upload_progress_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_files_upload_progress() -> *mut c_char {
+    string_to_c(upload_progress_json())
 }
 
 /// To Do lists JSON (requires sign-in). See [`reminders_json`].
@@ -4148,6 +4216,33 @@ mod tests {
             assert_eq!(v["ok"], false);
             assert_eq!(v["error"], "arg");
         }
+    }
+
+    #[test]
+    fn upload_percent_clamps_and_handles_empty() {
+        assert_eq!(upload_percent(0, 0), 0);
+        assert_eq!(upload_percent(0, 100), 0);
+        assert_eq!(upload_percent(50, 100), 50);
+        assert_eq!(upload_percent(100, 100), 100);
+        assert_eq!(upload_percent(200, 100), 100);
+        assert_eq!(upload_percent(u64::MAX, 1), 100);
+    }
+
+    #[test]
+    fn upload_progress_store_roundtrips() {
+        // Only this test touches the gauge (empty-arg uploads bail before
+        // reset), so no cross-test race: set, read, restore idle.
+        upload_progress_reset();
+        upload_progress_report(25, 100);
+        let v: serde_json::Value = serde_json::from_str(&upload_progress_json()).unwrap();
+        assert_eq!(v["ok"], true);
+        assert_eq!(v["uploaded"], 25);
+        assert_eq!(v["total"], 100);
+        assert_eq!(v["percent"], 25);
+        assert_eq!(v["active"], true);
+        upload_progress_finish();
+        let v: serde_json::Value = serde_json::from_str(&upload_progress_json()).unwrap();
+        assert_eq!(v["active"], false);
     }
 
     #[test]
