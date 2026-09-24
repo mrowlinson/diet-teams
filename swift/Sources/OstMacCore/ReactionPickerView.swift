@@ -2,12 +2,17 @@
 // (search + recents + categories) shown in a transient popover from the
 // menu row's ＋ button. Native controls only: text field, segmented
 // categories, plain buttons in a lazy grid.
+// om-react-picker: Esc dismisses (via `onDismiss`; clears the query
+// first per the JumpPalette precedent) instead of relying on the
+// popover's native Esc, which the focused field would swallow.
 import DietDesign
 import SwiftUI
 
 /// Full emoji picker. `onPick` fires once per tap; the host closes the
 /// popover and routes through `store.toggleReaction` (which also files
 /// the recents ring), so this view stays stateless apart from its field.
+/// `onDismiss` fires on Esc with an empty query; the host closes the
+/// popover without reacting.
 struct ReactionPickerView: View {
     /// "" = categories mode; "recents" + catalog ids select the page.
     @State private var query = ""
@@ -17,17 +22,20 @@ struct ReactionPickerView: View {
     @FocusState private var fieldFocused: Bool
     private let recents: [String]
     let onPick: (String) -> Void
+    let onDismiss: () -> Void
 
     init(
         recents: [String] = ReactionRecents.load(),
         query: String = "",
         category: String = "recents",
-        onPick: @escaping (String) -> Void
+        onPick: @escaping (String) -> Void,
+        onDismiss: @escaping () -> Void = {}
     ) {
         self.recents = recents
         _query = State(initialValue: query)
         _category = State(initialValue: category)
         self.onPick = onPick
+        self.onDismiss = onDismiss
     }
 
     var body: some View {
@@ -104,6 +112,14 @@ struct ReactionPickerView: View {
         .onKeyPress(.downArrow) { arrow(dx: 0, dy: 1) }
         .onKeyPress(.leftArrow) { arrow(dx: -1, dy: 0) }
         .onKeyPress(.rightArrow) { arrow(dx: 1, dy: 0) }
+        .onKeyPress(.escape) {
+            // Esc with text clears first (JumpPalette precedent); with
+            // an empty query the host closes the popover. Explicit, so
+            // the focused field never traps the key.
+            if !query.isEmpty { query = ""; return .handled }
+            onDismiss()
+            return .handled
+        }
     }
 
     /// Adaptive columns rendered for the fixed 322pt width: same

@@ -1,4 +1,4 @@
-// ReactionMenuBridge.swift — om-reactions/om-msgactions/om-replies/om-editdel/om-react-polish/om-pinmessages:
+// ReactionMenuBridge.swift — om-reactions/om-msgactions/om-replies/om-editdel/om-react-polish/om-pinmessages/om-react-picker:
 // the bubble's ONE right-click menu (inline emoji row + Reply / Copy /
 // Forward / Save / Pin-Unpin, plus Edit / Delete on own bubbles — all
 // top-level, no submenu).
@@ -227,15 +227,21 @@ final class ReactionMenuAnchorView: NSView {
     }
 
     /// Retained while open (NSPopover is not retained by `show`).
-    private var picker: NSPopover?
+    /// Internal (not private) so the dismiss test can seat an unshown
+    /// popover: showing a real popover in XCTest over-releases at pool
+    /// drain (AppKit close machinery), so the suite never shows twice.
+    var picker: NSPopover?
 
     /// Test seam: true while the more-picker popover is shown.
     var isPickerShown: Bool { picker?.isShown == true }
 
     /// More-picker popover above the bubble: search + recents +
     /// categories. Transient (click-outside dismisses); one pick reacts
-    /// and closes. Called on the next runloop after the menu closes so
-    /// menu teardown never fights popover presentation.
+    /// and closes, Esc closes without reacting (om-react-picker: the
+    /// view's explicit onDismiss — a transient popover's native Esc
+    /// never reaches past the focused search field). Called on the next
+    /// runloop after the menu closes so menu teardown never fights
+    /// popover presentation.
     func showPicker() {
         // P0 (om-p0-pickercrash): NSPopover throws
         // NSInvalidArgumentException ("view has no window") when the
@@ -250,13 +256,21 @@ final class ReactionMenuAnchorView: NSView {
         pop.behavior = .transient
         pop.animates = true
         pop.contentViewController = NSHostingController(rootView: ReactionPickerView(
-            onPick: { [weak self, weak pop] emoji in
-                pop?.close()
-                self?.picker = nil
+            onPick: { [weak self] emoji in
+                self?.dismissPicker()
                 self?.onReact(emoji)
-            }))
+            },
+            onDismiss: { [weak self] in self?.dismissPicker() }))
         picker = pop
         pop.show(relativeTo: bounds, of: self, preferredEdge: .maxY)
+    }
+
+    /// One funnel for every programmatic picker close (pick, Esc):
+    /// closes the popover and drops the retained ref. Idempotent —
+    /// closing an already-closed picker is a no-op.
+    func dismissPicker() {
+        picker?.close()
+        picker = nil
     }
 
     /// Shot-hook presentation: NSPopover refuses to show while the app
