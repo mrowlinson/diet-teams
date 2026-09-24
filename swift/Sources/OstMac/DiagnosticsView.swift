@@ -70,6 +70,9 @@ struct DiagnosticsView: View {
                     }
                 }
             }
+            Section("Image preload") {
+                PreloadDiagRow(store: ImagePreloadStore.shared)
+            }
             Section("Call") {
                 callRow
                 if let err = state.call.error {
@@ -109,6 +112,21 @@ struct DiagnosticsView: View {
             LabeledContent("Active", value: "no call")
                 .foregroundStyle(DietColor.textSecondaryColor)
         }
+    }
+}
+
+/// Prefetch counters row (om-imgpreload): observes the shared store
+/// so the counts tick as the reader scrolls.
+struct PreloadDiagRow: View {
+    @ObservedObject var store: ImagePreloadStore
+
+    var body: some View {
+        LabeledContent(
+            "Images",
+            value: DiagnosticsFormat.preloadLine(
+                prefetched: store.stats.prefetched, hits: store.stats.hits,
+                cancelled: store.stats.cancelled, inFlight: store.stats.inFlight))
+            .textSelection(.enabled)
     }
 }
 

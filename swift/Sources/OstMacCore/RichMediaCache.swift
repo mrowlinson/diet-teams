@@ -90,6 +90,20 @@ public actor RichMediaCache {
         }
     }
 
+    /// Cancel an in-flight fetch by URL+message (image-prefetch
+    /// bail-out for far-off-screen rows). Cached bytes are untouched;
+    /// the next `data()` call refetches. No-op without an in-flight
+    /// fetch. Callers awaiting the cancelled key get CancellationError.
+    public func cancel(url: String, messageID: String) {
+        cancel(key: Self.key(url: url, messageID: messageID))
+    }
+
+    /// Cancel an in-flight fetch by cache key (see above).
+    public func cancel(key: String) {
+        inFlight[key]?.cancel()
+        inFlight[key] = nil
+    }
+
     public func clearMemory() {
         memory.removeAllObjects()
     }
