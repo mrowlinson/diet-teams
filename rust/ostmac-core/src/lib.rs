@@ -2307,7 +2307,7 @@ pub fn trouter_poll_typed_json() -> String {
     }
     let mut batch = realtime::parse_batch(&values);
     batch.skipped += unparseable;
-    let call_events = calls::scan_events(&events);
+    let call_events = calls::scan_values(&values);
     json!({
         "ok": true,
         "messages": batch.messages,
@@ -4727,6 +4727,7 @@ mod tests {
             sender: None,
             is_folder: true,
             attachment_id: None,
+            share_url: None,
         };
         let v = shared_file_to_json(&f);
         assert_eq!(v["id"], "dir-1");
