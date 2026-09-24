@@ -37,7 +37,7 @@ public struct DietEmptyState: View {
                 .frame(maxWidth: 320)
             if let actionLabel, let action {
                 Button(actionLabel, action: action)
-                    .buttonStyle(.dietSecondary)
+                    .buttonStyle(.bordered)
                     .padding(.top, DietSpace.sm)
             }
         }

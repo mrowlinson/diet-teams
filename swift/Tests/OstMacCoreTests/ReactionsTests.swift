@@ -174,6 +174,33 @@ final class ReactionsTests: XCTestCase {
         XCTAssertTrue(view.claims(rightClick(at: NSPoint(x: 100, y: 70))))
     }
 
+    // MARK: - Picker crash (om-p0-pickercrash)
+
+    func testShowPickerWindowlessAnchorIsNoOp() {
+        // Pre-fix: NSPopover showRelativeToRect threw
+        // NSInvalidArgumentException ("view has no window") and
+        // SIGABRTed --show-picker. Must no-op instead.
+        let view = ReactionMenuAnchorView(
+            frame: NSRect(x: 0, y: 0, width: 200, height: 60))
+        XCTAssertNil(view.window)
+        view.showPicker()
+        XCTAssertFalse(view.isPickerShown)
+    }
+
+    func testShowPickerInWindowShows() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 400, height: 400),
+            styleMask: .titled, backing: .buffered, defer: false)
+        let view = ReactionMenuAnchorView(
+            frame: NSRect(x: 0, y: 0, width: 200, height: 60))
+        window.contentView?.addSubview(view)
+        window.orderFront(nil)
+        XCTAssertNotNil(view.window)
+        view.showPicker()
+        XCTAssertTrue(view.isPickerShown)
+        window.close()
+    }
+
     // MARK: - Live FFI validation (arg rejection, no network)
 
     func testLiveFFIReactRejectsBadArgs() {

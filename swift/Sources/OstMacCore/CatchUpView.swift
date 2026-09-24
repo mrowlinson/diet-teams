@@ -76,20 +76,20 @@ public struct CatchUpView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("Thread catch-up")
-                    .font(.headline)
+                    .font(DietType.headline)
                 Spacer(minLength: 12)
                 // Native macOS dismiss: a visible Done button that ALSO
                 // owns .cancelAction, so Esc dismisses from any focus
                 // (no focus trap). Summarize keeps .defaultAction (Return);
                 // the two shortcuts never conflict.
                 Button("Done", action: onDone)
-                    .buttonStyle(.dietSecondary)
+                    .buttonStyle(.bordered)
                     .keyboardShortcut(.cancelAction)
             }
             Text(CatchUp.privacyNote)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Divider()
+                .font(DietType.caption1)
+                .foregroundStyle(DietColor.textSecondaryColor)
+            DietSeamH()
             stateBody
             Spacer(minLength: 0)
         }
@@ -107,8 +107,8 @@ public struct CatchUpView: View {
         switch catchUp.state {
         case .idle:
             Text("Summarize \(messages.count) messages into a TL;DR, key points, and action items.")
-                .font(.body)
-                .foregroundStyle(.secondary)
+                .font(DietType.body)
+                .foregroundStyle(DietColor.textSecondaryColor)
             Button("Summarize") {
                 Task { await catchUp.summarize(messages: messages) }
             }
@@ -116,8 +116,8 @@ public struct CatchUpView: View {
             .disabled(!catchUp.config.enabled)
             if !catchUp.config.enabled {
                 Text("Catch-up is off. Enable it in Settings to continue.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(DietType.caption1)
+                    .foregroundStyle(DietColor.textSecondaryColor)
             }
         case .loading:
             HStack {
@@ -129,7 +129,7 @@ public struct CatchUpView: View {
         case let .loaded(text):
             ScrollView {
                 Text(text)
-                    .font(.body)
+                    .font(DietType.body)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -140,8 +140,8 @@ public struct CatchUpView: View {
             .buttonStyle(.link)
         case let .failed(detail):
             Text(detail)
-                .font(.body)
-                .foregroundStyle(.red)
+                .font(DietType.body)
+                .foregroundStyle(Color(nsColor: DietColor.danger))
                 .textSelection(.enabled)
             if catchUp.lastError == .cliMissing {
                 CatchUpInstallPrompt()
@@ -163,19 +163,19 @@ public struct CatchUpInstallPrompt: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("To use the OpenCode CLI provider:")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(DietType.caption1)
+                .foregroundStyle(DietColor.textSecondaryColor)
             Text("1. Install: \(CatchUpCLI.installCommand)")
-                .font(.caption)
+                .font(DietType.caption1)
                 .monospaced()
                 .textSelection(.enabled)
             Text("2. Sign in: \(CatchUpCLI.loginCommand)")
-                .font(.caption)
+                .font(DietType.caption1)
                 .monospaced()
                 .textSelection(.enabled)
             if let url = URL(string: CatchUpCLI.installSite) {
                 Link("Install opencode CLI", destination: url)
-                    .font(.caption)
+                    .font(DietType.caption1)
             }
         }
         .padding(8)
@@ -209,13 +209,16 @@ public struct CatchUpSettingsSection: View {
                     Text("opencode CLI")
                     Spacer()
                     Text(catchUp.cliAvailable ? "Found" : "Missing")
-                        .foregroundStyle(catchUp.cliAvailable ? .green : .red)
+                        .foregroundStyle(
+                            catchUp.cliAvailable
+                                ? Color(nsColor: DietColor.success)
+                                : Color(nsColor: DietColor.danger))
                     Button("Check again") {
                         catchUp.refreshCLIStatus()
                     }
                     .buttonStyle(.link)
                 }
-                .font(.caption)
+                .font(DietType.caption1)
                 .onAppear {
                     catchUp.refreshCLIStatus()
                 }
@@ -236,12 +239,12 @@ public struct CatchUpSettingsSection: View {
             TextField("Model", text: $catchUp.config.model)
             SecureField("API key", text: $catchUp.config.apiKey)
             Text("The key is kept in your Mac keychain, never on disk.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(DietType.caption1)
+                .foregroundStyle(DietColor.textSecondaryColor)
             keyCaption
             Text(CatchUp.privacyNote)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(DietType.caption1)
+                .foregroundStyle(DietColor.textSecondaryColor)
         }
     }
 
@@ -255,12 +258,12 @@ public struct CatchUpSettingsSection: View {
             .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         if catchUp.config.provider == .openCodeCLI {
             Text("CLI-only: shells out to opencode (your `opencode auth login`, free tier) and never uses HTTPS. A saved key applies to the direct providers.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(DietType.caption1)
+                .foregroundStyle(DietColor.textSecondaryColor)
         } else if keyEmpty {
             Text("Required — direct requests fail without a key.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(DietType.caption1)
+                .foregroundStyle(DietColor.textSecondaryColor)
         }
     }
 }

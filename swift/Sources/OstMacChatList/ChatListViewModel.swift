@@ -69,14 +69,14 @@ public final class ChatListViewModel: ObservableObject, ChatSelection {
 
     public var selectedChat: ChatItem? {
         selectedChatID.flatMap { chatByID[$0] }
-            ?? selectedChatID.flatMap(PinnedChats.row(for:))
     }
 
-    /// Sidebar order: Mentions, Notifications, user pins (pin-time
-    /// order), then recency. Pure projection over `chats` (which stays
-    /// real-chats-only, recency-ordered) plus the persisted pin list;
-    /// every ingest/filter/restart path re-derives it, so the pin
-    /// invariant holds without a stored copy that could drift.
+    /// Sidebar order: user pins (pin-time order), then recency. Pure
+    /// projection over `chats` (which stays recency-ordered) plus the
+    /// persisted pin list; every ingest/filter/restart path re-derives
+    /// it, so the pin invariant holds without a stored copy that
+    /// could drift. Nothing is injected — `displayChats` ids are
+    /// always a subset of `chats` ids.
     public var displayChats: [ChatItem] {
         PinnedChats.sorted(chats, pins: pins.orderedIDs)
     }
@@ -120,8 +120,8 @@ public final class ChatListViewModel: ObservableObject, ChatSelection {
         pins.isPinned(id)
     }
 
-    /// Pin a chat (no-op for synthetic/blank/duplicate ids — the
-    /// store refuses them; the list is never refetched here).
+    /// Pin a chat (no-op for blank/duplicate ids — the store
+    /// refuses them; the list is never refetched here).
     public func pin(_ id: String) {
         pins.pin(id)
     }
@@ -144,10 +144,7 @@ public final class ChatListViewModel: ObservableObject, ChatSelection {
             let visible = blocked.filtered(response.chats)
             chats = visible
             state = visible.isEmpty ? .empty : .loaded
-            if let sel = selectedChatID,
-               !PinnedChats.isSynthetic(sel),
-               chatByID[sel] == nil
-            {
+            if let sel = selectedChatID, chatByID[sel] == nil {
                 selectedChatID = nil
             }
         } catch {
@@ -157,12 +154,12 @@ public final class ChatListViewModel: ObservableObject, ChatSelection {
 
     /// Leave one group chat: call core, then drop the row locally and
     /// migrate the selection (see ``LeaveSelection``). No refetch —
-    /// the server row simply stops arriving. Unknown, synthetic, blank,
-    /// or already-leaving ids are a no-op. Failure keeps the row and
+    /// the server row simply stops arriving. Unknown, blank, or
+    /// already-leaving ids are a no-op. Failure keeps the row and
     /// publishes `leaveError` (sidebar alert offers Retry).
     public func leave(chatID: String) async {
         let id = chatID.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !id.isEmpty, !PinnedChats.isSynthetic(id) else { return }
+        guard !id.isEmpty else { return }
         guard chatByID[id] != nil else { return }
         guard !leavingIDs.contains(id) else { return }
         leavingIDs.insert(id)
@@ -183,11 +180,11 @@ public final class ChatListViewModel: ObservableObject, ChatSelection {
     /// Block one 1:1 thread's user: record the block, then drop the row
     /// locally and migrate the selection. Synchronous and local-only
     /// (Teams exposes no block endpoint — enforcement is the hidden row
-    /// plus the app's notify/unread/mention gates). Unknown, synthetic,
-    /// or blank ids are a no-op.
+    /// plus the app's notify/unread/mention gates). Unknown or blank
+    /// ids are a no-op.
     public func block(chatID: String) {
         let id = chatID.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !id.isEmpty, !PinnedChats.isSynthetic(id) else { return }
+        guard !id.isEmpty else { return }
         guard let row = chatByID[id] else { return }
         blocked.block(chatID: id, name: row.name)
         removeLocally(chatID: id)

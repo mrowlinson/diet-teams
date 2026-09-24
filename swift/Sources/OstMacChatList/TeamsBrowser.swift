@@ -25,6 +25,8 @@ public struct TeamsBrowser: View {
     /// Join-sheet visibility + the typed team id.
     @State private var showJoin = false
     @State private var joinTeamID = ""
+    /// Reduce Motion (om-a1-motion): state + filter changes land instantly.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     public init(
         model: TeamsViewModel, openChatID: String? = nil,
@@ -103,8 +105,9 @@ public struct TeamsBrowser: View {
             }
         }
         // System-default crossfade between content states (load lands
-        // softly instead of popping). Standard SwiftUI only.
-        .animation(.default, value: model.state)
+        // softly instead of popping; instant under Reduce Motion).
+        // Standard SwiftUI only.
+        .animation(DietMotion.gated(reduceMotion: reduceMotion), value: model.state)
         .sheet(isPresented: $showJoin) {
             JoinTeamSheet(
                 teamID: $joinTeamID,
@@ -134,7 +137,7 @@ public struct TeamsBrowser: View {
                 } label: {
                     Image(systemName: "plus")
                 }
-                .buttonStyle(DietSecondaryButtonStyle())
+                .buttonStyle(.borderless)
                 .accessibilityLabel("New channel")
                 .help("Create a channel in one of your teams")
                 Button {
@@ -142,7 +145,7 @@ public struct TeamsBrowser: View {
                 } label: {
                     Image(systemName: "person.badge.plus")
                 }
-                .buttonStyle(DietSecondaryButtonStyle())
+                .buttonStyle(.borderless)
                 .accessibilityLabel("Join a team")
                 .help("Join a team by ID")
                 Button {
@@ -150,7 +153,7 @@ public struct TeamsBrowser: View {
                 } label: {
                     Image(systemName: "person.3.fill")
                 }
-                .buttonStyle(DietSecondaryButtonStyle())
+                .buttonStyle(.borderless)
                 .accessibilityLabel("New team")
                 .help("Create a team")
             }
@@ -224,8 +227,9 @@ public struct TeamsBrowser: View {
                 // any animation here can only slide, never fade — stepped
                 // is the no-slide fix. Filter keystrokes keep the
                 // system-default animation (rows match/unmatch plus
-                // pinned-open expansion). Standard SwiftUI only.
-                .animation(.default, value: searchText)
+                // pinned-open expansion; instant under Reduce Motion).
+                // Standard SwiftUI only.
+                .animation(DietMotion.gated(reduceMotion: reduceMotion), value: searchText)
             }
         }
         .sheet(isPresented: $showCreate) {
@@ -289,29 +293,32 @@ struct JoinTeamSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        DietSheet("Join a team") {
-            VStack(spacing: DietSpace.sm) {
-                Text("Paste the team ID. You join as a member.")
+        VStack(spacing: DietSpace.sm) {
+            Text("Join a team")
+                .font(DietType.title3)
+                .foregroundStyle(DietColor.textPrimaryColor)
+            Text("Paste the team ID. You join as a member.")
+                .font(DietType.callout)
+                .foregroundStyle(DietColor.textSecondaryColor)
+            TextField("Team ID", text: $teamID)
+                .textFieldStyle(.roundedBorder)
+                .disabled(joining)
+            if let error {
+                Text(error)
                     .font(DietType.callout)
-                    .foregroundStyle(DietColor.textSecondaryColor)
-                TextField("Team ID", text: $teamID)
-                    .textFieldStyle(.roundedBorder)
+                    .foregroundStyle(Color(nsColor: DietColor.danger))
+            }
+            HStack(spacing: DietSpace.xs) {
+                Button("Cancel") { dismiss() }
+                    .buttonStyle(.bordered)
                     .disabled(joining)
-                if let error {
-                    Text(error)
-                        .font(DietType.callout)
-                        .foregroundStyle(Color(nsColor: DietColor.danger))
-                }
-                HStack(spacing: DietSpace.xs) {
-                    Button("Cancel") { dismiss() }
-                        .buttonStyle(DietSecondaryButtonStyle())
-                        .disabled(joining)
-                    Button(joining ? "Joining…" : "Join") { onJoin() }
-                        .buttonStyle(DietPrimaryButtonStyle())
-                        .disabled(joining || teamID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
+                Button(joining ? "Joining…" : "Join") { onJoin() }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(joining || teamID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
+        .padding(DietSpace.md)
+        .frame(minWidth: 320)
     }
 }
 

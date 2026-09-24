@@ -56,7 +56,10 @@ public struct TeamCreateSheet: View {
     }
 
     public var body: some View {
-        DietSheet("New team") {
+        VStack(alignment: .leading, spacing: DietSpace.sm) {
+            Text("New team")
+                .font(DietType.headline)
+                .foregroundStyle(DietColor.textPrimaryColor)
             switch phase {
             case .editing, .creating, .failed:
                 formBody
@@ -64,10 +67,12 @@ public struct TeamCreateSheet: View {
                 createdBody(teamName: teamName)
             }
         }
+        .padding(DietSpace.md)
+        .frame(minWidth: 320, idealWidth: 400)
     }
 
     private var formBody: some View {
-        VStack(alignment: .leading, spacing: DietSpace.sm) {
+        Group {
             TextField("Team name", text: $name)
                 .textFieldStyle(.plain)
                 .font(DietType.body)
@@ -96,18 +101,18 @@ public struct TeamCreateSheet: View {
             if let message = phase.failureMessage {
                 Text(message)
                     .font(DietType.callout)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(Color(nsColor: DietColor.danger))
             }
             HStack {
                 Spacer()
                 Button("Cancel", role: .cancel) { onDone() }
-                    .buttonStyle(.dietSecondary)
+                    .buttonStyle(.bordered)
                     .keyboardShortcut(.cancelAction)
                     .disabled(phase.isCreating)
                 Button(phase.failureMessage == nil ? "Create" : "Retry") {
                     runCreate()
                 }
-                .buttonStyle(.dietPrimary)
+                .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
                 .disabled(!Self.canCreate(name: name) || phase.isCreating)
             }
@@ -115,10 +120,10 @@ public struct TeamCreateSheet: View {
     }
 
     private func createdBody(teamName: String) -> some View {
-        VStack(alignment: .leading, spacing: DietSpace.sm) {
+        Group {
             HStack(spacing: DietSpace.xs) {
                 Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
+                    .foregroundStyle(Color(nsColor: DietColor.success))
                 Text("Created “\(teamName)”")
                     .font(DietType.body)
                     .foregroundStyle(DietColor.textPrimaryColor)
@@ -126,7 +131,7 @@ public struct TeamCreateSheet: View {
             HStack {
                 Spacer()
                 Button("Done") { onDone() }
-                    .buttonStyle(.dietPrimary)
+                    .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.defaultAction)
             }
         }

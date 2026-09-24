@@ -25,6 +25,8 @@ public struct SidebarColumn: View {
     private let teamCreateOpen: Bool
     private let onOpenChannel: (String, String) -> Void
     @State private var section: SidebarSection
+    /// Reduce Motion (om-a1-motion): section flips cut, never crossfade.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     public init(
         chats: ChatListViewModel, teams: TeamsViewModel,
@@ -79,8 +81,9 @@ public struct SidebarColumn: View {
             }
         }
         // System-default crossfade when the segmented switcher flips
-        // sections. Standard SwiftUI only (no custom drivers).
-        .animation(.default, value: section)
+        // sections (instant cut under Reduce Motion). Standard
+        // SwiftUI only (no custom drivers).
+        .animation(DietMotion.gated(reduceMotion: reduceMotion), value: section)
     }
 }
 

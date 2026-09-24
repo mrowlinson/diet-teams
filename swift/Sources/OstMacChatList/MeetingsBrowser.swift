@@ -9,6 +9,8 @@ import SwiftUI
 /// states; errors are `DietEmptyState` / `DietBanner`.
 public struct MeetingsBrowser: View {
     @ObservedObject private var model: MeetingsViewModel
+    /// Reduce Motion (om-a1-motion): state changes land instantly.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     public init(model: MeetingsViewModel) {
         self.model = model
@@ -52,7 +54,7 @@ public struct MeetingsBrowser: View {
                         .transition(.opacity)
                 }
             }
-            .animation(.default, value: model.state)
+            .animation(DietMotion.gated(reduceMotion: reduceMotion), value: model.state)
         }
         .sheet(isPresented: $model.showPreJoin) {
             if let target = model.pendingJoin {
@@ -77,7 +79,7 @@ public struct MeetingsBrowser: View {
                     ProgressView().controlSize(.small)
                 } else {
                     Button(model.joinLabel) { model.submitJoin() }
-                        .buttonStyle(.dietSecondary)
+                        .buttonStyle(.bordered)
                         .disabled(
                             model.joinText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         .help("Parse the link, then join or open it")
@@ -109,7 +111,7 @@ public struct MeetingsBrowser: View {
             Spacer()
             if model.lobby == .failed || model.lobby == .admitted {
                 Button("Dismiss") { model.dismissLobby() }
-                    .buttonStyle(.dietSecondary)
+                    .buttonStyle(.bordered)
             }
         }
         .padding(.horizontal, DietSpace.sm)
@@ -143,7 +145,7 @@ public struct MeetingsBrowser: View {
                 Spacer()
                 if meeting.isJoinable {
                     Button("Join") { model.joinMeeting(meeting) }
-                        .buttonStyle(.dietSecondary)
+                        .buttonStyle(.bordered)
                         .help("Join \(meeting.subject)")
                 } else {
                     Text("No link")
@@ -217,10 +219,10 @@ public struct PreJoinSheet: View {
             HStack {
                 Spacer()
                 Button("Cancel", action: onCancel)
-                    .buttonStyle(.dietSecondary)
+                    .buttonStyle(.bordered)
                     .keyboardShortcut(.cancelAction)
                 Button("Join now") { onJoin(prejoin.micOn, prejoin.cameraOn) }
-                    .buttonStyle(.dietPrimary)
+                    .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.defaultAction)
                     .help(joinHelp)
             }

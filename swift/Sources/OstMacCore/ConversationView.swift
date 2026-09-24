@@ -215,32 +215,35 @@ public struct ConversationView: View {
     }
 
     private func editSheet(for msg: ChatMessage) -> some View {
-        DietSheet("Edit message") {
-            VStack(alignment: .leading, spacing: DietSpace.sm) {
-                TextField("Message", text: $editDraft, axis: .vertical)
-                    .textFieldStyle(.plain)
-                    .font(DietType.body)
-                    .foregroundStyle(DietColor.textPrimaryColor)
-                    .padding(DietSpace.sm)
-                    .background(DietColor.wellColor)
-                    .clipShape(RoundedRectangle(cornerRadius: DietRadius.control))
-                    .lineLimit(3...8)
-                HStack {
-                    Spacer()
-                    Button("Cancel", role: .cancel) { editingMessage = nil }
-                        .buttonStyle(.dietSecondary)
-                        .keyboardShortcut(.cancelAction)
-                    Button("Save") {
-                        store.edit(messageID: msg.id, text: editDraft)
-                        editingMessage = nil
-                    }
-                    .buttonStyle(.dietPrimary)
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(editDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                        || editDraft.trimmingCharacters(in: .whitespacesAndNewlines) == msg.content)
+        VStack(alignment: .leading, spacing: DietSpace.sm) {
+            Text("Edit message")
+                .font(DietType.headline)
+                .foregroundStyle(DietColor.textPrimaryColor)
+            TextField("Message", text: $editDraft, axis: .vertical)
+                .textFieldStyle(.plain)
+                .font(DietType.body)
+                .foregroundStyle(DietColor.textPrimaryColor)
+                .padding(DietSpace.sm)
+                .background(DietColor.wellColor)
+                .clipShape(RoundedRectangle(cornerRadius: DietRadius.control))
+                .lineLimit(3...8)
+            HStack {
+                Spacer()
+                Button("Cancel", role: .cancel) { editingMessage = nil }
+                    .buttonStyle(.bordered)
+                    .keyboardShortcut(.cancelAction)
+                Button("Save") {
+                    store.edit(messageID: msg.id, text: editDraft)
+                    editingMessage = nil
                 }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+                .disabled(editDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    || editDraft.trimmingCharacters(in: .whitespacesAndNewlines) == msg.content)
             }
         }
+        .padding(DietSpace.md)
+        .frame(minWidth: 320, idealWidth: 400)
     }
 
     /// Prefetch gate (om-fix-tabs): Shared loads on every chat change,
