@@ -1690,7 +1690,7 @@ src="x">"#));
 
     #[test]
     fn reply_html_round_trips_through_split() {
-        let html = build_reply_html("m1", "Priya Nair", "Ship <it> & go", "On it!");
+        let html = build_reply_html("m1", "Megan Harper", "Ship <it> & go", "On it!");
         assert!(html.contains("<quote"), "{}", html);
         assert!(html.contains("&lt;it&gt; &amp; go"), "{}", html);
         let (parent, body) = split_reply_quote(&html);

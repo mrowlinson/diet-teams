@@ -12,7 +12,7 @@ final class SharedFilesTests: XCTestCase {
            "mime":"application/pdf","web_url":"https://w/deck",
            "download_url":"https://d/deck","drive_id":"D1",
            "created":"2026-09-20T10:00:00Z","modified":null,
-           "sender":"Priya Nair"}
+           "sender":"Megan Harper"}
         ]}
         """.data(using: .utf8)!
         let resp = try JSONDecoder().decode(SharedFilesResponse.self, from: json)
@@ -27,7 +27,7 @@ final class SharedFilesTests: XCTestCase {
         XCTAssertEqual(f.web_url, "https://w/deck")
         XCTAssertEqual(f.download_url, "https://d/deck")
         XCTAssertEqual(f.drive_id, "D1")
-        XCTAssertEqual(f.sender, "Priya Nair")
+        XCTAssertEqual(f.sender, "Megan Harper")
         XCTAssertNil(f.modified)
     }
 

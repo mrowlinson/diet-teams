@@ -936,7 +936,7 @@ final class AppState: ObservableObject {
 
     Key points
     - Tom shipped new chat window mocks with bubbles and timestamps.
-    - Priya asked that edited messages update in place, not re-sort.
+    - Megan asked that edited messages update in place, not re-sort.
     - Send flow is an optimistic bubble first, then core confirms.
 
     Action items

@@ -15,7 +15,7 @@ final class InlineDocsTests: XCTestCase {
     ) -> SharedFile {
         SharedFile(
             id: id, name: name, size: size, mime: mime,
-            web_url: webURL, drive_id: "D1", sender: "Priya Nair",
+            web_url: webURL, drive_id: "D1", sender: "Megan Harper",
             attachment_id: attachmentID)
     }
 
@@ -74,7 +74,7 @@ final class InlineDocsTests: XCTestCase {
         XCTAssertEqual(doc.name, "deck.pdf")
         XCTAssertEqual(doc.sizeLabel, "47.1 KB")
         XCTAssertEqual(doc.iconName, "doc.richtext")
-        XCTAssertEqual(doc.sender, "Priya Nair")
+        XCTAssertEqual(doc.sender, "Megan Harper")
     }
 
     // MARK: - Resolve (pure, no prefetch)

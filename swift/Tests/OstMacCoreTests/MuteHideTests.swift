@@ -18,8 +18,8 @@ final class MuteHideTests: XCTestCase {
     func msg(
         chatID: String = "19:chat@thread.v2",
         msgId: String = "m1",
-        sender: String = "Priya",
-        senderID: String? = "8:orgid:priya",
+        sender: String = "Megan",
+        senderID: String? = "8:orgid:megan",
         text: String = "hello",
         isEdit: Bool = false,
         editedID: String? = nil,

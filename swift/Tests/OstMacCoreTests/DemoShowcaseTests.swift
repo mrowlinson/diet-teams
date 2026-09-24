@@ -76,7 +76,7 @@ final class DemoShowcaseTests: XCTestCase {
         XCTAssertEqual(row.last_message_sender, last?.sender)
         // Zero real data: only the fictional crew + fictional bots.
         let allowed: Set<String> = [
-            "Priya Nair", "Tom Becker", "Ava Lindqvist", "Me",
+            "Megan Harper", "Tom Becker", "Ava Lindqvist", "Me",
             "Tech News RSS", "Build Bot",
         ]
         for m in DemoData.showcaseMessages() {

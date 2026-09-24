@@ -47,7 +47,7 @@ final class LongChannelFixtureTests: XCTestCase {
     /// Zero real data: only the fictional crew.
     func testLongChannelZeroRealData() {
         let allowed: Set<String> = [
-            "Priya Nair", "Tom Becker", "Ava Lindqvist", "Me",
+            "Megan Harper", "Tom Becker", "Ava Lindqvist", "Me",
         ]
         for m in DemoData.longChannelMessages() {
             XCTAssertTrue(allowed.contains(m.sender), "real name leak: \(m.sender)")

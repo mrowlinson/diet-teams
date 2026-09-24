@@ -297,21 +297,21 @@ final class ChatListTests: XCTestCase {
         await model.load()
         let order = model.chats.map(\.id)
         model.ingest(realtime: Self.evt(
-            chat: DemoData.churnPollyID, text: "Priya voted: Thursday works best",
+            chat: DemoData.churnPollyID, text: "Megan voted: Thursday works best",
             sender: "Polly", senderID: "28:00001111-2222-3333-4444-555566667777",
             type: "Text"))
         model.ingest(realtime: Self.evt(
-            chat: DemoData.churnStandupID, text: "Tom Becker added Priya Nair to the chat",
+            chat: DemoData.churnStandupID, text: "Tom Becker added Megan Harper to the chat",
             sender: "?", type: "ThreadActivity/AddMember"))
         model.ingest(realtime: Self.evt(
             chat: DemoData.churnSyncID, text: "Facilitator residue stays put",
             sender: "Facilitator", type: "Text"))
         XCTAssertEqual(model.chats.map(\.id), order)
         let polly = model.chats.first { $0.id == DemoData.churnPollyID }!
-        XCTAssertEqual(polly.last_message_preview, "Priya voted: Thursday works best")
+        XCTAssertEqual(polly.last_message_preview, "Megan voted: Thursday works best")
         XCTAssertEqual(polly.last_message_sender, "Polly")
         let standup = model.chats.first { $0.id == DemoData.churnStandupID }!
-        XCTAssertEqual(standup.last_message_preview, "Tom Becker added Priya Nair to the chat")
+        XCTAssertEqual(standup.last_message_preview, "Tom Becker added Megan Harper to the chat")
         XCTAssertNil(standup.last_message_sender)
         let sync = model.chats.first { $0.id == DemoData.churnSyncID }!
         XCTAssertEqual(sync.last_message_preview, "Facilitator residue stays put")
@@ -348,7 +348,7 @@ final class ChatListTests: XCTestCase {
         // Real user text bubbles with its full text.
         model.ingest(realtime: Self.evt(
             chat: meeting, text: "Starting now,\njoin when ready",
-            sender: "Priya Nair", type: "Text"))
+            sender: "Megan Harper", type: "Text"))
         XCTAssertEqual(model.chats.first?.id, meeting)
         XCTAssertEqual(
             model.chats.first?.last_message_preview,
@@ -425,10 +425,10 @@ final class ChatListTests: XCTestCase {
         XCTAssertNil(model.chats[1].last_message_sender)
         XCTAssertEqual(
             model.chats[2].last_message_preview,
-            "Priya voted: Thursday works best")
+            "Megan voted: Thursday works best")
         XCTAssertEqual(
             model.chats[3].last_message_preview,
-            "Tom Becker added Priya Nair to the chat")
+            "Tom Becker added Megan Harper to the chat")
         XCTAssertEqual(model.selectedChatID, DemoData.churnStandupID)
         model.ingest(batch: Array(DemoData.churnBurst().prefix(5)))
         XCTAssertEqual(publishes, 1)
