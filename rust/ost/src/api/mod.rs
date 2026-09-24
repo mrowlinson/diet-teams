@@ -1,5 +1,6 @@
 //! API client module for Microsoft Teams
 
+mod calendar;
 mod chat;
 pub mod client;
 mod files;
@@ -17,6 +18,7 @@ use anyhow::Result;
 pub use chat::{
     ChatInfo, MessageInfo, MessagesPage, ReactionCount, ReadReceipt, REACTION_EMOJI,
 };
+pub use calendar::{JoinTarget, LobbyEvent, LobbyState, MeetingInfo};
 pub use files::SharedFile;
 pub use me::UserInfo;
 pub use notes::{NotePage, NotebookInfo, PageInfo, SectionInfo};
@@ -39,6 +41,10 @@ pub use chat::{
     read_messages_page, read_receipts_data, receipt_message_id, remove_reaction_with_client,
     reply_message_with_client, reply_snippet, send_message_with_client, send_reaction_with_client,
     split_reply_quote, REPLY_SNIPPET_MAX,
+};
+pub use calendar::{
+    calendar_view_path, list_upcoming_meetings_data, lobby_next, parse_calendar_view,
+    parse_join_url,
 };
 pub use files::{download_file_data, list_chat_files_data, upload_file_data};
 pub use media::{fetch_media_data, MediaBytes, MAX_BYTES};
@@ -112,6 +118,11 @@ pub async fn list_teams() -> Result<()> {
 /// List shared files in a chat or channel
 pub async fn list_files(chat_id: &str, limit: usize) -> Result<()> {
     files::list_files(chat_id, limit).await
+}
+
+/// List upcoming meetings (Graph calendarView, next 7 days)
+pub async fn list_upcoming_meetings(limit: usize) -> Result<()> {
+    calendar::list_upcoming_meetings(limit).await
 }
 
 /// Download a shared file by drive+item id

@@ -23,6 +23,7 @@
 // --show-about / --show-settings / --show-av open those windows at launch (shot hooks).
 // --show-diagnostics opens the Diagnostics window at launch (shot hook).
 // --show-calls opens the Recent Calls window at launch (shot hook).
+// --show-meetings opens the Meetings window at launch (shot hook).
 // --av-mic-denied seeds the Call A/V panel's mic-denied hint (shot hook).
 // --show-teams opens the sidebar on the Teams browser (shot hook).
 // --show-shared opens the conversation on the Shared files tab (shot hook).
@@ -166,6 +167,11 @@ struct OstMacAppMain: App {
                 .environmentObject(state)
         }
         .defaultSize(width: 440, height: 480)
+        Window("Meetings", id: AppIdentity.meetWindowID) {
+            MeetingsBrowser(model: state.meetings)
+                .frame(minWidth: 380, minHeight: 480)
+        }
+        .defaultSize(width: 420, height: 560)
         Settings {
             SettingsView(auth: state.auth, catchUp: state.catchUp, notifs: state.notifs)
         }
@@ -190,6 +196,8 @@ private struct OstMacCommands: Commands {
         }
         CommandMenu("Call") {
             Button("In-Call Window") { openWindow(id: AppIdentity.callWindowID) }
+            Button("Join Meeting…") { openWindow(id: AppIdentity.meetWindowID) }
+                .keyboardShortcut("j", modifiers: .command)
             Button("Call A/V Test") { openWindow(id: AppIdentity.avWindowID) }
             Button("Recent Calls") { openWindow(id: AppIdentity.callsWindowID) }
         }
@@ -211,6 +219,7 @@ final class AppState: ObservableObject {
     let chats: ChatListViewModel
     let teams: TeamsViewModel
     let reminders: RemindersViewModel
+    let meetings: MeetingsViewModel
     let conv = ConversationStore()
     let shared = SharedFilesStore()
     let feed = RealtimeFeed()
@@ -338,6 +347,11 @@ final class AppState: ObservableObject {
                 listsFetcher: { DemoData.remindersResponse() },
                 tasksFetcher: { DemoData.reminderTasksResponse(for: $0) },
                 localEdits: true)
+            // Parse stays real (pure core, no network); the join runner
+            // echoes an accepted signaling leg so the lobby flow runs.
+            meetings = MeetingsViewModel(
+                meetingsFetcher: { DemoData.meetingsResponse() },
+                joinRunner: { DemoData.demoJoinResult(threadID: $0) })
             presence.adoptOwn(DemoData.ownPresence())
             for (chatID, peer) in DemoData.peerPresence() {
                 presence.adoptChatPeer(chatID: chatID, response: peer)
@@ -348,6 +362,7 @@ final class AppState: ObservableObject {
             chats = ChatListViewModel()
             teams = TeamsViewModel()
             reminders = RemindersViewModel()
+            meetings = MeetingsViewModel()
         }
         chats.$selectedChatID
             .dropFirst()
@@ -443,6 +458,7 @@ final class AppState: ObservableObject {
         }
         await teams.load()
         await reminders.load()
+        await meetings.load()
         if chats.state == .loaded {
             // Core's signed_in is aad-centric; a loaded list proves
             // working auth regardless.
@@ -834,6 +850,7 @@ final class AppState: ObservableObject {
                 chats.refresh()
                 teams.refresh()
                 reminders.refresh()
+                meetings.refresh()
                 if !isDemo {
                     feed.start()
                     presence.refreshOwnSoon()
@@ -958,6 +975,9 @@ struct RootView: View {
             }
             if CommandLine.arguments.contains("--show-diagnostics") {
                 openWindow(id: AppIdentity.diagWindowID)
+            }
+            if CommandLine.arguments.contains("--show-meetings") {
+                openWindow(id: AppIdentity.meetWindowID)
             }
             if CommandLine.arguments.contains("--show-settings") {
                 openSettings()

@@ -285,6 +285,103 @@ public struct ReminderTaskResult: Decodable, Sendable {
     public let task: ReminderTask
 }
 
+// MARK: - Meetings (om-meet-join lane: upcoming via Graph calendarView)
+
+/// One upcoming meeting from core `ostmac_meetings`: `{"id","subject",
+/// "start?","end?","join_url?","organizer?","is_online"}`.
+public struct MeetingItem: Decodable, Sendable, Identifiable, Equatable {
+    public var id: String { meetingId }
+    public let meetingId: String
+    public let subject: String
+    public let start: String?
+    public let end: String?
+    public let joinURL: String?
+    public let organizer: String?
+    public let isOnline: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case meetingId = "id"
+        case subject, start, end, organizer
+        case joinURL = "join_url"
+        case isOnline = "is_online"
+    }
+
+    /// Host-side construction (demo data, previews). Wire decoding is untouched.
+    public init(
+        meetingId: String, subject: String, start: String? = nil,
+        end: String? = nil, joinURL: String? = nil,
+        organizer: String? = nil, isOnline: Bool = false
+    ) {
+        self.meetingId = meetingId
+        self.subject = subject
+        self.start = start
+        self.end = end
+        self.joinURL = joinURL
+        self.organizer = organizer
+        self.isOnline = isOnline
+    }
+
+    /// True when the row has something Join can use.
+    public var isJoinable: Bool {
+        guard let u = joinURL?.trimmingCharacters(in: .whitespacesAndNewlines) else {
+            return false
+        }
+        return !u.isEmpty
+    }
+
+    /// "2026-09-24T09:00:00.0000000" -> "09:00 24 Sep" (ChatMessage rules).
+    public var displayStart: String? {
+        start.map { ChatMessage.shortTime($0) }
+    }
+}
+
+public struct MeetingsResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let meetings: [MeetingItem]
+
+    /// Host-side construction (demo data, previews). Wire decoding is untouched.
+    public init(ok: Bool, meetings: [MeetingItem]) {
+        self.ok = ok
+        self.meetings = meetings
+    }
+}
+
+/// Join-target classification from core `ostmac_meeting_join_parse`:
+/// `{"kind","thread_id?","meeting_id?","url"}`. `kind` is
+/// thread|meeting-id|url|unknown.
+public struct JoinTarget: Decodable, Sendable, Equatable {
+    public let kind: String
+    public let threadID: String?
+    public let meetingID: String?
+    public let url: String
+
+    enum CodingKeys: String, CodingKey {
+        case kind, url
+        case threadID = "thread_id"
+        case meetingID = "meeting_id"
+    }
+
+    public init(kind: String, threadID: String? = nil, meetingID: String? = nil, url: String) {
+        self.kind = kind
+        self.threadID = threadID
+        self.meetingID = meetingID
+        self.url = url
+    }
+
+    /// True for the two kinds the Join button can act on without leaving
+    /// the app flow (thread legs dial signaling; meeting-id/url open the
+    /// link; unknown shows a hint and never dials).
+    public var canJoinInApp: Bool { kind == "thread" }
+
+    public var canOpenExternally: Bool { kind == "meeting-id" || kind == "url" }
+}
+
+/// `{ok,target}` from `ostmac_meeting_join_parse`.
+public struct JoinParseResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let target: JoinTarget
+}
+
 // MARK: - Conversation (om-conv lane)
 
 /// One chat message. Wire format from core `ostmac_messages`:
@@ -914,6 +1011,26 @@ public struct CallResult: Decodable, Sendable {
         case mediaAnswered = "media_answered"
         case liveMedia = "live_media"
         case responseBytes = "response_bytes"
+    }
+
+    /// Host-side construction (demo joins, mock runners). Wire decoding is untouched.
+    public init(
+        ok: Bool, placed: Bool? = nil, accepted: Bool? = nil,
+        ended: Bool? = nil, injected: Bool? = nil,
+        mediaAnswered: Bool? = nil, liveMedia: Bool? = nil,
+        rejection: String? = nil, responseBytes: Int? = nil,
+        call: CallInfo? = nil
+    ) {
+        self.ok = ok
+        self.placed = placed
+        self.accepted = accepted
+        self.ended = ended
+        self.injected = injected
+        self.mediaAnswered = mediaAnswered
+        self.liveMedia = liveMedia
+        self.rejection = rejection
+        self.responseBytes = responseBytes
+        self.call = call
     }
 }
 

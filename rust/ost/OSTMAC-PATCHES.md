@@ -198,6 +198,23 @@ needing maintainer buy-in. Minor PRs stand alone; majors are separate PRs.
     `edit --to --message-id` / `delete --to --message-id`. Unit test:
     URL + escaped-body shape.
 
+24. [major] `src/api/calendar.rs` (new) + `src/api/mod.rs` + `src/main.rs`
+    (`Meetings` cmd) — **upcoming meetings + join-URL parse + lobby
+    machine (om-meet-join lane)**. `MeetingInfo`/`list_upcoming_meetings_data`
+    read Graph `/me/calendar/calendarView` (next 7 days, soonest first);
+    UTC datetimes format via std-only civil-date math (no chrono).
+    `parse_join_url` classifies pasted strings: `thread` (meetup-join
+    links with a decoded `19:…@thread…` id, or bare thread ids),
+    `meeting-id` (`teams.live.com/meet/<id>`), `url` (other https,
+    opened as-is), `unknown` (never dialed). `LobbyState`
+    (`idle|joining|lobby|admitted|failed`) + `LobbyEvent` + pure
+    `lobby_next` model the waiting-room flow for embedders.
+    Re-exported in `mod.rs`; CLI `meetings [--limit]`,
+    `meetings --parse <url>`. Auth scopes unchanged: existing Graph
+    `/.default` covers `Calendars.Read` (403 surfaces as the detail).
+    Unit tests: calendar parse/defaults, query shape, date spot checks,
+    join-URL matrix, lobby transitions.
+
 ## Upstream PRs (2026-09-22, base 0892144; main red on sdp E0308 until #5)
 
 Minor (standalone modulo #5-first; merge in any order after):

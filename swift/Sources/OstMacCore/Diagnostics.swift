@@ -62,4 +62,11 @@ public enum DiagnosticsFormat {
     public static func callsLine(total: Int, missed: Int) -> String {
         "\(total) recent · \(missed) missed"
     }
+
+    /// Meetings counters (om-meet-join): upcoming fetched, joins
+    /// started, lobby state. The Meetings window shows no numbers;
+    /// the counts live here only.
+    public static func meetingsLine(fetched: Int, joins: Int, lobby: String) -> String {
+        "\(fetched) upcoming · \(joins) joins · \(lobby)"
+    }
 }
