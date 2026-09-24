@@ -23,6 +23,8 @@ struct ChatTimelineView: View {
     var onOpenDoc: (InlineDoc) -> Void = { InlineDocs.open($0) }
     /// Read receipts (om-receipts): viewed-latest sends + own Seen state.
     @ObservedObject var receipts: ReceiptStore = ReceiptStore()
+    /// Preview-row tap (om-linkpreview passthrough).
+    var onOpenLink: (URL) -> Void = { LinkPreviewOpen.default($0) }
     @StateObject private var scroll = ChatScrollModel()
 
     var body: some View {
@@ -77,7 +79,8 @@ struct ChatTimelineView: View {
                                         receipts.isOwnRead(
                                             chatID: $0, messageID: msg.id,
                                             messages: store.messages)
-                                    } ?? false
+                                    } ?? false,
+                                    onOpenLink: onOpenLink
                                 )
                                 .id(msg.id)
                                 .onAppear { scroll.visibleIDs.insert(msg.id) }

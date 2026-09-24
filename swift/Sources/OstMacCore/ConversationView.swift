@@ -1,4 +1,4 @@
-// ConversationView.swift — om-conv/om-convrich/om-shared/om-notes/om-cmdk/om-catchup/om-reactions/om-msgactions/om-replies/om-history/om-scroll/om-botposts/om-editdel/om-react-polish/om-catchup-sheet-dismiss: SwiftUI chat window.
+// ConversationView.swift — om-conv/om-convrich/om-shared/om-notes/om-cmdk/om-catchup/om-reactions/om-msgactions/om-replies/om-history/om-scroll/om-botposts/om-editdel/om-react-polish/om-catchup-sheet-dismiss/om-linkpreview: SwiftUI chat window.
 // Rich bubbles (mentions, code spans, links), day separators, scroll-up
 // load-more paging, edited markers, failed-send retry, Shared files + Notes tabs,
 // GIF picker + thread catch-up + reaction picker/counts + copy/forward/save bubble menu,
@@ -42,6 +42,8 @@ public struct ConversationView: View {
     @State private var shotSeeded = false
     private let editOpen: Bool
     private let deleteOpen: Bool
+    /// Preview-row tap (om-linkpreview passthrough to the timeline).
+    private let onOpenLink: (URL) -> Void
 
     /// - catchUpOpen: open the catch-up sheet at launch (the
     ///   --show-catchup shot hook only).
@@ -56,7 +58,8 @@ public struct ConversationView: View {
         receipts: ReceiptStore = ReceiptStore(),
         isGroup: Bool = true, initialTab: Int = 0, catchUpOpen: Bool = false,
         onForward: @escaping (ChatMessage) -> Void = { _ in },
-        editOpen: Bool = false, deleteOpen: Bool = false
+        editOpen: Bool = false, deleteOpen: Bool = false,
+        onOpenLink: @escaping (URL) -> Void = { LinkPreviewOpen.default($0) }
     ) {
         self.store = store
         self.presence = presence
@@ -72,6 +75,7 @@ public struct ConversationView: View {
         _showCatchUp = State(initialValue: catchUpOpen)
         self.editOpen = editOpen
         self.deleteOpen = deleteOpen
+        self.onOpenLink = onOpenLink
     }
 
     public var body: some View {
@@ -105,7 +109,8 @@ public struct ConversationView: View {
                     onEdit: beginEdit, onDelete: beginDelete,
                     sharedFiles: shared.chatID == store.chatID ? shared.files : [],
                     onOpenDoc: { _ = shared.open($0.file) },
-                    receipts: receipts)
+                    receipts: receipts,
+                    onOpenLink: onOpenLink)
                     .id("chat-\(store.chatID ?? "-")")
                 DietSeamH()
                 sendBox
@@ -478,6 +483,10 @@ struct MessageBubble: View {
     /// Own-message read state (om-receipts): some peer frontier sits at
     /// or past this bubble. Own bubbles only; others ignore it.
     var isRead: Bool = false
+    /// Preview-row tap (om-linkpreview): opens the cleaned https URL.
+    /// Injected so tests never touch the browser; default is guarded
+    /// (https-only, NSWorkspace).
+    var onOpenLink: (URL) -> Void = { LinkPreviewOpen.default($0) }
 
     var body: some View {
         HStack(spacing: DietSpace.xs) {
@@ -532,6 +541,17 @@ struct MessageBubble: View {
                     }
                     if !docs.isEmpty {
                         InlineDocRows(docs: docs, onOpen: onOpenDoc)
+                    }
+                    // First-URL unfurl (om-linkpreview): one title row under
+                    // the text. Suppressed for bot-post bubbles (their rows
+                    // already carry titles) and text-less bubbles (card JSON
+                    // URLs are payload noise, never user links). Any fetch
+                    // failure collapses to nothing — the inline link stays.
+                    let linkCandidate = (posts.isEmpty && !rendered.isEmpty)
+                        ? LinkPreviewParse.firstCandidate(content: rendered, raw: message.raw)
+                        : nil
+                    if let linkCandidate {
+                        LinkPreviewSlot(urlString: linkCandidate, onOpen: onOpenLink)
                     }
                     if MessageRender.showsPlaceholder(for: message), docs.isEmpty {
                         Text("Bot post unavailable")
