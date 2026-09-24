@@ -147,22 +147,37 @@ public struct ChatsResponse: Decodable, Sendable {
 // MARK: - Teams (om-teams lane)
 
 /// One channel inside a team. Wire format from core `ostmac_teams`:
-/// `{"id","name"}`. The id opens as a conversation through the same
-/// messages/send path as chat ids (ost TUI parity).
+/// `{"id","name","description?","membership_type?","web_url?"}`.
+/// The id opens as a conversation through the same messages/send path
+/// as chat ids (ost TUI parity). Detail fields are nil on pre-H1
+/// payloads and when Graph omits them.
 public struct TeamChannel: Decodable, Sendable, Identifiable {
     public var id: String { channelId }
     public let channelId: String
     public let name: String
+    public let description: String?
+    public let membershipType: String?
+    public let webUrl: String?
 
     enum CodingKeys: String, CodingKey {
         case channelId = "id"
-        case name
+        case name, description
+        case membershipType = "membership_type"
+        case webUrl = "web_url"
     }
 
     /// Host-side construction (demo data, previews). Wire decoding is untouched.
-    public init(channelId: String, name: String) {
+    public init(
+        channelId: String, name: String,
+        description: String? = nil,
+        membershipType: String? = nil,
+        webUrl: String? = nil
+    ) {
         self.channelId = channelId
         self.name = name
+        self.description = description
+        self.membershipType = membershipType
+        self.webUrl = webUrl
     }
 }
 

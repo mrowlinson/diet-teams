@@ -39,6 +39,33 @@ final class TeamsTests: XCTestCase {
             try decodeOrThrow(TeamsResponse.self, from: Data(json.utf8)))
     }
 
+    // MARK: - Channel detail (om-h1-listdetail)
+
+    func testDecodeChannelDetail() {
+        let json = """
+            {"ok":true,"teams":[\
+            {"id":"team-1","name":"Engineering","channels":[\
+            {"id":"19:general@thread.tacv2","name":"General",\
+            "description":"Team-wide announcements",\
+            "membership_type":"standard",\
+            "web_url":"https://teams.cloud.microsoft/l/channel/abc"}]}]}
+            """
+        let response = try! decodeOrThrow(TeamsResponse.self, from: Data(json.utf8))
+        let ch = response.teams[0].channels[0]
+        XCTAssertEqual(ch.description, "Team-wide announcements")
+        XCTAssertEqual(ch.membershipType, "standard")
+        XCTAssertEqual(ch.webUrl, "https://teams.cloud.microsoft/l/channel/abc")
+    }
+
+    func testDecodeLegacyChannelWithoutDetail() {
+        // Pre-H1 wire shape (id+name only) still decodes; detail is nil.
+        let response = Self.teamsJSON()
+        let ch = response.teams[0].channels[0]
+        XCTAssertNil(ch.description)
+        XCTAssertNil(ch.membershipType)
+        XCTAssertNil(ch.webUrl)
+    }
+
     // MARK: - ViewModel states
 
     func testLoadPopulatesTeams() async {
