@@ -448,3 +448,36 @@ Minor (stacked: merge after the noted base; only the PR's top commit is new):
   https://github.com/eisbaw/ost/pull/22
 Major (need maintainer buy-in):
 - (q) [major] calendar (ledger 24): https://github.com/eisbaw/ost/pull/21
+
+## Upstream PRs, wave 4 (2026-09-24, base 0892144; origin/main still 0892144)
+
+Minor (stacked: merge after the noted base; only the PR's top commit is new):
+- (s) channel list detail (ledger 28): https://github.com/eisbaw/ost/pull/23
+- (t) channel tabs (ledger 31, after #23):
+  https://github.com/eisbaw/ost/pull/24
+- (u) file folders (ledger 33, after #11 + #18 — extends `api::files`):
+  https://github.com/eisbaw/ost/pull/25
+- (v) file share links (ledger 34, after #25):
+  https://github.com/eisbaw/ost/pull/26
+- (w) file versions (ledger 35, after #26):
+  https://github.com/eisbaw/ost/pull/27
+- (x) file manage (ledger 36, after #27; carries `graph_patch` +
+  `graph_delete` — `graph_patch` duplicates #12's helper, keep one copy):
+  https://github.com/eisbaw/ost/pull/28
+- (y) shared reqwest pool (ledger 38):
+  https://github.com/eisbaw/ost/pull/29
+- (z) config cache + blocking event wait (ledger 39, after #10 — extends
+  `event_hub`): https://github.com/eisbaw/ost/pull/30
+Held (need signed-in live runs before upstreaming):
+- ledger 17 reactions (wire shape NOT live-verified — confirm with `react`
+  against a signed-in box; held since wave 2).
+- ledger 27 leave chat (NOT live-verified — confirm `leave` succeeds
+  against a signed-in box).
+- ledger 29 join team (H2: no live run — POST /teams/{id}/members
+  unconfirmed against the server).
+- ledger 30 channel create (H3: NOT verified live — confirm channel
+  creation + 403 surfacing against a signed-in box).
+- ledger 32 team members (H5: NOT verified live — confirm list/add/
+  remove against a signed-in box).
+- ledger 37 [major] resumable uploads (I4: NOT live-verified — no test
+  chat; session wire shape per Graph docs only).
