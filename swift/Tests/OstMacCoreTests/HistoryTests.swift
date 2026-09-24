@@ -1,4 +1,4 @@
-// HistoryTests.swift — om-history: 24h window + day-chunk helpers,
+// HistoryTests.swift — om-history: window + day-chunk helpers,
 // retry/error seams, demo history thread.
 import XCTest
 
@@ -30,7 +30,8 @@ final class HistoryTests: XCTestCase {
         XCTAssertNil(ConversationStore.messageDate("t")) // unit-test shorthand
     }
 
-    // MARK: - 24h window coverage
+    // MARK: - Window coverage (explicit-hours shape; the default
+    // window value is pinned by ChannelHistoryTests)
 
     private func msg(_ ts: String) -> ChatMessage {
         ChatMessage(id: "m", sender: "A", timestamp: ts, content: "x")
@@ -39,15 +40,18 @@ final class HistoryTests: XCTestCase {
     func testWindowCovered() {
         let now = ConversationStore.messageDate("2026-09-23T12:00:00Z")!
         // Recent oldest: keep paging.
-        XCTAssertFalse(ConversationStore.windowCovered([msg("2026-09-23T11:00:00Z")], now: now))
-        // Oldest past 24h: covered.
-        XCTAssertTrue(ConversationStore.windowCovered([msg("2026-09-22T11:59:00Z")], now: now))
+        XCTAssertFalse(ConversationStore.windowCovered(
+            [msg("2026-09-23T11:00:00Z")], now: now, hours: 24))
+        // Oldest past the window: covered.
+        XCTAssertTrue(ConversationStore.windowCovered(
+            [msg("2026-09-22T11:59:00Z")], now: now, hours: 24))
         // Exactly on the edge counts as covered.
-        XCTAssertTrue(ConversationStore.windowCovered([msg("2026-09-22T12:00:00Z")], now: now))
+        XCTAssertTrue(ConversationStore.windowCovered(
+            [msg("2026-09-22T12:00:00Z")], now: now, hours: 24))
         // Empty pages cover nothing: keep paging.
-        XCTAssertFalse(ConversationStore.windowCovered([], now: now))
+        XCTAssertFalse(ConversationStore.windowCovered([], now: now, hours: 24))
         // Unparseable stamps stop the window (never spin on garbage).
-        XCTAssertTrue(ConversationStore.windowCovered([msg("t")], now: now))
+        XCTAssertTrue(ConversationStore.windowCovered([msg("t")], now: now, hours: 24))
     }
 
     // MARK: - Day-chunk crossing

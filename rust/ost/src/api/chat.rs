@@ -1203,14 +1203,7 @@ pub async fn read_messages_page(
     let mut result = Vec::new();
     for msg in &msgs {
         let msgtype = msg.messagetype.as_deref().unwrap_or("");
-        // Skip non-text messages (e.g. ThreadActivity/*)
-        if !msgtype.contains("Text") && !msgtype.contains("RichText") {
-            continue;
-        }
-        // OstMac om-conv: skip media payloads. RichText/Media_CallRecording
-        // strips to "TitlePlay" fragments and RichText/Media_CallTranscript
-        // to raw JSON; neither is a readable bubble (see task-0011).
-        if msgtype.contains("Media_") {
+        if !message_type_kept(msgtype) {
             continue;
         }
 
@@ -1263,6 +1256,25 @@ pub async fn read_messages_page(
         messages: result,
         backward_link,
     })
+}
+
+/// Type gate for history messages (pure so tests pin it).
+///
+/// Keeps Text/RichText, including RichText/Media_Card: bot/card posts
+/// (RSS, roadmap, connector cards) strip to their readable summary
+/// text, and whole channels carry nothing else — dropping them renders
+/// long channels blank (H0: 100 raw Media_Card → 0 kept). Still drops
+/// RichText/Media_CallRecording (strips to "TitlePlay" fragments) and
+/// RichText/Media_CallTranscript (strips to raw JSON), which are not
+/// readable bubbles (see task-0011), plus all ThreadActivity/* noise.
+fn message_type_kept(messagetype: &str) -> bool {
+    if !messagetype.contains("Text") && !messagetype.contains("RichText") {
+        return false;
+    }
+    if messagetype.contains("Media_") && !messagetype.contains("Media_Card") {
+        return false;
+    }
+    true
 }
 
 /// True when raw content carries an RSS/bot/card payload: an
@@ -1330,6 +1342,24 @@ mod tests {
             leave_member_url("https://h", "19:t@thread.v2", "8:orgid:abc-123"),
             "https://h/v1/threads/19:t@thread.v2/members/8:orgid:abc-123"
         );
+    }
+
+    #[test]
+    fn message_type_gate_keeps_cards_drops_noise() {
+        // Plain + rich text always kept.
+        assert!(message_type_kept("Text"));
+        assert!(message_type_kept("RichText/Html"));
+        // Cards kept: whole bot channels carry nothing else.
+        assert!(message_type_kept("RichText/Media_Card"));
+        // Call media still dropped (unreadable strips, task-0011).
+        assert!(!message_type_kept("RichText/Media_CallRecording"));
+        assert!(!message_type_kept("RichText/Media_CallTranscript"));
+        // Unknown Media_* stays dropped (unprobed shapes).
+        assert!(!message_type_kept("RichText/Media_Poll"));
+        // ThreadActivity noise dropped; empty type dropped.
+        assert!(!message_type_kept("ThreadActivity/AddMember"));
+        assert!(!message_type_kept("ThreadActivity/DeleteMember"));
+        assert!(!message_type_kept(""));
     }
 
     #[test]

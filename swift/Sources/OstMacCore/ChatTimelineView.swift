@@ -286,6 +286,9 @@ struct ChatTimelineView: View {
         case .pill:
             break // the pill absorbs it (unseen derives from lastReadID)
         case .none:
+            // Open page-chain prepends skip the anchor hold (single land
+            // at chain end); scroll-up pages still hold first-visible.
+            guard ScrollPolicy.shouldAnchorPrepend(loading: store.loading) else { break }
             let anchor = scroll.firstVisibleID(in: store.messages)
                 ?? scroll.prePrependFirstID
             if let anchor {
@@ -295,12 +298,14 @@ struct ChatTimelineView: View {
         noteVisible()
     }
 
-    /// History just landed: restart the settle landing (guarded by
-    /// near-bottom so a reader who scrolled during load keeps place).
+    /// Open chain finished: always land on latest. The chain
+    /// prepends skipped their anchor holds, so without this the
+    /// viewport can sit parked mid-list on long threads; re-hug the
+    /// tail even when the sentinel never tripped during the load.
     private func handleLoadingChanged(_ proxy: ScrollViewProxy) {
-        if !store.loading, scroll.nearBottom {
+        if !store.loading {
             scroll.lastSeenID = store.messages.last?.id
-            scroll.lastReadID = store.messages.last?.id
+            scroll.jumpToLatest(tailID: store.messages.last?.id)
             settleToBottom(proxy)
             sendReadPositionIfViewingLatest()
         }

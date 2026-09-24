@@ -460,7 +460,7 @@ public enum DemoData {
     }
 
     /// History thread (om-history): a 3-day release-review conversation
-    /// (38 bubbles) exercising the 24h window + day separators at every
+    /// (38 bubbles) exercising the few-days window + day separators at every
     /// scroll state. Fully offline. Timestamps float off now so the
     /// separators always read <date>/Yesterday/Today.
     public static func historyMessages(now: Date = Date()) -> [ChatMessage] {
@@ -480,7 +480,7 @@ public enum DemoData {
             (-2, 9, 2, "Priya Nair", "Kicking off the release review thread — three days of notes live here.", false),
             (-2, 9, 5, "Tom Becker", "Agenda: window load, day paging, then the blank-state fixes.", false),
             (-2, 9, 9, "Priya Nair", "First up: opening a long thread should show the last day, not everything.", false),
-            (-2, 9, 14, "Me", "Agreed — a 24h window keeps the initial load fast.", true),
+            (-2, 9, 14, "Me", "Agreed — a few-days window keeps the initial load fast.", true),
             (-2, 9, 21, "Tom Becker", "And older days load lazily from the top of the scroll.", false),
             (-2, 10, 3, "Priya Nair", "What about threads that went quiet for a week?", false),
             (-2, 10, 11, "Me", "Then the newest page still shows — the window never blanks the view.", true),

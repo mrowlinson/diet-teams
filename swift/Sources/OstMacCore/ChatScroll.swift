@@ -70,6 +70,15 @@ public enum ScrollPolicy {
         now.timeIntervalSince(lastFire) >= cooldown
     }
 
+    /// Hold the first-visible row on a pure prepend? Never during
+    /// the open page-chain (each chained prepend would queue an anchor
+    /// scrollTo racing the rebuilds and park long threads mid-list);
+    /// the chain lands once at the end instead. Scroll-up paging
+    /// (loadMore) still anchors.
+    public static func shouldAnchorPrepend(loading: Bool) -> Bool {
+        !loading
+    }
+
     /// Absolute re-assert offsets (seconds after landing) while the
     /// reader stays near the bottom. Rows grow as images resolve, so
     /// one scroll lands short; these settle passes pin the true bottom.
