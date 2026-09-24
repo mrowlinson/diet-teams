@@ -2423,6 +2423,19 @@ pub fn trouter_poll_wait_json(timeout_ms: u64) -> String {
 /// NOTE: drains the same queue as [`trouter_poll_json`] — use one consumer.
 pub fn trouter_poll_typed_json() -> String {
     let events = ost::event_hub::drain(TROUTER_DRAIN_MAX);
+    typed_envelope(events)
+}
+
+/// Blocking variant of [`trouter_poll_typed_json`]: waits up to
+/// `timeout_ms` for the first event instead of returning empty
+/// immediately. Same envelope. `timeout_ms == 0` polls without waiting.
+pub fn trouter_poll_typed_wait_json(timeout_ms: u64) -> String {
+    let events = ost::event_hub::drain_wait(TROUTER_DRAIN_MAX, timeout_ms);
+    typed_envelope(events)
+}
+
+/// Build the typed realtime envelope for one drained batch.
+fn typed_envelope(events: Vec<String>) -> String {
     let backlog = ost::event_hub::len();
     let mut values = Vec::with_capacity(events.len());
     let mut unparseable = 0usize;
@@ -3188,6 +3201,14 @@ pub extern "C" fn ostmac_trouter_poll_wait(timeout_ms: u64) -> *mut c_char {
 #[no_mangle]
 pub extern "C" fn ostmac_trouter_poll_typed() -> *mut c_char {
     string_to_c(trouter_poll_typed_json())
+}
+
+/// Blocking typed poll: waits up to `timeout_ms` for events. Same
+/// envelope as [`trouter_poll_typed_json`]. Call off the main thread.
+/// Caller frees with [`ostmac_free`].
+#[no_mangle]
+pub extern "C" fn ostmac_trouter_poll_typed_wait(timeout_ms: u64) -> *mut c_char {
+    string_to_c(trouter_poll_typed_wait_json(timeout_ms))
 }
 
 /// Stop background Trouter. See [`trouter_stop`].
@@ -4273,6 +4294,26 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&trouter_poll_wait_json(0)).unwrap();
         assert_eq!(v["events"].as_array().unwrap().len(), 1);
         assert_eq!(v["backlog"].as_u64().unwrap(), 0);
+    }
+
+    #[test]
+    fn typed_poll_wait_zero_timeout_returns_envelope() {
+        let _hub = hub_test_guard();
+        let _ = ost::event_hub::drain(1024);
+        ost::event_hub::publish(
+            r#"{"content":"hi","messagetype":"Text","from":"8:x","threadId":"19:t@thread.v2","id":"1"}"#
+                .to_string(),
+        );
+        let v: serde_json::Value =
+            serde_json::from_str(&trouter_poll_typed_wait_json(0)).unwrap();
+        assert_eq!(v["ok"], true);
+        assert_eq!(v["messages"].as_array().unwrap().len(), 1);
+        assert_eq!(v["messages"][0]["id"], "1");
+        // Drained: second wait returns empty.
+        let v2: serde_json::Value =
+            serde_json::from_str(&trouter_poll_typed_wait_json(0)).unwrap();
+        assert_eq!(v2["messages"].as_array().unwrap().len(), 0);
+        assert_eq!(v2["resync"], false);
     }
 
     #[test]

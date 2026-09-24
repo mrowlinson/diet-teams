@@ -206,17 +206,24 @@ public final class RealtimeFeed: @unchecked Sendable {
     private var lastErrorValue: String?
 
     private let pollFn: @Sendable () throws -> RealtimePoll
+    private let pollWaitFn: @Sendable (UInt64) throws -> RealtimePoll
     private let startFn: @Sendable () -> Int32
     private let stopFn: @Sendable () -> Int32
     private let queue: DispatchQueue
     public var pollInterval: TimeInterval = 1.0
+    /// Blocking-wait timeout per wait iteration. The live loop sleeps in
+    /// the core instead of waking on `pollInterval`; the 1s timer stays as
+    /// the fallback when a wait throws.
+    public var pollWaitTimeoutMs: UInt64 = 25_000
 
     public init(
         poll: @escaping @Sendable () throws -> RealtimePoll = { try RustCore.trouterPollTyped() },
+        pollWait: @escaping @Sendable (UInt64) throws -> RealtimePoll = { try RustCore.trouterPollTypedWait(timeoutMs: $0) },
         start: @escaping @Sendable () -> Int32 = { RustCore.trouterStart() },
         stop: @escaping @Sendable () -> Int32 = { RustCore.trouterStop() }
     ) {
         self.pollFn = poll
+        self.pollWaitFn = pollWait
         self.startFn = start
         self.stopFn = stop
         self.queue = DispatchQueue(label: "RealtimeFeed", qos: .utility)
@@ -318,9 +325,10 @@ public final class RealtimeFeed: @unchecked Sendable {
             state = .live
             attempt = 0
             lock.unlock()
-            // Drain stale backlog without notifying, then go live.
+            // Drain stale backlog without notifying, then go live on the
+            // blocking-wait loop (1s timer stays as the wait-failure fallback).
             _ = try? pollDeduped(notify: false)
-            scheduleTimer(gen: gen)
+            scheduleWait(gen: gen)
             return
         }
         state = .retryWait
@@ -350,6 +358,39 @@ public final class RealtimeFeed: @unchecked Sendable {
         _ = try? pollOnce()
     }
 
+    /// One blocking-wait iteration: sleeps in the core until an event or
+    /// the timeout, dispatches, then chains the next wait. A wait failure
+    /// arms the 1s timer fallback (stays on the timer until restart).
+    /// `stop()` does not interrupt a blocked wait; the chain exits when
+    /// the wait returns (at most `pollWaitTimeoutMs` later).
+    private func scheduleWait(gen: Int) {
+        lock.lock()
+        timer?.cancel(); timer = nil
+        lock.unlock()
+        queue.async { [weak self] in self?.waitTick(gen: gen) }
+    }
+
+    private func waitTick(gen: Int) {
+        lock.lock()
+        guard gen == generation, state == .live else { lock.unlock(); return }
+        lock.unlock()
+        do {
+            let p = try pollWaitFn(pollWaitTimeoutMs)
+            lock.lock()
+            guard gen == generation, state == .live else { lock.unlock(); return }
+            lastErrorValue = nil
+            lock.unlock()
+            _ = dispatch(p, notify: true)
+            queue.async { [weak self] in self?.waitTick(gen: gen) }
+        } catch {
+            lock.lock()
+            let alive = (gen == generation && state == .live)
+            if alive { lastErrorValue = String(describing: error) }
+            lock.unlock()
+            if alive { scheduleTimer(gen: gen) }
+        }
+    }
+
     /// Single poll: dedupe + dispatch. Returns (new messages, resync).
     /// Public so the UI (and tests) can drive polling manually.
     @discardableResult
@@ -364,8 +405,25 @@ public final class RealtimeFeed: @unchecked Sendable {
         }
     }
 
+    /// Single blocking wait: sleeps up to `timeoutMs` (nil = the feed's
+    /// `pollWaitTimeoutMs`), then dedupes + dispatches like `pollOnce`.
+    @discardableResult
+    public func pollWaitOnce(timeoutMs: UInt64? = nil) throws -> (messages: Int, resync: Bool) {
+        do {
+            let r = dispatch(try pollWaitFn(timeoutMs ?? pollWaitTimeoutMs), notify: true)
+            lock.lock(); lastErrorValue = nil; lock.unlock()
+            return r
+        } catch {
+            lock.lock(); lastErrorValue = String(describing: error); lock.unlock()
+            throw error
+        }
+    }
+
     private func pollDeduped(notify: Bool) throws -> (messages: Int, resync: Bool) {
-        let p = try pollFn()
+        dispatch(try pollFn(), notify: notify)
+    }
+
+    private func dispatch(_ p: RealtimePoll, notify: Bool) -> (messages: Int, resync: Bool) {
         lock.lock(); pollCountValue += 1; lock.unlock()
         var fresh: [RealtimeMessage] = []
         lock.lock()
