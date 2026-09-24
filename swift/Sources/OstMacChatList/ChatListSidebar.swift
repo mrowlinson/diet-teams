@@ -19,6 +19,8 @@ public struct ChatListSidebar: View {
     @State private var pendingBlock: ChatItem?
     /// Last leave attempt (error-alert Retry re-runs it).
     @State private var lastLeaveID: String?
+    /// Reduce Motion (om-a1-motion): state + row changes land instantly.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     public init(
         model: ChatListViewModel, presence: PresenceStore = PresenceStore(),
@@ -67,8 +69,9 @@ public struct ChatListSidebar: View {
             }
         }
         // System-default crossfade between content states (the loaded
-        // list lands softly instead of popping). Standard SwiftUI only.
-        .animation(.default, value: model.state)
+        // list lands softly instead of popping; instant under Reduce
+        // Motion). Standard SwiftUI only.
+        .animation(DietMotion.gated(reduceMotion: reduceMotion), value: model.state)
         // Native leave confirmation (om-leave-block).
         .alert(
             "Leave “\(pendingLeave?.name ?? "this chat")”?",
@@ -240,8 +243,9 @@ public struct ChatListSidebar: View {
                 // System-default row animation for bubble-to-top moves,
                 // inserts, deletes, and filter changes. Keyed on row ids
                 // only, so in-place preview refreshes never shimmer the
-                // list. Standard SwiftUI only (no custom drivers).
-                .animation(.default, value: visible.map(\.id))
+                // list. Instant under Reduce Motion. Standard SwiftUI
+                // only (no custom drivers).
+                .animation(DietMotion.gated(reduceMotion: reduceMotion), value: visible.map(\.id))
             }
         }
     }
