@@ -127,6 +127,14 @@ pub struct LiveStats {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     pub started_at: u64,
+    /// True while the mic is muted (send loop emits silence; sticky).
+    pub muted: bool,
+    /// Effective speaker route: named device, or None = system default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub speaker: Option<String>,
+    /// Last speaker-reroute failure (cleared by the next success).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub speaker_error: Option<String>,
 }
 
 fn engine_stats() -> &'static Mutex<LiveStats> {
@@ -216,6 +224,9 @@ pub fn call_media_json() -> String {
     s.recv_pending = lock(recv_queue()).len();
     s.send_dropped = SEND_DROPPED.load(Ordering::Relaxed);
     s.recv_dropped = RECV_DROPPED.load(Ordering::Relaxed);
+    s.muted = muted();
+    s.speaker = lock(effective_speaker()).clone();
+    s.speaker_error = lock(speaker_error_slot()).clone();
     serde_json::json!({"ok": true, "media": s}).to_string()
 }
 
@@ -397,6 +408,147 @@ pub fn call_media_stop_json() -> String {
     serde_json::json!({"ok": true, "media": s}).to_string()
 }
 
+// ---------------------------------------------------------------------------
+// In-call controls (om-call-ux): mute + speaker select
+// ---------------------------------------------------------------------------
+
+/// Process-wide mic mute. Read by the audio send loop (emits digital
+/// silence while set); sticky across engine restarts so the window toggle
+/// survives reconnects. No hardware touched — safe headless.
+static MUTED: AtomicBool = AtomicBool::new(false);
+
+/// Requested speaker (`None` = system default). Read once at engine start;
+/// mid-call changes arrive via [`speaker_request`] and are applied by the
+/// audio recv task without stalling it.
+fn preferred_speaker() -> &'static Mutex<Option<String>> {
+    static S: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+    S.get_or_init(|| Mutex::new(None))
+}
+
+/// Pending mid-call reroute (`None` = no request). `Some(None)` = back to
+/// the system default.
+fn speaker_request() -> &'static Mutex<Option<Option<String>>> {
+    static S: OnceLock<Mutex<Option<Option<String>>>> = OnceLock::new();
+    S.get_or_init(|| Mutex::new(None))
+}
+
+/// Effective route (`None` = system default or no device). Written by the
+/// engine only; surfaced in stats so the UI can confirm a switch.
+fn effective_speaker() -> &'static Mutex<Option<String>> {
+    static S: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+    S.get_or_init(|| Mutex::new(None))
+}
+
+fn speaker_error_slot() -> &'static Mutex<Option<String>> {
+    static S: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+    S.get_or_init(|| Mutex::new(None))
+}
+
+pub fn muted() -> bool {
+    MUTED.load(Ordering::Relaxed)
+}
+
+/// Set mic mute. `{ok:true, muted}`. Applies to the live engine when one
+/// runs; otherwise stored and honored by the next call.
+pub fn call_mute_json(muted: bool) -> String {
+    MUTED.store(muted, Ordering::Relaxed);
+    serde_json::json!({"ok": true, "muted": muted}).to_string()
+}
+
+/// Request a speaker route (`None`/empty = system default).
+/// `{ok:true, speaker}`. Stored always (the next engine start honors it);
+/// when an engine runs, a reroute is queued and the audio task applies it
+/// without dropping the current device on failure.
+pub fn call_speaker_json(name: Option<&str>) -> String {
+    let want = name
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    *lock(preferred_speaker()) = want.clone();
+    if engine_running() {
+        *lock(speaker_request()) = Some(want.clone());
+    }
+    serde_json::json!({"ok": true, "speaker": want}).to_string()
+}
+
+fn take_speaker_request() -> Option<Option<String>> {
+    lock(speaker_request()).take()
+}
+
+/// Open the requested output, falling back to the system default.
+/// Returns (guard, tx, effective-name-or-None-for-default).
+fn open_speaker(
+    want: Option<&str>,
+) -> (
+    Option<ost::calling::audio::AudioPlayback>,
+    Option<std::sync::mpsc::SyncSender<Vec<i16>>>,
+    Option<String>,
+) {
+    if let Some(name) = want {
+        if let Some((pb, tx)) = ost::calling::audio::AudioPlayback::start_on(Some(name)) {
+            return (Some(pb), Some(tx), Some(name.to_string()));
+        }
+    }
+    match ost::calling::audio::AudioPlayback::start() {
+        Some((pb, tx)) => (Some(pb), Some(tx), None),
+        None => (None, None, None),
+    }
+}
+
+/// Finished background device open: the request plus the new route (None
+/// = the device would not open; the old route stays).
+type SpeakerOpen = (
+    Option<String>,
+    Option<(
+        ost::calling::audio::AudioPlayback,
+        std::sync::mpsc::SyncSender<Vec<i16>>,
+    )>,
+);
+
+/// One non-blocking step of the mid-call speaker reroute (runs each audio
+/// recv iteration): start a blocking-pool open for a pending request, then
+/// collect a finished open — swap on success, keep the old device and
+/// record `speaker_error` on failure.
+fn pump_speaker(
+    opening: &mut Option<tokio::sync::oneshot::Receiver<SpeakerOpen>>,
+    playback: &mut Option<ost::calling::audio::AudioPlayback>,
+    tx: &mut Option<std::sync::mpsc::SyncSender<Vec<i16>>>,
+) {
+    if opening.is_none() {
+        if let Some(want) = take_speaker_request() {
+            let (os_tx, os_rx) = tokio::sync::oneshot::channel::<SpeakerOpen>();
+            *opening = Some(os_rx);
+            tokio::task::spawn_blocking(move || {
+                let opened = match want.as_deref() {
+                    Some(name) => ost::calling::audio::AudioPlayback::start_on(Some(name)),
+                    None => ost::calling::audio::AudioPlayback::start(),
+                };
+                let _ = os_tx.send((want, opened));
+            });
+        }
+    }
+    if let Some(rx) = opening.as_mut() {
+        if let Ok((want, opened)) = rx.try_recv() {
+            *opening = None;
+            match opened {
+                Some((pb, new_tx)) => {
+                    *playback = Some(pb);
+                    *tx = Some(new_tx);
+                    *lock(effective_speaker()) = want;
+                    *lock(speaker_error_slot()) = None;
+                }
+                None => {
+                    let label = want.clone().unwrap_or_else(|| "(default)".to_string());
+                    *lock(speaker_error_slot()) = Some(format!(
+                        "cannot open speaker {}; keeping current route",
+                        label
+                    ));
+                }
+            }
+        }
+    }
+}
+
 fn stat_add(f: impl FnOnce(&mut LiveStats)) {
     f(&mut lock(engine_stats()));
 }
@@ -518,15 +670,26 @@ async fn drive_inner(p: EngineParams, shutdown: std::sync::Arc<AtomicBool>) -> R
         None
     };
 
-    // Audio devices (cpal; tone fallback when no mic).
+    // Audio devices (cpal; tone fallback when no mic). The in-call
+    // window's requested speaker wins; unknown names fall back to the
+    // system default and stats carry the reason.
     let (_capture, mic_rx) = ost::calling::audio::AudioCapture::start()
         .map(|(c, rx)| (Some(c), Some(rx)))
         .unwrap_or((None, None));
-    let (_playback, speaker_tx) = ost::calling::audio::AudioPlayback::start()
-        .map(|(pb, tx)| (Some(pb), Some(tx)))
-        .unwrap_or((None, None));
-    // Keep device guards alive for the whole drive.
-    let _devices = (_capture, _playback);
+    let want = lock(preferred_speaker()).clone();
+    let (_playback, speaker_tx, effective) = open_speaker(want.as_deref());
+    *lock(effective_speaker()) = effective;
+    if want.is_some() && lock(effective_speaker()).is_none() && speaker_tx.is_some() {
+        *lock(speaker_error_slot()) = Some(format!(
+            "unknown speaker {:?}; using system default",
+            want.unwrap_or_default()
+        ));
+    } else {
+        *lock(speaker_error_slot()) = None;
+    }
+    // The mic guard lives for the whole drive; the playback guard moves
+    // into the audio recv task so mid-call reroutes can swap it.
+    let _mic_guard = _capture;
 
     let send_stats = std::sync::Arc::new(AMutex::new(rtcp::RtpSendStats::default()));
     let recv_stats = std::sync::Arc::new(AMutex::new(rtcp::RtpRecvStats::default()));
@@ -557,9 +720,15 @@ async fn drive_inner(p: EngineParams, shutdown: std::sync::Arc<AtomicBool>) -> R
             let mut interval = tokio::time::interval(Duration::from_millis(20));
             while !flag.load(Ordering::Relaxed) {
                 interval.tick().await;
-                let samples = match mic_rx.as_ref().and_then(|rx| rx.try_recv().ok()) {
-                    Some(s) if s.len() == rtp::SAMPLES_PER_PACKET => s,
-                    _ => tone.next_frame(),
+                // Muted calls emit digital silence (μ-law 0xFF after the
+                // linear map below) — the peer hears nothing, timing stays.
+                let samples = if muted() {
+                    vec![0i16; rtp::SAMPLES_PER_PACKET]
+                } else {
+                    match mic_rx.as_ref().and_then(|rx| rx.try_recv().ok()) {
+                        Some(s) if s.len() == rtp::SAMPLES_PER_PACKET => s,
+                        _ => tone.next_frame(),
+                    }
                 };
                 let payload: Vec<u8> =
                     samples.iter().map(|&s| rtp::linear_to_ulaw(s)).collect();
@@ -585,6 +754,8 @@ async fn drive_inner(p: EngineParams, shutdown: std::sync::Arc<AtomicBool>) -> R
     }
 
     // -- audio recv (STUN/SRTCP/RTP; speaker + echo record) --
+    // Owns the playback guard so the in-call speaker picker can reroute
+    // mid-call (see pump_speaker: background open, swap on success).
     {
         let socket = audio_sock.clone();
         let ctx = audio_ctx.clone();
@@ -594,9 +765,13 @@ async fn drive_inner(p: EngineParams, shutdown: std::sync::Arc<AtomicBool>) -> R
         let dyn_remote = dyn_remote.clone();
         let local_pwd = p.local_audio_pwd.clone();
         let flag = shutdown.clone();
+        let mut _playback = _playback;
+        let mut speaker_tx = speaker_tx;
         tasks.push(tokio::spawn(async move {
             let mut buf = [0u8; 2048];
+            let mut opening: Option<tokio::sync::oneshot::Receiver<SpeakerOpen>> = None;
             while !flag.load(Ordering::Relaxed) {
+                pump_speaker(&mut opening, &mut _playback, &mut speaker_tx);
                 let got = tokio::time::timeout(
                     Duration::from_millis(500),
                     socket.recv_from(&mut buf),
@@ -919,6 +1094,21 @@ pub extern "C" fn ostmac_live_loopback() -> *mut std::os::raw::c_char {
     string_to_c(live_loopback_json())
 }
 
+#[no_mangle]
+pub extern "C" fn ostmac_call_mute(muted: std::os::raw::c_int) -> *mut std::os::raw::c_char {
+    string_to_c(call_mute_json(muted != 0))
+}
+
+#[no_mangle]
+pub extern "C" fn ostmac_call_speaker(
+    name: *const std::os::raw::c_char,
+) -> *mut std::os::raw::c_char {
+    match crate::opt_cstr_to_string(name) {
+        Ok(n) => string_to_c(call_speaker_json(n.as_deref())),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests (deterministic: no network/auth/hardware; queues drained per test)
 // ---------------------------------------------------------------------------
@@ -1068,6 +1258,92 @@ mod tests {
         assert_eq!(v["media"]["running"], false);
         assert!(v["media"]["audio_sent"].is_number());
         assert!(v["media"]["video_recv"].is_number());
+        assert!(v["media"]["muted"].is_boolean()); // race-safe: value is sticky
+    }
+
+    #[test]
+    fn mute_roundtrips_without_hardware() {
+        let _t = test_lock();
+        let _c = crate::calls::test_lock();
+        let was = muted();
+        let v: serde_json::Value = serde_json::from_str(&call_mute_json(true)).unwrap();
+        assert_eq!(v, serde_json::json!({"ok": true, "muted": true}));
+        assert!(muted());
+        let v: serde_json::Value = serde_json::from_str(&call_mute_json(false)).unwrap();
+        assert_eq!(v["muted"], false);
+        assert!(!muted());
+        // Stats mirror the flag with no engine running.
+        let v: serde_json::Value = serde_json::from_str(&call_media_json()).unwrap();
+        assert_eq!(v["media"]["muted"], false);
+        call_mute_json(was); // restore (sticky across tests)
+    }
+
+    #[test]
+    fn mute_frame_is_ulaw_silence() {
+        // The muted send path emits zeros; μ-law 0 maps to 0xFF silence.
+        assert_eq!(ost::calling::rtp::linear_to_ulaw(0), 0xFF);
+    }
+
+    #[test]
+    fn speaker_select_stores_and_reports() {
+        let _t = test_lock();
+        let _c = crate::calls::test_lock();
+        assert!(!engine_running()); // idle: stored only, no reroute queued
+        let v: serde_json::Value =
+            serde_json::from_str(&call_speaker_json(Some("External Headphones"))).unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({"ok": true, "speaker": "External Headphones"})
+        );
+        assert!(take_speaker_request().is_none()); // idle engines take none
+        assert_eq!(
+            *lock(preferred_speaker()),
+            Some("External Headphones".to_string())
+        );
+        // Empty/blank resets to the system default.
+        let v: serde_json::Value = serde_json::from_str(&call_speaker_json(Some("  "))).unwrap();
+        assert!(v["speaker"].is_null());
+        assert_eq!(*lock(preferred_speaker()), None);
+        let v: serde_json::Value = serde_json::from_str(&call_speaker_json(None)).unwrap();
+        assert!(v["speaker"].is_null());
+    }
+
+    #[test]
+    fn ffi_mute_speaker_shapes() {
+        use std::os::raw::c_char;
+        let _t = test_lock();
+        let _c = crate::calls::test_lock();
+        unsafe {
+            let p = ostmac_call_mute(1);
+            let s = std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned();
+            crate::ostmac_free(p);
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&s).unwrap()["muted"],
+                true
+            );
+            let p = ostmac_call_mute(0);
+            let s = std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned();
+            crate::ostmac_free(p);
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&s).unwrap()["muted"],
+                false
+            );
+            // NULL = system default.
+            let p = ostmac_call_speaker(std::ptr::null());
+            let s = std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned();
+            crate::ostmac_free(p);
+            assert!(serde_json::from_str::<serde_json::Value>(&s).unwrap()["speaker"].is_null());
+            let name = CString::new("Built-in Output").unwrap();
+            let p = ostmac_call_speaker(name.as_ptr() as *const c_char);
+            let s = std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned();
+            crate::ostmac_free(p);
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&s).unwrap()["speaker"],
+                "Built-in Output"
+            );
+        }
+        call_speaker_json(None); // restore default
+        call_mute_json(false);
     }
 
     #[test]

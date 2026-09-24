@@ -209,6 +209,16 @@ char *ostmac_call_media(void);
 // Stop the live media engine: {ok, media}. Caller frees.
 char *ostmac_call_media_stop(void);
 
+// Mute/unmute the live call mic (nonzero = muted), sticky across calls:
+// {ok, muted}. Stored when idle, honored by the next call. Caller frees.
+// No network.
+char *ostmac_call_mute(int muted);
+
+// Select the call speaker route (NULL/"" = system default): {ok, speaker}.
+// Stored always; reroutes a live call without dropping the current device
+// on failure. Caller frees. No network.
+char *ostmac_call_speaker(const char *name);
+
 // Push one send-side access unit: JSON array of base64 NALs (no start
 // codes). Over-cap pushes drop the oldest unit. Returns {ok, queued}.
 // Caller frees.
