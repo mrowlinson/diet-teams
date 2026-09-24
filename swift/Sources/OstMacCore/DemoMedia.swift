@@ -10,11 +10,16 @@ import UniformTypeIdentifiers
 public enum DemoMedia {
     public static let photo1 = "demo://photo-1"
     public static let photo2 = "demo://photo-2"
+    /// Full-res viewer variants (om-imgfull): same scene at 2×.
+    public static let photo1Full = "demo://photo-1-full"
+    public static let photo2Full = "demo://photo-2-full"
 
     public static func data(for url: String) throws -> Data {
         switch url {
         case photo1: return render(seed: 1)
         case photo2: return render(seed: 2)
+        case photo1Full: return render(seed: 1, width: 960, height: 640)
+        case photo2Full: return render(seed: 2, width: 960, height: 640)
         default: throw MediaFetchError.failed("unknown demo media: \(url)")
         }
     }

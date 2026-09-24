@@ -115,7 +115,9 @@ public struct RemoteImage: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel(alt.isEmpty ? "Image" : alt)
                     .sheet(isPresented: $expanded) {
-                        ZoomedImage(image: img, alt: alt)
+                        ZoomedImage(
+                            thumb: img, url: model.url,
+                            messageID: model.messageID, alt: alt)
                     }
                 }
             case let .failed(err):
@@ -141,47 +143,109 @@ public struct RemoteImage: View {
     }
 }
 
-/// Tap-to-expand viewer: resizable window (remembers its size for the
-/// session), magnification slider pinned at the bottom (25%…400%, fit-width
-/// default), live zoom with trackpad-scroll and drag panning via an
-/// NSScrollView host. Open/close behavior is unchanged: it opens as a sheet
-/// from the bubble image and closes via Close or Esc.
+/// Tap-to-expand viewer: fetches FULL-RES on open (om-imgfull), the
+/// bubble thumbnail stays on screen behind loading and failure states.
+/// Resizable window (remembers its size for the session), magnification
+/// slider pinned at the bottom (25%…400%, fit-width default), live zoom
+/// with trackpad-scroll and drag panning via an NSScrollView host.
+/// Open/close behavior is unchanged: it opens as a sheet from the bubble
+/// image and closes via Close or Esc.
 struct ZoomedImage: View {
-    let image: NSImage
+    @StateObject private var full: FullResImageModel
     let alt: String
     @Environment(\.dismiss) private var dismiss
     @State private var scale: Double
     @State private var viewportWidth: CGFloat = 0
     @State private var didFit = false
+    @State private var userTouchedZoom = false
     @State private var fixedSize: CGSize? = ImageViewerSession.lastSize
 
-    init(image: NSImage, alt: String) {
-        self.image = image
+    init(thumb: NSImage, url: String, messageID: String, alt: String) {
+        _full = StateObject(wrappedValue: FullResImageModel(
+            thumbURL: url, messageID: messageID, thumb: thumb))
         self.alt = alt
         // First guess before layout runs; fitOnce refines it to the real
         // viewport on appear.
         _scale = State(wrappedValue: ImageZoom.fitWidthScale(
-            imageWidth: image.size.width,
+            imageWidth: thumb.size.width,
             viewportWidth: ImageViewerSession.initialSize().width))
     }
+
+    /// Full-res bytes when loaded, else the thumbnail (never blank).
+    private var display: NSImage? { full.image ?? full.thumb }
 
     var body: some View {
         VStack(spacing: 0) {
             GeometryReader { geo in
-                ZoomScrollView(image: image, scale: scale)
-                    .onAppear {
-                        viewportWidth = geo.size.width
-                        fitOnce(viewportWidth: geo.size.width)
+                ZStack {
+                    if let display {
+                        ZoomScrollView(image: display, scale: scale)
+                            .onAppear {
+                                viewportWidth = geo.size.width
+                                fitOnce(viewportWidth: geo.size.width)
+                            }
+                            .onChange(of: geo.size) { _, newSize in
+                                viewportWidth = newSize.width
+                                fitOnce(viewportWidth: newSize.width)
+                            }
+                    } else {
+                        ProgressView("Loading full resolution…")
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
-                    .onChange(of: geo.size) { _, newSize in
-                        viewportWidth = newSize.width
-                        fitOnce(viewportWidth: newSize.width)
+                    if full.phase == .loading, display != nil {
+                        VStack {
+                            HStack(spacing: 6) {
+                                ProgressView()
+                                    .controlSize(.small)
+                                Text("Loading full resolution…")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(.thickMaterial)
+                            .clipShape(Capsule())
+                            Spacer()
+                        }
+                        .padding(8)
                     }
+                }
+                .onChange(of: full.phase) { _, new in
+                    // Full bytes swapped the display size: refit unless the
+                    // user already chose a zoom (a pending first layout
+                    // fits the full image itself).
+                    if new == .loaded, didFit, !userTouchedZoom,
+                       let img = full.image, viewportWidth > 0
+                    {
+                        scale = ImageZoom.fitWidthScale(
+                            imageWidth: img.size.width,
+                            viewportWidth: viewportWidth)
+                    }
+                }
+            }
+            if case let .failed(err) = full.phase {
+                HStack(spacing: 6) {
+                    Image(systemName: "photo.badge.exclamationmark")
+                        .foregroundStyle(.secondary)
+                    Text("Full resolution unavailable — showing preview")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    Button("Retry") { Task { await full.reload() } }
+                        .font(.caption)
+                        .buttonStyle(.link)
+                }
+                .padding(8)
+                .help(err)
+                Divider()
             }
             Divider()
             HStack(spacing: 8) {
                 Slider(
-                    value: $scale,
+                    value: Binding(
+                        get: { scale },
+                        set: { scale = $0; userTouchedZoom = true }
+                    ),
                     in: ImageZoom.minScale ... ImageZoom.maxScale,
                     label: { Text("Magnification") },
                     minimumValueLabel: { Text("25%") },
@@ -193,8 +257,11 @@ struct ZoomedImage: View {
                     .monospacedDigit()
                     .frame(minWidth: 48, alignment: .trailing)
                 Button("Fit width") {
-                    scale = ImageZoom.fitWidthScale(
-                        imageWidth: image.size.width, viewportWidth: viewportWidth)
+                    if let display {
+                        scale = ImageZoom.fitWidthScale(
+                            imageWidth: display.size.width,
+                            viewportWidth: viewportWidth)
+                    }
                 }
                 .disabled(viewportWidth <= 0)
                 Spacer()
@@ -217,6 +284,7 @@ struct ZoomedImage: View {
             minHeight: ImageViewerSession.minSize.height
         )
         .onAppear {
+            full.load()
             // Release the restored size after first layout so the window is
             // freely resizable; the size reader above keeps remembering it.
             if fixedSize != nil {
@@ -227,11 +295,12 @@ struct ZoomedImage: View {
     }
 
     /// Fit-width default: applied once to the first real viewport; later
-    /// resizes must not fight the user's chosen zoom.
+    /// resizes must not fight the user's chosen zoom. Fits whatever is
+    /// on screen (thumbnail, then full-res after the swap refit above).
     private func fitOnce(viewportWidth: CGFloat) {
-        guard !didFit, viewportWidth > 0 else { return }
+        guard !didFit, viewportWidth > 0, let display else { return }
         scale = ImageZoom.fitWidthScale(
-            imageWidth: image.size.width, viewportWidth: viewportWidth)
+            imageWidth: display.size.width, viewportWidth: viewportWidth)
         didFit = true
     }
 }
