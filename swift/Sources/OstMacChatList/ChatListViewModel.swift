@@ -37,18 +37,49 @@ public final class ChatListViewModel: ObservableObject, ChatSelection {
             ?? selectedChatID.flatMap(PinnedChats.row(for:))
     }
 
-    /// Sidebar order: Mentions, Notifications, then recency. Pure
-    /// projection over `chats` (which stays real-chats-only,
-    /// recency-ordered); every ingest/filter/restart path re-derives it,
-    /// so the pin invariant holds without a stored copy that could drift.
+    /// Sidebar order: Mentions, Notifications, user pins (pin-time
+    /// order), then recency. Pure projection over `chats` (which stays
+    /// real-chats-only, recency-ordered) plus the persisted pin list;
+    /// every ingest/filter/restart path re-derives it, so the pin
+    /// invariant holds without a stored copy that could drift.
     public var displayChats: [ChatItem] {
-        PinnedChats.sorted(chats)
+        PinnedChats.sorted(chats, pins: pins.orderedIDs)
     }
 
-    private let fetcher: Fetcher
+    /// User-pinned chats (persisted; the sidebar's Pin/Unpin context
+    /// menu acts through `pin(_:)`/`unpin(_:)` below).
+    public let pins: UserPinStore
 
-    public init(fetcher: @escaping Fetcher = { try RustCore.chats(limit: $0) }) {
+    private let fetcher: Fetcher
+    private var cancellables = Set<AnyCancellable>()
+
+    public init(
+        fetcher: @escaping Fetcher = { try RustCore.chats(limit: $0) },
+        pins: UserPinStore = UserPinStore()
+    ) {
         self.fetcher = fetcher
+        self.pins = pins
+        self.pins.objectWillChange
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &cancellables)
+    }
+
+    /// True when the chat is user-pinned (context-menu state).
+    public func isPinned(_ id: String) -> Bool {
+        pins.isPinned(id)
+    }
+
+    /// Pin a chat (no-op for synthetic/blank/duplicate ids — the
+    /// store refuses them; the list is never refetched here).
+    public func pin(_ id: String) {
+        pins.pin(id)
+    }
+
+    /// Unpin a chat (unknown ids are a no-op; the row returns to
+    /// recency order on the next `displayChats` read).
+    public func unpin(_ id: String) {
+        pins.unpin(id)
     }
 
     /// Fetch the list. Drops the selection when its chat is gone.

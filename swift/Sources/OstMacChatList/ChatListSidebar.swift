@@ -99,10 +99,12 @@ public struct ChatListSidebar: View {
                     ForEach(visible, id: \.id) { chat in
                         ChatRow(
                             chat: chat,
+                            isPinned: model.isPinned(chat.id),
                             peerAvailability: chat.is_group ? nil : .some(presence.availabilityForChat(chat.id))
                         )
                         .tag(chat.id)
                         .unreadBadge(unread.count(for: chat.id))
+                        .pinContextMenu(model: model, chatID: chat.id)
                     }
                 }
                 .listStyle(.sidebar)
@@ -151,6 +153,8 @@ public struct ChatListSidebar: View {
 
 struct ChatRow: View {
     let chat: ChatItem
+    /// User-pinned rows show a pin glyph by the timestamp.
+    var isPinned: Bool = false
     /// Chatmate availability for 1:1 chats. Outer nil = group (no dot);
     /// inner nil = unknown (no dot, fail closed).
     var peerAvailability: String?? = nil
@@ -172,6 +176,12 @@ struct ChatRow: View {
                         .foregroundStyle(DietColor.textPrimaryColor)
                         .lineLimit(1)
                     Spacer()
+                    if isPinned {
+                        Image(systemName: "pin.fill")
+                            .font(.system(size: DietSize.iconSM))
+                            .foregroundStyle(DietColor.textTertiaryColor)
+                            .accessibilityLabel("Pinned")
+                    }
                     Text(ChatListFormat.previewTime(chat.last_message_time))
                         .font(DietType.captionMono)
                         .foregroundStyle(DietColor.textTertiaryColor)
@@ -203,6 +213,28 @@ extension View {
             badge(count)
         } else {
             self
+        }
+    }
+
+    /// Pin/Unpin row menu (om-userpins): one top-level item, never a
+    /// submenu. Synthetic rows carry no menu (already pinned by
+    /// construction); pinning never refetches the list.
+    @ViewBuilder
+    func pinContextMenu(model: ChatListViewModel, chatID: String) -> some View {
+        if PinnedChats.isSynthetic(chatID) {
+            self
+        } else if model.isPinned(chatID) {
+            self.contextMenu {
+                Button("Unpin", systemImage: "pin.slash") {
+                    model.unpin(chatID)
+                }
+            }
+        } else {
+            self.contextMenu {
+                Button("Pin", systemImage: "pin") {
+                    model.pin(chatID)
+                }
+            }
         }
     }
 }
