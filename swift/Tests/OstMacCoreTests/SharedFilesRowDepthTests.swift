@@ -88,7 +88,7 @@ final class SharedFilesRowDepthTests: XCTestCase {
         XCTAssertEqual(store.gatedUploads, ["/tmp/big.mov"])
         XCTAssertEqual(
             store.uploadError,
-            "File is 4.0 MB; uploads are limited to 4.0 MB")
+            "File is 4.0 MB; large files use resumable upload")
         XCTAssertFalse(store.files.map(\.name).contains("big.mov"))
     }
 
