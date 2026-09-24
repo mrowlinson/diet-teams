@@ -297,7 +297,7 @@ pub fn authcode_complete_json(session: &str, callback: &str) -> String {
     let run = || -> Result<(String, String, Option<u64>), String> {
         let r = crate::rt()?;
         r.block_on(async {
-            let http = reqwest::Client::new();
+            let http = crate::http();
             let resp = http
                 .post(&token_url)
                 .form(&[

@@ -22,7 +22,7 @@ use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use ost::auth::{AuthConfig, TokenStore};
@@ -72,8 +72,23 @@ pub(crate) fn string_to_c(s: String) -> *mut c_char {
     CString::new(s).map(|c| c.into_raw()).unwrap_or(std::ptr::null_mut())
 }
 
-pub(crate) fn rt() -> Result<tokio::runtime::Runtime, String> {
-    tokio::runtime::Runtime::new().map_err(|e| format!("runtime: {}", e))
+/// Process-wide shared tokio runtime. Callers keep per-call `block_on`;
+/// only the `Runtime::new` per-call cost is eliminated.
+pub(crate) fn rt() -> Result<&'static tokio::runtime::Runtime, String> {
+    static RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+    if let Some(r) = RT.get() {
+        return Ok(r);
+    }
+    // Rare race: two builders, one `set` wins, loser drops an idle runtime.
+    let r = tokio::runtime::Runtime::new().map_err(|e| format!("runtime: {}", e))?;
+    let _ = RT.set(r);
+    RT.get().ok_or_else(|| "runtime: init lost".to_string())
+}
+
+/// Shared HTTP client: one connection pool process-wide (owned by `ost`).
+/// `Client::clone` is cheap — clones share the pool.
+pub(crate) fn http() -> reqwest::Client {
+    ost::api::client::shared_http()
 }
 
 pub(crate) fn token_summary(cfg: &Config) -> serde_json::Value {
@@ -155,7 +170,7 @@ pub fn device_start_json() -> String {
     let run = || -> Result<String, String> {
         let rt = rt()?;
         rt.block_on(async {
-            let http = reqwest::Client::new();
+            let http = http();
             let resp = http
                 .post(&device_url)
                 .form(&[("client_id", auth.client_id), ("scope", auth.scope)])
@@ -247,7 +262,7 @@ pub fn device_poll_json(session: &str) -> String {
         // Ok(value) = complete; Err((retryable, detail))
         let rt = rt().map_err(|e| (false, e))?;
         rt.block_on(async {
-            let http = reqwest::Client::new();
+            let http = http();
             let resp = http
                 .post(&token_url)
                 .form(&[
@@ -2214,7 +2229,7 @@ pub fn note_append_json(page_id: &str, text: &str, group_id: Option<&str>) -> St
 // ---------------------------------------------------------------------------
 
 struct TrouterState {
-    rt: Arc<tokio::runtime::Runtime>,
+    rt: &'static tokio::runtime::Runtime,
     shutdown: Option<tokio::sync::oneshot::Sender<()>>,
     task: tokio::task::JoinHandle<()>,
     driver: Option<std::thread::JoinHandle<()>>,
@@ -2242,7 +2257,7 @@ pub fn trouter_start() -> c_int {
     // UI-driven signaling: the bg loop must not auto-answer incoming
     // calls (ost honors this; invitations still reach event_hub).
     std::env::set_var("TEAMS_MANUAL_CALLS", "1");
-    let rt = match rt().map(Arc::new) {
+    let rt = match rt() {
         Ok(r) => r,
         Err(_) => return -3,
     };
@@ -2250,11 +2265,10 @@ pub fn trouter_start() -> c_int {
     let task = rt.spawn(async move {
         let _ = ost::trouter::connect_and_run().await;
     });
-    let rt2 = Arc::clone(&rt);
     let driver = std::thread::Builder::new()
         .name("ostmac-trouter".to_string())
         .spawn(move || {
-            let _ = rt2.block_on(async move {
+            let _ = rt.block_on(async move {
                 let _ = shutdown_rx.await;
             });
         })
@@ -3267,6 +3281,14 @@ pub extern "C" fn ostmac_free(s: *mut c_char) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shared_runtime_reused_across_calls() {
+        // Perf guard (no timings): rt() must hand out one shared runtime.
+        let a = rt().unwrap() as *const tokio::runtime::Runtime;
+        let b = rt().unwrap() as *const tokio::runtime::Runtime;
+        assert_eq!(a, b, "rt() must return the process-wide shared runtime");
+    }
 
     #[test]
     fn status_envelope_has_expected_keys() {
@@ -4727,6 +4749,7 @@ mod tests {
             sender: None,
             is_folder: true,
             attachment_id: None,
+            share_url: None,
         };
         let v = shared_file_to_json(&f);
         assert_eq!(v["id"], "dir-1");

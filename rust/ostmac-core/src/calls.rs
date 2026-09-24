@@ -32,7 +32,7 @@ use ost::calling::{
 use ost::config::Config;
 use ost::trouter::{registrar, session, websocket};
 
-use crate::{err_json, now_secs, rt, whoami_json};
+use crate::{err_json, http, now_secs, rt, whoami_json};
 
 // ---------------------------------------------------------------------------
 // State
@@ -564,7 +564,7 @@ fn accept_inner(live: bool) -> String {
     let run = || -> Result<(bool, String, Option<crate::live::EngineParams>), String> {
         let rt = rt()?;
         rt.block_on(async {
-            let http = reqwest::Client::new();
+            let http = http();
             // Live: bind real media ports (+ bounded srflx) before answering.
             let live_socks = if live {
                 let audio_sock = tokio::net::UdpSocket::bind("0.0.0.0:0")
@@ -746,7 +746,7 @@ pub fn call_end_json() -> String {
     let run = || -> Result<(), String> {
         let rt = rt()?;
         rt.block_on(async {
-            let http = reqwest::Client::new();
+            let http = http();
             post_empty(&http, &skype, &url).await
         })
     };
@@ -820,7 +820,7 @@ pub fn call_record_inject_json() -> String {
     let run = || -> Result<usize, String> {
         let rt = rt()?;
         rt.block_on(async {
-            let http = reqwest::Client::new();
+            let http = http();
             let params = recording::RecordingParams {
                 caller_mri: &caller_mri,
                 participant_id: &participant_id,
@@ -1092,7 +1092,7 @@ fn place_inner(
     > {
         let r = rt()?;
         r.block_on(async {
-            let http = reqwest::Client::new();
+            let http = http();
             // Trouter leg for the answer wait.
             let (sess, epid) = session::negotiate(&http, &skype)
                 .await
