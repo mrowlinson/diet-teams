@@ -122,13 +122,65 @@ char *ostmac_media_fetch(const char *url);
 // Shared files JSON for one chat/channel (requires sign-in). Caller frees.
 char *ostmac_files(const char *chat_id, int limit);
 
-// Upload a local file (<4 MB) to a chat/channel + post reference message.
+// Shared files, optionally including folders (om-i5-folders):
+// include_folders nonzero keeps folder driveItems (each is_folder).
+// Same {ok, chat_id, files} envelope. Caller frees.
+char *ostmac_files_opts(const char *chat_id, int limit, int include_folders);
+
+// One folder's children by drive+item id (requires sign-in): files AND
+// subfolders, unfiltered. Returns {ok, drive_id, item_id, files}.
+// Caller frees.
+char *ostmac_files_children(const char *drive_id, const char *item_id, int limit);
+
+// Upload a local file to a chat/channel + post reference message
+// (<=4 MB one PUT, larger via a resumable upload session).
 // Returns {ok, file}. Caller frees.
 char *ostmac_files_upload(const char *chat_id, const char *path);
+
+// Create a view-only sharing link for one driveItem (Graph createLink).
+// scope NULL/empty = organization (org-only); "anonymous" = anyone link.
+// Returns {ok, link, scope}. Caller frees.
+char *ostmac_files_link(const char *drive_id, const char *item_id, const char *scope);
+
+// Current upload progress (pure read, no network, never fails):
+// {ok, uploaded, total, percent, active}. Poll while an upload
+// spinner runs. Caller frees.
+char *ostmac_files_upload_progress(void);
 
 // Download one driveItem's content to dest path.
 // Returns {ok, path, bytes}. Caller frees.
 char *ostmac_files_download(const char *drive_id, const char *item_id, const char *dest);
+
+// Version history for one driveItem (requires sign-in):
+// {ok, drive_id, item_id, versions:[{id,size,modified?,modified_by?}]},
+// newest first. Caller frees.
+char *ostmac_file_versions(const char *drive_id, const char *item_id);
+
+// Restore one version as current (Graph restoreVersion action).
+// Returns {ok, drive_id, item_id, version_id}. Caller frees.
+char *ostmac_file_version_restore(
+    const char *drive_id, const char *item_id, const char *version_id);
+
+// Download one old version's content to dest path.
+// Returns {ok, path, bytes}. Caller frees.
+char *ostmac_file_version_download(
+    const char *drive_id, const char *item_id,
+    const char *version_id, const char *dest);
+
+// Rename one driveItem (PATCH name). Returns {ok, file}. Caller frees.
+char *ostmac_files_rename(const char *drive_id, const char *item_id, const char *new_name);
+
+// Move one driveItem to another folder (same drive). Returns {ok, file}.
+// Caller frees.
+char *ostmac_files_move(const char *drive_id, const char *item_id, const char *dest_folder_id);
+
+// Copy one driveItem to another folder (same drive, async server-side).
+// new_name may be NULL to keep the source name. Returns {ok, monitor}.
+// Caller frees.
+char *ostmac_files_copy(const char *drive_id, const char *item_id, const char *dest_folder_id, const char *new_name);
+
+// Delete one driveItem. Returns {ok, id}. Caller frees.
+char *ostmac_files_delete(const char *drive_id, const char *item_id);
 
 // To Do lists JSON (requires sign-in): {ok,lists:[{id,name,wellknown?}]}.
 // Caller frees.

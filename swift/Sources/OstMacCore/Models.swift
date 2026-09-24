@@ -844,13 +844,21 @@ public struct SharedFile: Decodable, Sendable, Identifiable, Equatable {
     /// bubble-match key for `<attachment id>` refs. Nil on old core builds
     /// and for items whose eTag carries no GUID.
     public let attachment_id: String?
+    /// Folder flag from core `is_folder` (om-i5-folders). Nil on old core
+    /// payloads (no key) — decode with `isFolder`, never force-unwrap.
+    public let is_folder: Bool?
+    /// Sharing link from createLink (om-i1-links). Nil at list time: core
+    /// never fills it; the store caches the created link per file id.
+    /// Optional so old core payloads (no key) still decode.
+    public let share_url: String?
 
     public init(
         id: String, name: String, size: UInt64 = 0,
         mime: String? = nil, web_url: String? = nil,
         download_url: String? = nil, drive_id: String? = nil,
         created: String? = nil, modified: String? = nil,
-        sender: String? = nil, attachment_id: String? = nil
+        sender: String? = nil, attachment_id: String? = nil,
+        is_folder: Bool? = nil, share_url: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -863,7 +871,24 @@ public struct SharedFile: Decodable, Sendable, Identifiable, Equatable {
         self.modified = modified
         self.sender = sender
         self.attachment_id = attachment_id
+        self.is_folder = is_folder
+        self.share_url = share_url
     }
+
+    /// Copy with a sharing link attached (store caches createLink results).
+    public func withShareURL(_ url: String) -> SharedFile {
+        SharedFile(
+            id: id, name: name, size: size, mime: mime,
+            web_url: web_url, download_url: download_url,
+            drive_id: drive_id, created: created, modified: modified,
+            sender: sender, attachment_id: attachment_id,
+            is_folder: is_folder, share_url: url
+        )
+    }
+
+    /// True when core marked this item a folder. Missing key (old core)
+    /// reads as file.
+    public var isFolder: Bool { is_folder == true }
 
     /// "48211" -> "47.1 KB" (1 decimal, B/KB/MB/GB).
     public var sizeLabel: String {
@@ -927,6 +952,161 @@ public struct SharedFileDownloadResponse: Decodable, Sendable {
     public let ok: Bool
     public let path: String
     public let bytes: UInt64
+}
+
+/// One folder's children from core `ostmac_files_children`
+/// (om-i5-folders): files AND subfolders, unfiltered. Folders drill in
+/// via `sharedChildren(driveID:itemID:)` with their own `drive_id`+`id`.
+public struct SharedFileChildrenResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let drive_id: String?
+    public let item_id: String?
+    public let files: [SharedFile]
+
+    public init(ok: Bool, drive_id: String? = nil, item_id: String? = nil, files: [SharedFile]) {
+        self.ok = ok
+        self.drive_id = drive_id
+        self.item_id = item_id
+        self.files = files
+    }
+}
+
+/// Sharing-link result from core `ostmac_files_link` (om-i1-links):
+/// view-only link for one driveItem. `scope` echoes the applied scope
+/// (organization|anonymous).
+public struct SharedFileLinkResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let link: String
+    public let scope: String?
+
+    public init(ok: Bool, link: String, scope: String? = nil) {
+        self.ok = ok
+        self.link = link
+        self.scope = scope
+    }
+}
+
+// MARK: - File versions (om-i2-versions lane)
+
+/// One file version from core `ostmac_file_versions` (Graph
+/// driveItemVersion projection, newest first). `modified_by` is the
+/// last-modifier display name; both optionals are nil on sparse items.
+public struct FileVersion: Decodable, Sendable, Identifiable, Equatable {
+    public let id: String
+    public let size: UInt64
+    public let modified: String?
+    public let modified_by: String?
+
+    public init(
+        id: String, size: UInt64 = 0,
+        modified: String? = nil, modified_by: String? = nil
+    ) {
+        self.id = id
+        self.size = size
+        self.modified = modified
+        self.modified_by = modified_by
+    }
+
+    /// "48211" -> "47.1 KB" (shared files scale).
+    public var sizeLabel: String {
+        SharedFile.sizeLabel(size)
+    }
+
+    /// "v3.0 · Priya Nair · 2026-09-20T10:00:00Z" (known parts only).
+    public var subtitle: String {
+        var parts = ["v\(id)"]
+        if let by = modified_by, !by.isEmpty { parts.append(by) }
+        if let m = modified, !m.isEmpty { parts.append(m) }
+        return parts.joined(separator: " · ")
+    }
+}
+
+public struct FileVersionsResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let drive_id: String?
+    public let item_id: String?
+    public let versions: [FileVersion]
+
+    public init(
+        ok: Bool, drive_id: String? = nil, item_id: String? = nil,
+        versions: [FileVersion]
+    ) {
+        self.ok = ok
+        self.drive_id = drive_id
+        self.item_id = item_id
+        self.versions = versions
+    }
+}
+
+public struct FileVersionRestoreResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let drive_id: String?
+    public let item_id: String?
+    public let version_id: String?
+
+    public init(
+        ok: Bool, drive_id: String? = nil, item_id: String? = nil,
+        version_id: String? = nil
+    ) {
+        self.ok = ok
+        self.drive_id = drive_id
+        self.item_id = item_id
+        self.version_id = version_id
+    }
+}
+
+/// Rename/move result from core (updated driveItem projection).
+public struct SharedFileManageResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let file: SharedFile
+
+    public init(ok: Bool, file: SharedFile) {
+        self.ok = ok
+        self.file = file
+    }
+}
+
+/// Copy result from core: Graph copies async, `monitor` is the 202
+/// Location URL ("" when the server omits it).
+public struct SharedFileCopyResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let monitor: String
+
+    public init(ok: Bool, monitor: String) {
+        self.ok = ok
+        self.monitor = monitor
+    }
+}
+
+/// Delete result from core (echoes the removed item id).
+public struct SharedFileDeleteResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let id: String
+
+    public init(ok: Bool, id: String) {
+        self.ok = ok
+        self.id = id
+    }
+}
+
+/// Upload-progress gauge from core `ostmac_files_upload_progress`
+/// (om-i4-bigup): pure read, polled while an upload spinner runs.
+/// `active` is true only while a core upload is in flight.
+public struct UploadProgressResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let uploaded: UInt64
+    public let total: UInt64
+    public let percent: UInt64
+    public let active: Bool
+
+    /// Host-side construction (mock progress fetchers).
+    public init(ok: Bool, uploaded: UInt64, total: UInt64, percent: UInt64, active: Bool) {
+        self.ok = ok
+        self.uploaded = uploaded
+        self.total = total
+        self.percent = percent
+        self.active = active
+    }
 }
 
 // MARK: - Presence (om-presence lane)

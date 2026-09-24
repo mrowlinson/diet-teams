@@ -9,8 +9,9 @@
 //!
 //! Auth: existing Graph token (Teams client `/.default`). No scope widening:
 //! the Teams desktop app registration already grants Files.Read/Write for
-//! delegated flows. Upload is small-file PUT only (<4 MB); larger files need
-//! an upload session (not implemented, rejected with a clear error).
+//! delegated flows. Uploads <=4 MB use a single simple PUT; larger files
+//! use a resumable upload session (`createUploadSession` + fragment PUTs)
+//! with per-fragment progress reports.
 
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
@@ -19,6 +20,43 @@ use super::client::TeamsClient;
 
 const CHAT_FILES_FOLDER: &str = "Microsoft Teams Chat Files";
 const MAX_SIMPLE_UPLOAD: u64 = 4 * 1024 * 1024;
+/// Resumable-upload fragment size (16 x 320 KiB; Graph requires multiples
+/// of 320 KiB except the tail).
+const UPLOAD_CHUNK: u64 = 5 * 1024 * 1024;
+
+/// Upload progress sink: `(bytes_sent, bytes_total)` after each fragment
+/// (simple PUT reports once at completion).
+pub type UploadProgress<'a> = dyn Fn(u64, u64) + Sync + 'a;
+
+/// Inclusive `(start, end)` fragment ranges covering `total` bytes in
+/// `chunk`-sized fragments with a short tail. Empty for empty files.
+pub fn upload_chunk_ranges(total: u64, chunk: u64) -> Vec<(u64, u64)> {
+    let chunk = chunk.max(1);
+    let mut out = Vec::new();
+    let mut start = 0u64;
+    while start < total {
+        let end = (start + chunk).min(total) - 1;
+        out.push((start, end));
+        start = end + 1;
+    }
+    out
+}
+
+/// `Content-Range` header value for one fragment (inclusive `end`).
+pub fn content_range_value(start: u64, end: u64, total: u64) -> String {
+    format!("bytes {}-{}/{}", start, end, total)
+}
+
+/// `createUploadSession` body. `replace` matches simple-PUT semantics
+/// (same-name uploads overwrite, never fork copies).
+pub fn upload_session_body(name: &str) -> serde_json::Value {
+    serde_json::json!({
+        "item": {
+            "@microsoft.graph.conflictBehavior": "replace",
+            "name": name,
+        }
+    })
+}
 
 // -- Wire types --
 
@@ -111,6 +149,13 @@ pub struct SharedFile {
     pub modified: Option<String>,
     /// Display name of the chat sender (chat path only; None for channels).
     pub sender: Option<String>,
+    /// True when the driveItem is a folder (has the `folder` facet).
+    /// Folders have no size/mime/download_url; Swift drills in via the
+    /// children endpoint (drive_id + id). Always present in core JSON.
+    pub is_folder: bool,
+    /// Sharing link from createLink (om-i1-links). List paths never fill
+    /// it (None); Swift caches the created link per file id after Copy link.
+    pub share_url: Option<String>,
     /// File-attachment GUID mined from the driveItem eTag (om-inline-docs):
     /// matches the `<attachment id>` in the message that shared this file,
     /// so embedders render inline doc rows in the bubble. None when the
@@ -121,6 +166,7 @@ pub struct SharedFile {
 
 fn shared_from_item(item: DriveItem, sender: Option<String>) -> SharedFile {
     let attachment_id = item.etag.as_deref().and_then(guid_from_etag);
+    let is_folder = item.folder.is_some();
     SharedFile {
         id: item.id,
         name: item.name.unwrap_or_else(|| "[unnamed]".to_string()),
@@ -132,8 +178,16 @@ fn shared_from_item(item: DriveItem, sender: Option<String>) -> SharedFile {
         created: item.created,
         modified: item.modified,
         sender,
+        is_folder,
         attachment_id,
+        share_url: None,
     }
+}
+
+/// True when a raw driveItem survives the folders filter: files always
+/// pass; folders pass only when `include_folders` is set.
+fn keep_item(item: &DriveItem, include_folders: bool) -> bool {
+    include_folders || item.folder.is_none()
 }
 
 /// Encode a SharePoint sharing URL as a Graph shares id (`u!` + base64url).
@@ -208,21 +262,40 @@ pub fn is_channel_id(id: &str) -> bool {
 /// + shares resolution); each falls back to the other path when its own
 /// fails (unknown id shapes still resolve). Folders are skipped; only
 /// file driveItems are returned. Deduplicated by item id.
+/// Default shape (stable): same as `_opts` with `include_folders=false`.
 pub async fn list_chat_files_data(
     client: &TeamsClient,
     chat_id: &str,
     limit: usize,
 ) -> Result<Vec<SharedFile>> {
+    list_chat_files_data_opts(client, chat_id, limit, false).await
+}
+
+/// List shared files, optionally including folders (om-i5-folders).
+/// `include_folders=true` keeps folder driveItems in both list paths;
+/// each carries `is_folder` so callers can drill in via
+/// [`list_folder_children_data`]. Default callers use
+/// [`list_chat_files_data`] (folders filtered, shape unchanged).
+pub async fn list_chat_files_data_opts(
+    client: &TeamsClient,
+    chat_id: &str,
+    limit: usize,
+    include_folders: bool,
+) -> Result<Vec<SharedFile>> {
     if is_channel_id(chat_id) {
-        if let Ok(files) = list_via_channel_folder(client, chat_id, limit).await {
+        if let Ok(files) =
+            list_via_channel_folder(client, chat_id, limit, include_folders).await
+        {
             return Ok(files);
         }
-        list_via_chat_messages(client, chat_id, limit).await
+        list_via_chat_messages(client, chat_id, limit, include_folders).await
     } else {
-        if let Ok(files) = list_via_chat_messages(client, chat_id, limit).await {
+        if let Ok(files) =
+            list_via_chat_messages(client, chat_id, limit, include_folders).await
+        {
             return Ok(files);
         }
-        list_via_channel_folder(client, chat_id, limit).await
+        list_via_channel_folder(client, chat_id, limit, include_folders).await
     }
 }
 
@@ -230,6 +303,7 @@ async fn list_via_chat_messages(
     client: &TeamsClient,
     chat_id: &str,
     limit: usize,
+    include_folders: bool,
 ) -> Result<Vec<SharedFile>> {
     let path = format!("/me/chats/{}/messages?$top={}", chat_id, limit.max(1));
     let resp = client.graph_get(&path).await?;
@@ -264,6 +338,9 @@ async fn list_via_chat_messages(
                     continue;
                 }
             };
+            if !keep_item(&item, include_folders) {
+                continue;
+            }
             if !seen.insert(item.id.clone()) {
                 continue;
             }
@@ -284,6 +361,7 @@ async fn list_via_channel_folder(
     client: &TeamsClient,
     channel_id: &str,
     limit: usize,
+    include_folders: bool,
 ) -> Result<Vec<SharedFile>> {
     let team_id = find_team_for_channel(client, channel_id).await?;
     let fpath = format!("/teams/{}/channels/{}/filesFolder", team_id, channel_id);
@@ -311,7 +389,42 @@ async fn list_via_channel_folder(
     Ok(children
         .value
         .into_iter()
-        .filter(|it| it.folder.is_none())
+        .filter(|it| keep_item(it, include_folders))
+        .map(|it| shared_from_item(it, None))
+        .collect())
+}
+
+// -- Folder children (om-i5-folders) --
+
+/// Graph path for one folder's children (`drive_id` + folder `item_id`).
+pub fn folder_children_path(drive_id: &str, item_id: &str, limit: usize) -> String {
+    format!(
+        "/drives/{}/items/{}/children?$top={}",
+        drive_id,
+        item_id,
+        limit.max(1)
+    )
+}
+
+/// List one folder's children by drive+item id. Returns files AND
+/// subfolders (no filtering: browsing needs folders visible); each
+/// item carries `is_folder`, and folders drill in via this same call
+/// with their own id. Ids come from any [`SharedFile`] (`drive_id`+`id`).
+pub async fn list_folder_children_data(
+    client: &TeamsClient,
+    drive_id: &str,
+    item_id: &str,
+    limit: usize,
+) -> Result<Vec<SharedFile>> {
+    let path = folder_children_path(drive_id, item_id, limit);
+    let resp = client.graph_get(&path).await?;
+    let children: DriveChildrenResponse = resp
+        .json()
+        .await
+        .context("Failed to parse drive children response")?;
+    Ok(children
+        .value
+        .into_iter()
         .map(|it| shared_from_item(it, None))
         .collect())
 }
@@ -338,8 +451,15 @@ pub async fn list_files(chat_id: &str, limit: usize) -> Result<()> {
         return Ok(());
     }
     for f in &files {
-        println!("{}", f.name);
+        if f.is_folder {
+            println!("{}/", f.name);
+        } else {
+            println!("{}", f.name);
+        }
         println!("  ID:   {}", f.id);
+        if let Some(ref d) = f.drive_id {
+            println!("  Drive: {}", d);
+        }
         println!("  Size: {} bytes", f.size);
         if let Some(ref m) = f.mime {
             println!("  Type: {}", m);
@@ -380,23 +500,122 @@ pub async fn download_file(drive_id: &str, item_id: &str, dest_path: &str) -> Re
     Ok(())
 }
 
+// -- Versions (om-i2-versions: OneDrive/SharePoint version history) --
+
+#[derive(Debug, Deserialize)]
+struct VersionsResponse {
+    value: Vec<DriveItemVersion>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DriveItemVersion {
+    id: String,
+    size: Option<u64>,
+    #[serde(rename = "lastModifiedDateTime")]
+    modified: Option<String>,
+    #[serde(rename = "lastModifiedBy")]
+    modified_by: Option<ModifiedBy>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ModifiedBy {
+    user: Option<MessageUser>,
+}
+
+/// One file version (driveItemVersion projection for list/restore/download).
+pub struct FileVersion {
+    pub id: String,
+    pub size: u64,
+    pub modified: Option<String>,
+    pub modified_by: Option<String>,
+}
+
+fn version_from_item(item: DriveItemVersion) -> FileVersion {
+    FileVersion {
+        id: item.id,
+        size: item.size.unwrap_or(0),
+        modified: item.modified,
+        modified_by: item.modified_by.and_then(|b| b.user).and_then(|u| u.display_name),
+    }
+}
+
+/// List version history for one driveItem, newest first (Graph order).
+pub async fn list_file_versions_data(
+    client: &TeamsClient,
+    drive_id: &str,
+    item_id: &str,
+) -> Result<Vec<FileVersion>> {
+    let path = format!("/drives/{}/items/{}/versions", drive_id, item_id);
+    let resp = client.graph_get(&path).await?;
+    let body: VersionsResponse = resp
+        .json()
+        .await
+        .context("Failed to parse versions response")?;
+    Ok(body.value.into_iter().map(version_from_item).collect())
+}
+
+/// Restore one version as current (Graph `restoreVersion` action).
+pub async fn restore_file_version_data(
+    client: &TeamsClient,
+    drive_id: &str,
+    item_id: &str,
+    version_id: &str,
+) -> Result<()> {
+    let path = format!(
+        "/drives/{}/items/{}/versions/{}/restoreVersion",
+        drive_id, item_id, version_id
+    );
+    client.graph_post(&path, &serde_json::json!({})).await?;
+    Ok(())
+}
+
+/// Download one old version's content to `dest_path`. Returns bytes written.
+pub async fn download_file_version_data(
+    client: &TeamsClient,
+    drive_id: &str,
+    item_id: &str,
+    version_id: &str,
+    dest_path: &str,
+) -> Result<u64> {
+    let path = format!(
+        "/drives/{}/items/{}/versions/{}/content",
+        drive_id, item_id, version_id
+    );
+    let resp = client.graph_get(&path).await?;
+    let bytes = resp.bytes().await.context("Failed to read version content")?;
+    std::fs::write(dest_path, &bytes)
+        .with_context(|| format!("Failed to write {}", dest_path))?;
+    Ok(bytes.len() as u64)
+}
+
 // -- Upload --
 
 /// Upload a local file to a chat or channel and post it as a `reference`
-/// attachment message. Small files only (<4 MB). Returns the uploaded item.
+/// attachment message. Files <=4 MB use one simple PUT; larger files use
+/// a resumable upload session. Returns the uploaded item.
 pub async fn upload_file_data(
     client: &TeamsClient,
     chat_id: &str,
     local_path: &str,
 ) -> Result<SharedFile> {
+    upload_file_data_with_progress(client, chat_id, local_path, None).await
+}
+
+/// [`upload_file_data`] with per-fragment progress reports
+/// (`(bytes_sent, bytes_total)`; simple PUT reports once at completion).
+pub async fn upload_file_data_with_progress(
+    client: &TeamsClient,
+    chat_id: &str,
+    local_path: &str,
+    progress: Option<&UploadProgress<'_>>,
+) -> Result<SharedFile> {
     let bytes = std::fs::read(local_path)
         .with_context(|| format!("Failed to read {}", local_path))?;
-    if bytes.len() as u64 > MAX_SIMPLE_UPLOAD {
-        bail!(
-            "File is {} bytes; simple upload supports <4 MB only (upload sessions not implemented)",
-            bytes.len()
-        );
-    }
+    let report = |sent: u64, total: u64| {
+        if let Some(cb) = progress {
+            cb(sent, total);
+        }
+    };
     let filename = std::path::Path::new(local_path)
         .file_name()
         .and_then(|s| s.to_str())
@@ -408,9 +627,9 @@ pub async fn upload_file_data(
     // (the scan costs joinedTeams + one channels call per team).
     if is_channel_id(chat_id) {
         let team_id = find_team_for_channel(client, chat_id).await?;
-        upload_to_channel(client, &team_id, chat_id, filename, bytes).await
+        upload_to_channel(client, &team_id, chat_id, filename, bytes, &report).await
     } else {
-        upload_to_chat(client, chat_id, filename, bytes).await
+        upload_to_chat(client, chat_id, filename, bytes, &report).await
     }
 }
 
@@ -419,14 +638,24 @@ async fn upload_to_chat(
     chat_id: &str,
     filename: &str,
     bytes: Vec<u8>,
+    report: &impl Fn(u64, u64),
 ) -> Result<SharedFile> {
     let folder = encode_segment(CHAT_FILES_FOLDER);
     let fname = encode_segment(filename);
-    let upath = format!("/me/drive/root:/{}/{}:/content", folder, fname);
-    let resp = client
-        .graph_put_bytes(&upath, bytes, "application/octet-stream")
-        .await?;
-    let item: DriveItem = resp.json().await.context("Failed to parse upload response")?;
+    let item = if bytes.len() as u64 > MAX_SIMPLE_UPLOAD {
+        let spath = format!("/me/drive/root:/{}/{}:/createUploadSession", folder, fname);
+        upload_via_session(client, &spath, filename, &bytes, report).await?
+    } else {
+        let upath = format!("/me/drive/root:/{}/{}:/content", folder, fname);
+        let total = bytes.len() as u64;
+        let resp = client
+            .graph_put_bytes(&upath, bytes, "application/octet-stream")
+            .await?;
+        report(total, total);
+        resp.json()
+            .await
+            .context("Failed to parse upload response")?
+    };
     post_reference_message(
         client,
         &format!("/me/chats/{}/messages", chat_id),
@@ -443,6 +672,7 @@ async fn upload_to_channel(
     channel_id: &str,
     filename: &str,
     bytes: Vec<u8>,
+    report: &impl Fn(u64, u64),
 ) -> Result<SharedFile> {
     let fpath = format!("/teams/{}/channels/{}/filesFolder", team_id, channel_id);
     let resp = client.graph_get(&fpath).await?;
@@ -456,14 +686,26 @@ async fn upload_to_channel(
         .and_then(|p| p.drive_id.clone())
         .context("filesFolder response missing parent driveId")?;
     let fname = encode_segment(filename);
-    let upath = format!(
-        "/drives/{}/items/{}:/{}:/content",
-        drive_id, folder.id, fname
-    );
-    let resp = client
-        .graph_put_bytes(&upath, bytes, "application/octet-stream")
-        .await?;
-    let item: DriveItem = resp.json().await.context("Failed to parse upload response")?;
+    let item = if bytes.len() as u64 > MAX_SIMPLE_UPLOAD {
+        let spath = format!(
+            "/drives/{}/items/{}:/{}:/createUploadSession",
+            drive_id, folder.id, fname
+        );
+        upload_via_session(client, &spath, filename, &bytes, report).await?
+    } else {
+        let upath = format!(
+            "/drives/{}/items/{}:/{}:/content",
+            drive_id, folder.id, fname
+        );
+        let total = bytes.len() as u64;
+        let resp = client
+            .graph_put_bytes(&upath, bytes, "application/octet-stream")
+            .await?;
+        report(total, total);
+        resp.json()
+            .await
+            .context("Failed to parse upload response")?
+    };
     post_reference_message(
         client,
         &format!("/teams/{}/channels/{}/messages", team_id, channel_id),
@@ -472,6 +714,53 @@ async fn upload_to_channel(
     )
     .await?;
     Ok(shared_from_item(item, None))
+}
+
+#[derive(Debug, Deserialize)]
+struct UploadSessionResponse {
+    #[serde(rename = "uploadUrl")]
+    upload_url: String,
+}
+
+/// Resumable upload: create the session, PUT fragments sequentially
+/// (reporting `(sent, total)` after each), return the final driveItem.
+/// Non-final fragments answer 202; the last answers 200/201 with the item.
+async fn upload_via_session(
+    client: &TeamsClient,
+    session_path: &str,
+    filename: &str,
+    bytes: &[u8],
+    report: &impl Fn(u64, u64),
+) -> Result<DriveItem> {
+    let resp = client
+        .graph_post(session_path, &upload_session_body(filename))
+        .await?;
+    let session: UploadSessionResponse = resp
+        .json()
+        .await
+        .context("Failed to parse createUploadSession response")?;
+    let total = bytes.len() as u64;
+    let mut last: Option<DriveItem> = None;
+    for (start, end) in upload_chunk_ranges(total, UPLOAD_CHUNK) {
+        let resp = client
+            .drive_session_put(
+                &session.upload_url,
+                &bytes[start as usize..=end as usize],
+                start,
+                end,
+                total,
+            )
+            .await?;
+        report(end + 1, total);
+        if resp.status().is_success() && resp.status() != reqwest::StatusCode::ACCEPTED {
+            last = Some(
+                resp.json()
+                    .await
+                    .context("Failed to parse session-upload response")?,
+            );
+        }
+    }
+    last.context("Upload session finished without a driveItem response")
 }
 
 fn reference_attachment(item: &DriveItem, filename: &str) -> Result<serde_json::Value> {
@@ -506,11 +795,204 @@ async fn post_reference_message(
     Ok(())
 }
 
-/// Upload a local file (prints to stdout).
+/// Upload a local file (streams `%` progress, prints to stdout).
 pub async fn upload_file(chat_id: &str, local_path: &str) -> Result<()> {
+    use std::io::Write;
     let client = TeamsClient::new().await?;
-    let file = upload_file_data(&client, chat_id, local_path).await?;
+    let progress = |sent: u64, total: u64| {
+        let pct = if total == 0 { 100 } else { sent * 100 / total };
+        eprint!("\rUploading {}% ({}/{})", pct, sent, total);
+        let _ = std::io::stderr().flush();
+    };
+    let file = upload_file_data_with_progress(&client, chat_id, local_path, Some(&progress)).await?;
+    eprintln!();
     println!("Uploaded {} ({} bytes, id {})", file.name, file.size, file.id);
+    Ok(())
+}
+
+// -- Sharing links (om-i1-links) --
+
+/// A view-only sharing link for one driveItem (Graph createLink).
+pub struct SharedLink {
+    pub url: String,
+    pub scope: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateLinkResponse {
+    link: Option<CreateLinkInner>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateLinkInner {
+    #[serde(rename = "webUrl")]
+    web_url: Option<String>,
+    scope: Option<String>,
+}
+
+/// Normalize a createLink scope (the perms surface): `anonymous` (anyone
+/// with the link) or `organization` (org-only). Blank/unknown input falls
+/// back to `organization` (least privilege). Case-insensitive; `anyone`
+/// is accepted as an alias for `anonymous`.
+pub fn normalize_link_scope(scope: &str) -> &'static str {
+    match scope.trim().to_lowercase().as_str() {
+        "anonymous" | "anyone" => "anonymous",
+        _ => "organization",
+    }
+}
+
+/// POST body for createLink (view-only link; edit links not offered).
+pub fn create_link_body(scope: &str) -> serde_json::Value {
+    serde_json::json!({"type": "view", "scope": normalize_link_scope(scope)})
+}
+
+/// Graph path for createLink on one driveItem.
+pub fn create_link_path(drive_id: &str, item_id: &str) -> String {
+    format!("/drives/{}/items/{}/createLink", drive_id, item_id)
+}
+
+/// Pull the shareable URL out of a Graph createLink response body.
+pub fn parse_create_link(body: &serde_json::Value) -> Result<SharedLink> {
+    let resp: CreateLinkResponse =
+        serde_json::from_value(body.clone()).context("Failed to parse createLink response")?;
+    let inner = resp
+        .link
+        .context("createLink response has no link object")?;
+    let url = inner
+        .web_url
+        .filter(|s| !s.is_empty())
+        .context("createLink response link has no webUrl")?;
+    Ok(SharedLink {
+        url,
+        scope: inner.scope,
+    })
+}
+
+/// Create (or fetch the existing) view-only sharing link for one
+/// driveItem. Idempotent server-side: the same scope returns the same
+/// link. `scope` is normalized via [`normalize_link_scope`].
+pub async fn create_link_data(
+    client: &TeamsClient,
+    drive_id: &str,
+    item_id: &str,
+    scope: &str,
+) -> Result<SharedLink> {
+    let path = create_link_path(drive_id, item_id);
+    let body = create_link_body(scope);
+    let resp = client.graph_post(&path, &body).await?;
+    let value: serde_json::Value = resp
+        .json()
+        .await
+        .context("Failed to read createLink response")?;
+    parse_create_link(&value)
+}
+
+/// Create a sharing link (prints the URL to stdout).
+pub async fn create_link(drive_id: &str, item_id: &str, scope: &str) -> Result<()> {
+    let client = TeamsClient::new().await?;
+    let link = create_link_data(&client, drive_id, item_id, scope).await?;
+    println!("{}", link.url);
+    Ok(())
+}
+
+// -- Manage (om-i3-manage): rename/move/copy/delete driveItems --
+
+/// Graph path of one driveItem.
+pub fn drive_item_path(drive_id: &str, item_id: &str) -> String {
+    format!("/drives/{}/items/{}", drive_id, item_id)
+}
+
+/// PATCH body renaming an item (same-folder rename).
+pub fn rename_body(new_name: &str) -> serde_json::Value {
+    serde_json::json!({ "name": new_name })
+}
+
+/// PATCH body moving an item to another folder (same drive).
+pub fn move_body(dest_folder_id: &str) -> serde_json::Value {
+    serde_json::json!({ "parentReference": { "id": dest_folder_id } })
+}
+
+/// POST body copying an item to another folder (same drive).
+/// `new_name` renames the copy; None keeps the source name.
+pub fn copy_body(
+    drive_id: &str,
+    dest_folder_id: &str,
+    new_name: Option<&str>,
+) -> serde_json::Value {
+    let parent = serde_json::json!({ "driveId": drive_id, "id": dest_folder_id });
+    match new_name {
+        Some(n) => serde_json::json!({ "parentReference": parent, "name": n }),
+        None => serde_json::json!({ "parentReference": parent }),
+    }
+}
+
+/// Rename one driveItem (PATCH name). Returns the updated item.
+pub async fn rename_file_data(
+    client: &TeamsClient,
+    drive_id: &str,
+    item_id: &str,
+    new_name: &str,
+) -> Result<SharedFile> {
+    if new_name.trim().is_empty() {
+        bail!("New name is empty");
+    }
+    let path = drive_item_path(drive_id, item_id);
+    let resp = client.graph_patch(&path, &rename_body(new_name)).await?;
+    let item: DriveItem = resp
+        .json()
+        .await
+        .context("Failed to parse rename response")?;
+    Ok(shared_from_item(item, None))
+}
+
+/// Move one driveItem to another folder in the same drive (PATCH
+/// parentReference). Returns the updated item.
+pub async fn move_file_data(
+    client: &TeamsClient,
+    drive_id: &str,
+    item_id: &str,
+    dest_folder_id: &str,
+) -> Result<SharedFile> {
+    if dest_folder_id.trim().is_empty() {
+        bail!("Destination folder id is empty");
+    }
+    let path = drive_item_path(drive_id, item_id);
+    let resp = client
+        .graph_patch(&path, &move_body(dest_folder_id))
+        .await?;
+    let item: DriveItem = resp.json().await.context("Failed to parse move response")?;
+    Ok(shared_from_item(item, None))
+}
+
+/// Copy one driveItem to another folder in the same drive (async on the
+/// server: Graph answers 202 + a `Location` monitor URL). Returns the
+/// monitor URL, or "" when the server omits it.
+pub async fn copy_file_data(
+    client: &TeamsClient,
+    drive_id: &str,
+    item_id: &str,
+    dest_folder_id: &str,
+    new_name: Option<&str>,
+) -> Result<String> {
+    if dest_folder_id.trim().is_empty() {
+        bail!("Destination folder id is empty");
+    }
+    let path = format!("{}/copy", drive_item_path(drive_id, item_id));
+    let resp = client
+        .graph_post(&path, &copy_body(drive_id, dest_folder_id, new_name))
+        .await?;
+    Ok(resp
+        .headers()
+        .get(reqwest::header::LOCATION)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string())
+}
+
+/// Delete one driveItem (DELETE; Graph answers 204, no body).
+pub async fn delete_file_data(client: &TeamsClient, drive_id: &str, item_id: &str) -> Result<()> {
+    let path = drive_item_path(drive_id, item_id);
+    client.graph_delete(&path).await?;
     Ok(())
 }
 
@@ -580,6 +1062,66 @@ mod tests {
     }
 
     #[test]
+    fn keep_item_filters_folders_by_default() {
+        let file: DriveItem =
+            serde_json::from_str(r#"{"id":"f1","name":"a.pdf","file":{}}"#).unwrap();
+        let folder: DriveItem =
+            serde_json::from_str(r#"{"id":"d1","name":"sub","folder":{}}"#).unwrap();
+        assert!(keep_item(&file, false));
+        assert!(keep_item(&file, true));
+        assert!(!keep_item(&folder, false));
+        assert!(keep_item(&folder, true));
+    }
+
+    #[test]
+    fn shared_from_item_marks_folder_facet() {
+        let folder: DriveItem =
+            serde_json::from_str(r#"{"id":"d1","name":"sub","folder":{"childCount":3}}"#)
+                .unwrap();
+        let f = shared_from_item(folder, None);
+        assert!(f.is_folder);
+        assert_eq!(f.name, "sub");
+        assert_eq!(f.size, 0);
+        assert_eq!(f.mime, None);
+        let file: DriveItem =
+            serde_json::from_str(r#"{"id":"f1","name":"a.pdf","file":{"mimeType":"application/pdf"}}"#)
+                .unwrap();
+        assert!(!shared_from_item(file, None).is_folder);
+    }
+
+    #[test]
+    fn folder_children_path_shape() {
+        assert_eq!(
+            folder_children_path("D1", "root", 20),
+            "/drives/D1/items/root/children?$top=20"
+        );
+        assert_eq!(
+            folder_children_path("D1", "abc", 0),
+            "/drives/D1/items/abc/children?$top=1"
+        );
+    }
+
+    #[test]
+    fn children_parse_keeps_folders_and_files() {
+        // Children endpoint never filters: subfolders stay visible.
+        let body: DriveChildrenResponse = serde_json::from_str(
+            r#"{"value":[
+                {"id":"dir1","name":"sub","folder":{},"parentReference":{"driveId":"D1"}},
+                {"id":"f1","name":"a.pdf","size":12,"file":{"mimeType":"application/pdf"},
+                 "parentReference":{"driveId":"D1"}}
+            ]}"#,
+        )
+        .unwrap();
+        let files: Vec<SharedFile> =
+            body.value.into_iter().map(|it| shared_from_item(it, None)).collect();
+        assert_eq!(files.len(), 2);
+        assert!(files[0].is_folder);
+        assert_eq!(files[0].drive_id.as_deref(), Some("D1"));
+        assert!(!files[1].is_folder);
+        assert_eq!(files[1].size, 12);
+    }
+
+    #[test]
     fn chat_message_attachments_filter_reference_only() {
         let body: ChatMessagesResponse = serde_json::from_str(
             r#"{"value":[
@@ -646,6 +1188,113 @@ mod tests {
     }
 
     #[test]
+    fn link_scope_normalizes_to_least_privilege() {
+        assert_eq!(normalize_link_scope("organization"), "organization");
+        assert_eq!(normalize_link_scope("  Organization "), "organization");
+        assert_eq!(normalize_link_scope("anonymous"), "anonymous");
+        assert_eq!(normalize_link_scope("Anyone"), "anonymous");
+        assert_eq!(normalize_link_scope(""), "organization");
+        assert_eq!(normalize_link_scope("edit"), "organization");
+    }
+
+    #[test]
+    fn link_body_is_view_only_with_scope() {
+        assert_eq!(
+            create_link_body("anonymous"),
+            serde_json::json!({"type": "view", "scope": "anonymous"})
+        );
+        assert_eq!(
+            create_link_body("bogus"),
+            serde_json::json!({"type": "view", "scope": "organization"})
+        );
+    }
+
+    #[test]
+    fn manage_paths_and_bodies() {
+        // om-i3-manage: driveItem PATCH/DELETE manage shapes.
+        assert_eq!(drive_item_path("D1", "I1"), "/drives/D1/items/I1");
+        assert_eq!(
+            rename_body("plan v2.docx"),
+            serde_json::json!({"name": "plan v2.docx"})
+        );
+        assert_eq!(
+            move_body("F9"),
+            serde_json::json!({"parentReference": {"id": "F9"}})
+        );
+        assert_eq!(
+            copy_body("D1", "F9", Some("copy.docx")),
+            serde_json::json!({"parentReference": {"driveId": "D1", "id": "F9"}, "name": "copy.docx"})
+        );
+        assert_eq!(
+            copy_body("D1", "F9", None),
+            serde_json::json!({"parentReference": {"driveId": "D1", "id": "F9"}})
+        );
+    }
+
+    #[test]
+    fn link_path_addresses_drive_item() {
+        assert_eq!(
+            create_link_path("D1", "I1"),
+            "/drives/D1/items/I1/createLink"
+        );
+    }
+
+    #[test]
+    fn link_parse_extracts_web_url_and_scope() {
+        let body: serde_json::Value = serde_json::from_str(
+            r#"{"id":"perm-1","link":{"type":"view","scope":"organization",
+                "webUrl":"https://contoso.sharepoint.com/:i:/x/ABC"}}"#,
+        )
+        .unwrap();
+        let link = parse_create_link(&body).unwrap();
+        assert_eq!(link.url, "https://contoso.sharepoint.com/:i:/x/ABC");
+        assert_eq!(link.scope.as_deref(), Some("organization"));
+    }
+
+    #[test]
+    fn link_parse_rejects_missing_link_or_url() {
+        for raw in [
+            r#"{"id":"perm-1"}"#,
+            r#"{"link":{"type":"view","scope":"organization"}}"#,
+            r#"{"link":{"webUrl":""}}"#,
+        ] {
+            let body: serde_json::Value = serde_json::from_str(raw).unwrap();
+            assert!(parse_create_link(&body).is_err(), "raw {}", raw);
+        }
+    }
+
+    #[test]
+    fn list_never_fills_share_url() {
+        let item: DriveItem =
+            serde_json::from_str(r#"{"id":"i1","name":"f.docx"}"#).unwrap();
+        assert_eq!(shared_from_item(item, None).share_url, None);
+    }
+
+    #[test]
+    fn versions_parse_newest_first_with_author() {
+        let body: VersionsResponse = serde_json::from_str(
+            r#"{"value":[
+                {"id":"3.0","size":48211,"lastModifiedDateTime":"2026-09-20T10:00:00Z",
+                 "lastModifiedBy":{"user":{"displayName":"Priya Nair"}}},
+                {"id":"2.0"},
+                {"id":"1.0","size":100,"lastModifiedBy":{}}
+            ]}"#,
+        )
+        .unwrap();
+        let vs: Vec<FileVersion> = body.value.into_iter().map(version_from_item).collect();
+        assert_eq!(vs.len(), 3);
+        assert_eq!(vs[0].id, "3.0");
+        assert_eq!(vs[0].size, 48211);
+        assert_eq!(vs[0].modified.as_deref(), Some("2026-09-20T10:00:00Z"));
+        assert_eq!(vs[0].modified_by.as_deref(), Some("Priya Nair"));
+        // Sparse versions default size 0, no author (never fatal).
+        assert_eq!(vs[1].size, 0);
+        assert_eq!(vs[1].modified_by, None);
+        assert_eq!(vs[2].id, "1.0");
+        assert_eq!(vs[2].modified_by, None);
+    }
+
+    #[test]
     fn channel_scope_is_tacv2_suffix() {
         assert!(is_channel_id("19:general@thread.tacv2"));
         assert!(is_channel_id("  19:abc@thread.tacv2  "));
@@ -654,5 +1303,39 @@ mod tests {
         assert!(!is_channel_id(""));
         assert!(!is_channel_id("19:general@thread.tacv2.evil"));
         assert!(!is_channel_id("general"));
+    }
+
+    #[test]
+    fn chunk_ranges_cover_total_with_short_tail() {
+        // Exact multiple: no tail.
+        assert_eq!(
+            upload_chunk_ranges(10, 5),
+            vec![(0, 4), (5, 9)]
+        );
+        // Short tail keeps the byte count exact.
+        assert_eq!(
+            upload_chunk_ranges(12, 5),
+            vec![(0, 4), (5, 9), (10, 11)]
+        );
+        // Single chunk when the file fits.
+        assert_eq!(upload_chunk_ranges(3, 5), vec![(0, 2)]);
+        // Empty file: no ranges (simple PUT handles it).
+        assert!(upload_chunk_ranges(0, 5).is_empty());
+    }
+
+    #[test]
+    fn content_range_value_is_inclusive() {
+        assert_eq!(content_range_value(0, 4, 12), "bytes 0-4/12");
+        assert_eq!(content_range_value(10, 11, 12), "bytes 10-11/12");
+    }
+
+    #[test]
+    fn session_body_replaces_like_simple_put() {
+        let body = upload_session_body("a b.pdf");
+        assert_eq!(
+            body["item"]["@microsoft.graph.conflictBehavior"],
+            "replace"
+        );
+        assert_eq!(body["item"]["name"], "a b.pdf");
     }
 }

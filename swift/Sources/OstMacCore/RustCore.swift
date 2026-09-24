@@ -244,9 +244,23 @@ public enum RustCore {
         return (data, resp.content_type)
     }
 
-    public static func sharedFiles(chatID: String, limit: Int32 = 20) throws -> SharedFilesResponse {
+    public static func sharedFiles(chatID: String, limit: Int32 = 20, includeFolders: Bool = false) throws -> SharedFilesResponse {
         try chatID.withCString { ptr in
-            try call(ostmac_files(ptr, limit), as: SharedFilesResponse.self)
+            if includeFolders {
+                try call(ostmac_files_opts(ptr, limit, 1), as: SharedFilesResponse.self)
+            } else {
+                try call(ostmac_files(ptr, limit), as: SharedFilesResponse.self)
+            }
+        }
+    }
+
+    /// One folder's children by drive+item id (om-i5-folders): files AND
+    /// subfolders, unfiltered. Blocking FFI (network): call off main.
+    public static func sharedChildren(driveID: String, itemID: String, limit: Int32 = 50) throws -> SharedFileChildrenResponse {
+        try driveID.withCString { dPtr in
+            try itemID.withCString { iPtr in
+                try call(ostmac_files_children(dPtr, iPtr, limit), as: SharedFileChildrenResponse.self)
+            }
         }
     }
 
@@ -258,12 +272,118 @@ public enum RustCore {
         }
     }
 
+    /// Current upload-progress gauge (pure core read, no network).
+    /// Poll while an upload spinner runs. Never blocks meaningfully,
+    /// but still crosses FFI: call off the main thread like every wrapper.
+    public static func sharedUploadProgress() throws -> UploadProgressResponse {
+        try call(ostmac_files_upload_progress(), as: UploadProgressResponse.self)
+    }
+
     public static func sharedDownload(driveID: String, itemID: String, dest: String) throws -> SharedFileDownloadResponse {
         try driveID.withCString { dPtr in
             try itemID.withCString { iPtr in
                 try dest.withCString { destPtr in
                     try call(ostmac_files_download(dPtr, iPtr, destPtr), as: SharedFileDownloadResponse.self)
                 }
+            }
+        }
+    }
+
+    /// View-only sharing link for one driveItem (Graph createLink).
+    /// scope "organization" (default) or "anonymous". Blocking FFI
+    /// (network): call off the main thread.
+    public static func sharedLink(driveID: String, itemID: String, scope: String = "organization") throws -> SharedFileLinkResponse {
+        try driveID.withCString { dPtr in
+            try itemID.withCString { iPtr in
+                try scope.withCString { sPtr in
+                    try call(ostmac_files_link(dPtr, iPtr, sPtr), as: SharedFileLinkResponse.self)
+                }
+            }
+        }
+    }
+
+    public static func sharedRename(driveID: String, itemID: String, newName: String) throws -> SharedFileManageResponse {
+        try driveID.withCString { dPtr in
+            try itemID.withCString { iPtr in
+                try newName.withCString { nPtr in
+                    try call(ostmac_files_rename(dPtr, iPtr, nPtr), as: SharedFileManageResponse.self)
+                }
+            }
+        }
+    }
+
+    /// Version history for one driveItem, newest first (blocking FFI +
+    /// network: call off the main thread).
+    public static func fileVersions(driveID: String, itemID: String) throws -> FileVersionsResponse {
+        try driveID.withCString { dPtr in
+            try itemID.withCString { iPtr in
+                try call(ostmac_file_versions(dPtr, iPtr), as: FileVersionsResponse.self)
+            }
+        }
+    }
+
+    /// Restore one version as current (blocking FFI + network).
+    public static func fileVersionRestore(
+        driveID: String, itemID: String, versionID: String
+    ) throws -> FileVersionRestoreResponse {
+        try driveID.withCString { dPtr in
+            try itemID.withCString { iPtr in
+                try versionID.withCString { vPtr in
+                    try call(
+                        ostmac_file_version_restore(dPtr, iPtr, vPtr),
+                        as: FileVersionRestoreResponse.self)
+                }
+            }
+        }
+    }
+
+    public static func sharedMove(driveID: String, itemID: String, destFolderID: String) throws -> SharedFileManageResponse {
+        try driveID.withCString { dPtr in
+            try itemID.withCString { iPtr in
+                try destFolderID.withCString { fPtr in
+                    try call(ostmac_files_move(dPtr, iPtr, fPtr), as: SharedFileManageResponse.self)
+                }
+            }
+        }
+    }
+
+    /// Download one old version's content to dest (blocking FFI + network).
+    public static func fileVersionDownload(
+        driveID: String, itemID: String, versionID: String, dest: String
+    ) throws -> SharedFileDownloadResponse {
+        try driveID.withCString { dPtr in
+            try itemID.withCString { iPtr in
+                try versionID.withCString { vPtr in
+                    try dest.withCString { destPtr in
+                        try call(
+                            ostmac_file_version_download(dPtr, iPtr, vPtr, destPtr),
+                            as: SharedFileDownloadResponse.self)
+                    }
+                }
+            }
+        }
+    }
+
+    public static func sharedCopy(driveID: String, itemID: String, destFolderID: String, newName: String?) throws -> SharedFileCopyResponse {
+        try driveID.withCString { dPtr in
+            try itemID.withCString { iPtr in
+                try destFolderID.withCString { fPtr in
+                    if let name = newName, !name.isEmpty {
+                        try name.withCString { nPtr in
+                            try call(ostmac_files_copy(dPtr, iPtr, fPtr, nPtr), as: SharedFileCopyResponse.self)
+                        }
+                    } else {
+                        try call(ostmac_files_copy(dPtr, iPtr, fPtr, nil), as: SharedFileCopyResponse.self)
+                    }
+                }
+            }
+        }
+    }
+
+    public static func sharedDelete(driveID: String, itemID: String) throws -> SharedFileDeleteResponse {
+        try driveID.withCString { dPtr in
+            try itemID.withCString { iPtr in
+                try call(ostmac_files_delete(dPtr, iPtr), as: SharedFileDeleteResponse.self)
             }
         }
     }

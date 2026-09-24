@@ -20,7 +20,7 @@ pub use chat::{
     ChatInfo, MessageInfo, MessagesPage, ReactionCount, ReadReceipt, REACTION_EMOJI,
 };
 pub use calendar::{JoinTarget, LobbyEvent, LobbyState, MeetingInfo};
-pub use files::SharedFile;
+pub use files::{FileVersion, SharedFile};
 pub use me::UserInfo;
 pub use notes::{NotePage, NotebookInfo, PageInfo, SectionInfo};
 pub use presence::PresenceInfo;
@@ -49,7 +49,14 @@ pub use calendar::{
     calendar_view_path, list_upcoming_meetings_data, lobby_next, parse_calendar_view,
     parse_join_url,
 };
-pub use files::{download_file_data, list_chat_files_data, upload_file_data};
+pub use files::{
+    content_range_value, copy_body, copy_file_data, create_link_data, delete_file_data,
+    download_file_data, download_file_version_data, drive_item_path, folder_children_path,
+    list_chat_files_data, list_chat_files_data_opts, list_file_versions_data,
+    list_folder_children_data, move_body, move_file_data, rename_body, rename_file_data,
+    restore_file_version_data, upload_chunk_ranges, upload_file_data,
+    upload_file_data_with_progress, upload_session_body, UploadProgress,
+};
 pub use media::{fetch_media_data, MediaBytes, MAX_BYTES};
 pub use me::whoami_data;
 pub use notes::{
@@ -166,6 +173,11 @@ pub async fn download_file(drive_id: &str, item_id: &str, dest: &str) -> Result<
 /// Upload a local file to a chat or channel
 pub async fn upload_file(chat_id: &str, local_path: &str) -> Result<()> {
     files::upload_file(chat_id, local_path).await
+}
+
+/// Create a view-only sharing link for a shared file (om-i1-links)
+pub async fn create_link(drive_id: &str, item_id: &str, scope: &str) -> Result<()> {
+    files::create_link(drive_id, item_id, scope).await
 }
 
 /// List Microsoft To Do lists

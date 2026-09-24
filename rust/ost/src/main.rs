@@ -179,7 +179,7 @@ enum Commands {
         out: String,
     },
 
-    /// Upload a local file to a chat or channel (<4 MB)
+    /// Upload a local file to a chat or channel (large files use a resumable session)
     FilesUpload {
         /// Chat or channel ID (from `chats` / `teams` output)
         #[arg(short, long)]
@@ -187,6 +187,19 @@ enum Commands {
 
         /// Local file path
         path: String,
+    },
+
+    /// Create a view-only sharing link for a shared file
+    FilesLink {
+        /// Drive ID (from `files` list output)
+        drive_id: String,
+
+        /// DriveItem ID
+        item_id: String,
+
+        /// Link scope: organization (org-only, default) or anonymous
+        #[arg(long, default_value = "organization")]
+        scope: String,
     },
 
     /// OneNote notebooks, sections, pages (read; --append edits)
@@ -365,6 +378,13 @@ async fn main() -> Result<()> {
         Commands::FilesUpload { to, path } => {
             tracing::info!("Uploading file...");
             api::upload_file(&to, &path).await?;
+        }
+        Commands::FilesLink {
+            drive_id,
+            item_id,
+            scope,
+        } => {
+            api::create_link(&drive_id, &item_id, &scope).await?;
         }
         Commands::Notes {
             group,

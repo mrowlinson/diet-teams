@@ -20,9 +20,9 @@ final class ComposeAttachmentsTests: XCTestCase {
         XCTAssertTrue(ComposeAttachments.isTooLarge(size: Self.cap + 1))
     }
 
-    func testCapMessageSurfacesLimitBeforeUpload() {
+    func testCapMessageSurfacesSessionPathBeforeUpload() {
         let msg = ComposeAttachments.capMessage(actual: 5 * 1024 * 1024)
-        XCTAssertEqual(msg, "File is 5.0 MB; uploads are limited to 4.0 MB")
+        XCTAssertEqual(msg, "File is 5.0 MB; large files use resumable upload")
     }
 
     // MARK: - Picker model (pure)
@@ -88,18 +88,23 @@ final class ComposeAttachmentsTests: XCTestCase {
         XCTAssertEqual(done.count, 2)
     }
 
-    func testUploadSkipsTooLargeWithoutCalling() async {
-        var calls = 0
+    func testUploadSendsLargeFilesViaSessionPath() async {
+        var calls: [(String, String)] = []
         let store = ComposeAttachmentsStore(
-            upload: { _, _ in
-                calls += 1
-                throw CoreCallError.failed("must not be called")
+            upload: { chat, path in
+                calls.append((chat, path))
+                return SharedFileUploadResponse(
+                    ok: true, file: SharedFile(id: "f-big", name: "b.mov", size: Self.cap + 1))
             },
             sizeProbe: { _ in Self.cap + 1 })
         store.stage(paths: ["/tmp/b.mov"])
+        XCTAssertEqual(store.attachments.first?.state, .tooLarge(actual: Self.cap + 1))
         let done = await store.uploadPending(chatID: "19:chat@thread.v2")
-        XCTAssertEqual(calls, 0)
-        XCTAssertTrue(done.isEmpty)
+        XCTAssertEqual(calls.count, 1)
+        XCTAssertEqual(calls.first?.0, "19:chat@thread.v2")
+        XCTAssertEqual(calls.first?.1, "/tmp/b.mov")
+        XCTAssertEqual(done.count, 1)
+        XCTAssertEqual(store.attachments.first?.state, .uploaded)
         XCTAssertFalse(store.uploading)
         XCTAssertNil(store.error)
     }
@@ -195,11 +200,9 @@ final class ComposeAttachmentsTests: XCTestCase {
             },
             sizeProbe: { path in path == "/tmp/big.mov" ? Self.cap + 1 : 100 })
         store.stage(paths: ["/tmp/a.pdf", "/tmp/big.mov"])
-        let bigID = store.attachments[1].id
-        _ = await store.uploadPending(chatID: "19:x")
+        let done = await store.uploadPending(chatID: "19:x")
+        XCTAssertEqual(done.count, 2) // large files ride the session path
         store.clearFinished()
-        XCTAssertEqual(store.attachments.map(\.path), ["/tmp/big.mov"])
-        store.remove(id: bigID)
         XCTAssertTrue(store.attachments.isEmpty)
         XCTAssertFalse(store.hasStaged)
     }

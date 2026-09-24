@@ -326,6 +326,67 @@ needing maintainer buy-in. Minor PRs stand alone; majors are separate PRs.
     verified live against the server in this lane; 403 surfaces as
     call detail. TUI untouched.
 
+33. [minor] `src/api/files.rs` + `src/api/mod.rs` —
+    **folder listing + children endpoint (om-i5-folders lane)**.
+    `SharedFile` gains `is_folder` (driveItem `folder` facet);
+    `list_chat_files_data` delegates to new
+    `list_chat_files_data_opts(.., include_folders)` (default false,
+    shape stable); new `list_folder_children_data(drive_id, item_id,
+    limit)` (`GET /drives/{d}/items/{i}/children`, unfiltered) plus
+    pure `folder_children_path`. Re-exported in `src/api/mod.rs`.
+    TUI untouched.
+
+34. [minor] `src/api/files.rs` + `src/api/mod.rs` + `src/main.rs` —
+    **view-only sharing links (om-i1-links lane)**. New
+    `SharedLink{url, scope}`; `create_link_data` (`POST
+    /drives/{d}/items/{i}/createLink`, view-only);
+    `normalize_link_scope` (blank/unknown normalizes to
+    `organization`, least privilege; `anonymous` opt-in);
+    `create_link_body` / `create_link_path` / `parse_create_link`.
+    `SharedFile` gains `share_url` (None at list; Swift caches the
+    created link per file id). CLI: `files-link` subcommand; `files`
+    list prints the Drive id. Idempotent server-side (same scope,
+    same link). TUI untouched.
+
+35. [minor] `src/api/files.rs` + `src/api/mod.rs` —
+    **file version history (om-i2-versions lane)**. New `FileVersion`
+    (`id`, `size`, `modified`, `modified_by`) +
+    `list_file_versions_data` (`GET /drives/{d}/items/{i}/versions`,
+    newest first), `restore_file_version_data` (`POST
+    .../versions/{v}/restoreVersion`), `download_file_version_data`
+    (`GET .../versions/{v}/content`). Additive only; existing
+    files/upload/download paths untouched. TUI untouched.
+
+36. [minor] `src/api/files.rs` + `src/api/mod.rs` —
+    **driveItem rename/move/copy/delete (om-i3-manage lane)**. New
+    `rename_file_data` (PATCH name), `move_file_data` (PATCH
+    parentReference), `copy_file_data` (`POST .../copy`, 202 +
+    monitor URL), `delete_file_data` (DELETE, 204 no body) plus pure
+    `drive_item_path` / `rename_body` / `move_body` / `copy_body`
+    pinned by unit tests. Re-exported in `src/api/mod.rs`. No CLI
+    commands added (FFI lane). TUI untouched.
+
+37. [major] `src/api/files.rs` + `src/api/client.rs` + `src/api/mod.rs` +
+    `src/main.rs` — **resumable file uploads >4 MB (om-i4-bigup lane)**.
+    `upload_file_data` no longer bails over `MAX_SIMPLE_UPLOAD`: files
+    <=4 MB keep the single simple PUT, larger files use a Graph resumable
+    session (`POST .../createUploadSession` with `conflictBehavior:
+    replace` matching simple-PUT overwrite semantics, then sequential
+    5 MiB fragment PUTs to the pre-authenticated `uploadUrl`). New
+    `TeamsClient::drive_session_put` (absolute-URL PUT, no bearer,
+    `Content-Range`/`Content-Length` headers; 202 continues, 200/201
+    returns the driveItem). Progress: new
+    `upload_file_data_with_progress` (`(sent, total)` per fragment;
+    simple PUT reports once at completion); old `upload_file_data`
+    delegates with no sink. Pure `upload_chunk_ranges` /
+    `content_range_value` / `upload_session_body` pinned by unit tests.
+    CLI `files-upload` streams `\rUploading N%` to stderr. Channel and
+    chat destinations share the session path (channel resolves the team
+    filesFolder first, as before); the `reference` message post is
+    unchanged. NOT live-verified against Graph in this lane (no test
+    chat; session wire shape per Graph resumable-upload docs). TUI
+    untouched (still builds).
+
 ## Upstream PRs (2026-09-22, base 0892144; main red on sdp E0308 until #5)
 
 Minor (standalone modulo #5-first; merge in any order after):
