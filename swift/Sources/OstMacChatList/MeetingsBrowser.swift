@@ -9,6 +9,8 @@ import SwiftUI
 /// states; errors are `DietEmptyState` / `DietBanner`.
 public struct MeetingsBrowser: View {
     @ObservedObject private var model: MeetingsViewModel
+    /// Reduce Motion (om-a1-motion): state changes land instantly.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     public init(model: MeetingsViewModel) {
         self.model = model
@@ -52,7 +54,7 @@ public struct MeetingsBrowser: View {
                         .transition(.opacity)
                 }
             }
-            .animation(.default, value: model.state)
+            .animation(DietMotion.gated(reduceMotion: reduceMotion), value: model.state)
         }
         .sheet(isPresented: $model.showPreJoin) {
             if let target = model.pendingJoin {

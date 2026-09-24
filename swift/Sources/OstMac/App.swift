@@ -38,8 +38,9 @@
 // --jump-query <q> / --filter-query <q> preseed the palette/sidebar
 // filters (shot hooks).
 // --show-gif opens the GIF picker popover at launch (shot hook).
-// --show-picker opens the reaction more-picker popover on the first
-// reacted bubble at launch (om-react-polish shot hook, offline).
+// --show-picker opens the reaction more-picker popover on the
+// bottom-most reacted bubble at launch (om-react-polish shot hook,
+// offline).
 // --show-catchup stretches the demo thread past 20 messages and
 // auto-opens the catch-up sheet with a canned summary (shot hook,
 // offline, throwaway defaults — never the real ones).
@@ -207,7 +208,7 @@ private struct OstMacCommands: Commands {
         CommandGroup(after: .appInfo) {
             Button("Sign In…") { openWindow(id: AppIdentity.authWindowID) }
                 .keyboardShortcut("I", modifiers: [.command, .shift])
-            Divider()
+            Divider() // native menu separator; keep.
         }
         CommandMenu("Call") {
             Button("In-Call Window") { openWindow(id: AppIdentity.callWindowID) }

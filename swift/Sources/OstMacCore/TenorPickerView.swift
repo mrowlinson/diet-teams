@@ -1,6 +1,7 @@
 // TenorPickerView.swift — om-cmdk lane: GIF picker popover for the composer.
 // Trending on open, search on submit, thumbnails in a grid. No API key =
 // graceful off-state pointing at Settings (no request is ever made).
+import DietDesign
 import SwiftUI
 
 /// GIF picker. `onPick` fires with the full-size GIF URL; the host inserts
@@ -25,14 +26,14 @@ public struct TenorPickerView: View {
             } else {
                 HStack(spacing: 8) {
                     Image(systemName: "magnifyingglass")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DietColor.textSecondaryColor)
                     TextField("Search GIFs", text: $query)
                         .textFieldStyle(.roundedBorder)
                         .onSubmit { Task { await runSearch() } }
                     if loading { ProgressView().controlSize(.small) }
                 }
                 .padding(10)
-                Divider()
+                DietSeamH()
                 grid
             }
         }
@@ -45,34 +46,25 @@ public struct TenorPickerView: View {
     }
 
     private var offState: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "photo.on.rectangle.angled")
-                .font(.largeTitle).foregroundStyle(.secondary)
-            Text("GIFs need a Tenor API key").font(.headline)
-            Text("Add your free key in Settings → GIFs to enable the picker.")
-                .font(.callout).foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-        }
-        .padding(24)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        DietEmptyState(
+            systemImage: "photo.on.rectangle.angled",
+            title: "GIFs need a Tenor API key",
+            message: "Add your free key in Settings → GIFs to enable the picker.")
     }
 
     private var grid: some View {
         Group {
             if let error {
-                VStack(spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle")
-                        .font(.largeTitle).foregroundStyle(.secondary)
-                    Text(error).font(.callout)
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                    Button("Retry") { Task { await loadTrending() } }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding()
+                DietEmptyState(
+                    systemImage: "exclamationmark.triangle",
+                    title: "Couldn't load GIFs",
+                    message: error,
+                    actionLabel: "Retry",
+                    action: { Task { await loadTrending() } })
             } else if gifs.isEmpty, !loading {
                 Text("No GIFs found.")
-                    .foregroundStyle(.secondary)
+                    .font(DietType.body)
+                    .foregroundStyle(DietColor.textSecondaryColor)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
@@ -89,7 +81,7 @@ public struct TenorPickerView: View {
                                     case .failure:
                                         Color.gray.opacity(0.2)
                                             .overlay(Image(systemName: "photo")
-                                                .foregroundStyle(.secondary))
+                                                .foregroundStyle(DietColor.textSecondaryColor))
                                     case .empty:
                                         Color.gray.opacity(0.12)
                                     @unknown default:

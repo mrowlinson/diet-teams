@@ -213,19 +213,20 @@ public struct HealthView: View {
                     .disabled(store.running)
             }
             if let err = store.error {
-                Text(err).font(.caption).foregroundStyle(.red)
+                Text(err).font(DietType.caption1)
+                    .foregroundStyle(Color(nsColor: DietColor.danger))
                     .textSelection(.enabled)
             }
             if let report = store.report {
                 if let upn = report.accountUPN {
                     LabeledContent("Account", value: upn)
-                        .font(.caption)
+                        .font(DietType.caption1)
                 }
                 tokenSection(report.tokens)
                 probeSection(report.probes)
             } else if store.error == nil {
                 Text(store.running ? "Checking…" : "Not checked yet")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(DietType.caption1).foregroundStyle(DietColor.textSecondaryColor)
             }
         }
     }

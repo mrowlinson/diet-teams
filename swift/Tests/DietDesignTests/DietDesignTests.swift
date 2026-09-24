@@ -132,3 +132,28 @@ final class DietBannerStyleTests: XCTestCase {
         }
     }
 }
+
+// DietMotionTests — om-a1-motion: Reduce Motion gate contract.
+final class DietMotionTests: XCTestCase {
+    func testGatedNilUnderReduceMotion() {
+        XCTAssertNil(DietMotion.gated(reduceMotion: true))
+    }
+
+    func testGatedPassesBaseOtherwise() {
+        XCTAssertNotNil(DietMotion.gated(reduceMotion: false))
+    }
+
+    func testScrollNeverAnimatesUnderReduceMotion() {
+        XCTAssertFalse(
+            DietMotion.scrollAnimated(requested: true, reduceMotion: true))
+        XCTAssertFalse(
+            DietMotion.scrollAnimated(requested: false, reduceMotion: true))
+    }
+
+    func testScrollFollowsRequestOtherwise() {
+        XCTAssertTrue(
+            DietMotion.scrollAnimated(requested: true, reduceMotion: false))
+        XCTAssertFalse(
+            DietMotion.scrollAnimated(requested: false, reduceMotion: false))
+    }
+}

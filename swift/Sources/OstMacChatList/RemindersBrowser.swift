@@ -14,6 +14,8 @@ public struct RemindersBrowser: View {
     @ObservedObject private var model: RemindersViewModel
     @State private var newTitle = ""
     @State private var hideDone = false
+    /// Reduce Motion (om-a1-motion): state changes land instantly.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     public init(model: RemindersViewModel) {
         self.model = model
@@ -51,8 +53,9 @@ public struct RemindersBrowser: View {
             }
         }
         // System-default crossfade between content states (same language
-        // as the Chats/Teams sections). Standard SwiftUI only.
-        .animation(.default, value: model.state)
+        // as the Chats/Teams sections; instant under Reduce Motion).
+        // Standard SwiftUI only.
+        .animation(DietMotion.gated(reduceMotion: reduceMotion), value: model.state)
     }
 
     private var loadedBody: some View {

@@ -9,6 +9,7 @@
 // ignores it).
 // Removed: Application (dup of About), Diagnostics (moved to the
 // Diagnostics window — Window ▸ Diagnostics).
+import DietDesign
 import OstMacChatList
 import OstMacCore
 import SwiftUI
@@ -83,8 +84,8 @@ struct SettingsView: View {
                 Section("Per-chat overrides") {
                     if chats.chats.isEmpty, rules.config.mutedChatIDs.isEmpty {
                         Text("No chats loaded yet. Muted chats appear here once the chat list loads.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .font(DietType.caption1)
+                            .foregroundStyle(DietColor.textSecondaryColor)
                     } else {
                         ForEach(chats.chats) { chat in
                             Toggle(chat.name, isOn: muteBinding(chat.id))
@@ -93,8 +94,8 @@ struct SettingsView: View {
                         ForEach(orphanedMuteIDs, id: \.self) { chatID in
                             HStack {
                                 Text(chatID)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                                    .font(DietType.caption1)
+                                    .foregroundStyle(DietColor.textSecondaryColor)
                                     .textSelection(.enabled)
                                     .lineLimit(1)
                                     .truncationMode(.middle)
@@ -107,14 +108,14 @@ struct SettingsView: View {
                         }
                     }
                     Text("Muted chats never banner and never accrue unread (rules reason “chat-muted”).")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(DietType.caption1)
+                        .foregroundStyle(DietColor.textSecondaryColor)
                 }
                 Section("Blocked users") {
                     if blocked.users.isEmpty {
                         Text("No blocked users. Block someone from a 1:1 chat in the sidebar (right-click).")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .font(DietType.caption1)
+                            .foregroundStyle(DietColor.textSecondaryColor)
                     } else {
                         ForEach(blocked.sortedUsers) { user in
                             HStack {
@@ -130,8 +131,8 @@ struct SettingsView: View {
                         }
                     }
                     Text("Blocked users never banner and never accrue unread. Unblocked chats reappear when the list next loads.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(DietType.caption1)
+                        .foregroundStyle(DietColor.textSecondaryColor)
                 }
                 Section("Quiet hours") {
                     Toggle("Scheduled quiet hours", isOn: $quiet.windowEnabled)
@@ -159,8 +160,8 @@ struct SettingsView: View {
                     }
                     .disabled(!quiet.windowEnabled)
                     Text("Banners and sounds pause on schedule (overnight ranges like 22:00–07:00 wrap past midnight), mentions included. Unread pauses too while quiet — the Mentions row still tracks threads for review; suppressions are counted in Diagnostics.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(DietType.caption1)
+                        .foregroundStyle(DietColor.textSecondaryColor)
                 }
                 Section("Do Not Disturb") {
                     Toggle("Do Not Disturb", isOn: dndBinding)
@@ -176,14 +177,14 @@ struct SettingsView: View {
                     }
                     LabeledContent("Status", value: quiet.dndStatus())
                     Text("Manual silence with auto-expiry. Like the schedule, it holds banners and sounds — unread pauses too while on.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(DietType.caption1)
+                        .foregroundStyle(DietColor.textSecondaryColor)
                 }
                 Section("GIFs (Tenor)") {
                     SecureField("Tenor API key", text: $tenorAPIKey)
                     Text("Bring your own free key (Google Cloud Console → Tenor API). Empty = GIF picker stays off; nothing is sent anywhere.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(DietType.caption1)
+                        .foregroundStyle(DietColor.textSecondaryColor)
                 }
                 CatchUpSettingsSection(catchUp: catchUp)
             }
