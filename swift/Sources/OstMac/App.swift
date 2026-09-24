@@ -178,7 +178,7 @@ struct OstMacAppMain: App {
         }
         .defaultSize(width: 720, height: 480)
         Settings {
-            SettingsView(auth: state.auth, catchUp: state.catchUp, notifs: state.notifs)
+            SettingsView(auth: state.auth, catchUp: state.catchUp, notifs: state.notifs, quiet: state.quietHours)
         }
         .commands { OstMacCommands() }
     }
@@ -231,6 +231,7 @@ final class AppState: ObservableObject {
     let feed = RealtimeFeed()
     let typing = TypingStore()
     let notifs = MessageNotifications()
+    let quietHours = QuietHoursStore()
     let unread = UnreadStore()
     let mentions = MentionStore()
     let receipts = ReceiptStore()
@@ -405,6 +406,12 @@ final class AppState: ObservableObject {
         // local end) + the feed (rings, remote end); redial re-places.
         // Forward history changes so the Diagnostics counts tick live.
         history.objectWillChange
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &cancellables)
+        // om-quiet-hours: forward quiet changes so the Diagnostics
+        // rows tick live (schedule flips, DND expiry, suppressions).
+        quietHours.objectWillChange
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.objectWillChange.send() }
             .store(in: &cancellables)
@@ -724,13 +731,18 @@ final class AppState: ObservableObject {
         typing.noteMessage(
             chatID: msg.chatID, sender: msg.sender, senderID: msg.senderID)
         chats.ingest(realtime: msg)
-        // om-notif: banner for non-open, non-own, non-edit events.
-        Task {
-            await notifs.handle(
-                msg,
-                chatName: chats.chats.first(where: { $0.id == msg.chatID })?.name,
-                openChatID: openChatID,
-                ownDisplayName: conv.ownDisplayName)
+        // om-quiet-hours: snapshot quiet ONCE per event; both banner
+        // paths below obey it (banners/sounds drop, unread still accrues).
+        let quiet = quietHours.isQuietNow
+        if !quiet {
+            // om-notif: banner for non-open, non-own, non-edit events.
+            Task {
+                await notifs.handle(
+                    msg,
+                    chatName: chats.chats.first(where: { $0.id == msg.chatID })?.name,
+                    openChatID: openChatID,
+                    ownDisplayName: conv.ownDisplayName)
+            }
         }
         if let mri = msg.senderID,
            msg.sender != conv.ownDisplayName,
@@ -741,13 +753,19 @@ final class AppState: ObservableObject {
         // om-rules + om-notifbadge: ONE rules decision per event drives
         // both the banner (all chats, open one included — TN parity) and
         // the unread counts (skips and the open chat never accrue).
+        // om-quiet-hours: rules run FIRST (unread/mentions accrue from
+        // the decision regardless); quiet hours gate the banners SECOND.
         let chatName = chats.chats.first(where: { $0.id == msg.chatID })?.name ?? ""
         let decision = rulesDecision(for: msg, chatName: chatName)
         unread.ingest(decision: decision, chatID: msg.chatID, openChatID: openChatID)
         mentions.ingest(
             realtime: msg, ownName: conv.ownDisplayName,
             ownerMRI: resolvedOwnerMRI, openChatID: openChatID)
-        maybeNotify(msg, chatName: chatName, decision: decision)
+        if quiet {
+            noteSuppressedIfWarranted(msg, chatName: chatName, decision: decision)
+        } else {
+            maybeNotify(msg, chatName: chatName, decision: decision)
+        }
         // om-meet-chat: meeting-thread events adopt the meeting panel
         // (any meeting thread, not just the open chat). The panel owns
         // its thread; the chat list is untouched by this path.
@@ -778,6 +796,30 @@ final class AppState: ObservableObject {
         return ChatFilter.decide(
             message: msg, chatDisplayName: chatName, ownerMRI: resolvedOwnerMRI,
             rules: cfg, meetingDedup: &meetingDedup, now: Date())
+    }
+
+    /// Quiet-held event (om-quiet-hours): count ONE suppression when a
+    /// banner would otherwise have posted — rules .notify and/or the
+    /// legacy non-open-chat path. Rules already decided above; this only
+    /// records that quiet held the banner back (counted once per event).
+    private func noteSuppressedIfWarranted(_ msg: RealtimeMessage, chatName: String, decision: ChatFilter.Decision) {
+        let rulesNotified: Bool
+        if case .notify = decision {
+            rulesNotified = true
+        } else {
+            rulesNotified = false
+        }
+        // Same pure gate the legacy banner path uses ("" reads as unnamed,
+        // exactly like the nil the Task passes when the chat is unknown).
+        let legacyWouldPost = MessageNotifications.makeNotification(
+            for: msg, chatName: chatName,
+            openChatID: openChatID, ownDisplayName: conv.ownDisplayName) != nil
+        if QuietHoursGate.countsSuppression(
+            quiet: true, bannersEnabled: notifs.enabled,
+            rulesNotified: rulesNotified, legacyWouldPost: legacyWouldPost)
+        {
+            quietHours.noteSuppressed()
+        }
     }
 
     /// Rules-based banner for one live event (om-rules: TN ChatFilter
@@ -869,6 +911,7 @@ final class AppState: ObservableObject {
         feedState = feed.currentState
         feedPolls = feed.pollCount
         feedError = feed.lastError
+        quietHours.refresh() // om-quiet-hours: sweep expired DND (2s tick)
         if !isDemo { call.refresh() } // re-read slot (place/accept landed?)
     }
 

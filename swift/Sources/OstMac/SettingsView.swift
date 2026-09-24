@@ -14,6 +14,7 @@ struct SettingsView: View {
     @ObservedObject private var auth: AuthViewModel
     @ObservedObject private var catchUp: CatchUpStore
     @ObservedObject private var notifs: MessageNotifications
+    @ObservedObject private var quiet: QuietHoursStore
     @AppStorage("tenorAPIKey") private var tenorAPIKey = ""
     private let fixedAccount: AccountInfo?
 
@@ -21,11 +22,13 @@ struct SettingsView: View {
     init(
         auth: AuthViewModel,
         catchUp: CatchUpStore = CatchUpStore(),
-        notifs: MessageNotifications = MessageNotifications()
+        notifs: MessageNotifications = MessageNotifications(),
+        quiet: QuietHoursStore = QuietHoursStore()
     ) {
         _auth = ObservedObject(wrappedValue: auth)
         _catchUp = ObservedObject(wrappedValue: catchUp)
         _notifs = ObservedObject(wrappedValue: notifs)
+        _quiet = ObservedObject(wrappedValue: quiet)
         fixedAccount = nil
     }
 
@@ -35,6 +38,7 @@ struct SettingsView: View {
         _auth = ObservedObject(wrappedValue: .demo(.signedOut))
         _catchUp = ObservedObject(wrappedValue: CatchUpStore())
         _notifs = ObservedObject(wrappedValue: MessageNotifications())
+        _quiet = ObservedObject(wrappedValue: QuietHoursStore())
         fixedAccount = account
     }
 
@@ -54,6 +58,52 @@ struct SettingsView: View {
                     Toggle("Message banners", isOn: $notifs.enabled)
                         .help("When off, no chat banners are posted")
                     LabeledContent("System permission", value: permissionText)
+                }
+                Section("Quiet hours") {
+                    Toggle("Scheduled quiet hours", isOn: $quiet.windowEnabled)
+                        .help("Pause banners and sounds on a daily schedule")
+                    DatePicker(
+                        "Start",
+                        selection: startBinding,
+                        displayedComponents: .hourAndMinute)
+                        .disabled(!quiet.windowEnabled)
+                    DatePicker(
+                        "End",
+                        selection: endBinding,
+                        displayedComponents: .hourAndMinute)
+                        .disabled(!quiet.windowEnabled)
+                    LabeledContent("Days") {
+                        HStack {
+                            ForEach(1 ... 7, id: \.self) { day in
+                                Toggle(
+                                    dayLetter(day),
+                                    isOn: dayBinding(day))
+                                    .toggleStyle(.checkbox)
+                                    .help(dayName(day))
+                            }
+                        }
+                    }
+                    .disabled(!quiet.windowEnabled)
+                    Text("Banners and sounds pause on schedule (overnight ranges like 22:00–07:00 wrap past midnight). Unread counts keep accruing; suppressed banners are counted in Diagnostics.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Section("Do Not Disturb") {
+                    Toggle("Do Not Disturb", isOn: dndBinding)
+                        .help("Silence banners and sounds now, until the auto-expiry below")
+                    Picker("Auto-expire", selection: $quiet.pendingDNDOption) {
+                        ForEach(DNDDuration.allCases, id: \.self) { opt in
+                            Text(opt.label).tag(opt)
+                        }
+                    }
+                    .onChange(of: quiet.pendingDNDOption) { _, next in
+                        // Re-clock a live DND when the choice changes.
+                        if quiet.dndOn { quiet.enableDND(next) }
+                    }
+                    LabeledContent("Status", value: quiet.dndStatus())
+                    Text("Manual silence with auto-expiry. Like the schedule, it holds banners and sounds only — unread counts keep accruing.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 Section("GIFs (Tenor)") {
                     SecureField("Tenor API key", text: $tenorAPIKey)
@@ -86,5 +136,50 @@ struct SettingsView: View {
         case .some(false): "Denied"
         case .none: "Unknown"
         }
+    }
+
+    // MARK: quiet hours bridges (minutes <-> DatePicker dates, day set)
+
+    private var startBinding: Binding<Date> {
+        Binding(
+            get: { QuietHoursStore.timeOfDay(minutes: quiet.startMinutes) },
+            set: { quiet.startMinutes = QuietHoursStore.minutes(ofTime: $0) })
+    }
+
+    private var endBinding: Binding<Date> {
+        Binding(
+            get: { QuietHoursStore.timeOfDay(minutes: quiet.endMinutes) },
+            set: { quiet.endMinutes = QuietHoursStore.minutes(ofTime: $0) })
+    }
+
+    /// Enabling applies the pending auto-expiry; disabling clears it.
+    private var dndBinding: Binding<Bool> {
+        Binding(
+            get: { quiet.dndOn },
+            set: { $0 ? quiet.enableDND(quiet.pendingDNDOption) : quiet.disableDND() })
+    }
+
+    private func dayBinding(_ day: Int) -> Binding<Bool> {
+        Binding(
+            get: { quiet.days.contains(day) },
+            set: {
+                if $0, !quiet.days.contains(day) {
+                    quiet.days.append(day)
+                } else if !$0 {
+                    quiet.days.removeAll(where: { $0 == day })
+                }
+            })
+    }
+
+    /// Single-letter checkbox label (Sunday-first, Calendar order).
+    private func dayLetter(_ day: Int) -> String {
+        let symbols = Calendar.current.veryShortWeekdaySymbols
+        return symbols[(day - 1 + symbols.count) % symbols.count]
+    }
+
+    /// Full day name (checkbox tooltip).
+    private func dayName(_ day: Int) -> String {
+        let symbols = Calendar.current.weekdaySymbols
+        return symbols[(day - 1 + symbols.count) % symbols.count]
     }
 }
