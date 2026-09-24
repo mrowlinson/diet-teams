@@ -2,16 +2,19 @@
 //
 // Chat files (OneDrive "Microsoft Teams Chat Files" via message attachments)
 // and channel files (SharePoint filesFolder) share one list model. Swift
-// opens web_url in the browser and saves via core (drive download to
-// ~/Downloads); upload posts a reference attachment message (<=4 MB one
-// PUT, larger via a resumable session; % polls the core gauge).
+// opens web_url in the browser and saves via core (drive download, Save-as
+// panel defaulting to ~/Downloads/<name>); upload posts a reference
+// attachment message (<=4 MB one PUT, larger via a resumable session;
+// % polls the core gauge; multi-upload pre-gated like the composer).
 //
 //   let store = SharedFilesStore()
 //   store.open(chatID: "19:...")   // list via core (replaces files)
 //   store.drill(folder)            // children via core, crumb pushed
 //   store.back()                   // cached parent, no refetch
-//   store.upload(path: "/tmp/a.pdf")
+//   store.upload(paths: urls.map(\.path)) // multi-upload, cap-gated
 //   store.save(file)               // core download to ~/Downloads
+//   store.saveAs(file, to: panel.url!.path)
+//   store.displayedFiles           // filter + sort applied
 // Tests inject mock fetchers (same seam as ChatListViewModel.Fetcher).
 import AppKit
 import Foundation
@@ -40,6 +43,80 @@ public struct SharedFolderCrumb: Equatable, Sendable {
     var key: String { "\(driveID)\n\(itemID)" }
 }
 
+/// Shared-tab sort orders (om-iu-rowdepth): name A→Z (case-insensitive),
+/// date newest-first, size largest-first. Ties break by id (deterministic).
+public enum SharedFilesSort: String, CaseIterable, Sendable {
+    case name
+    case date
+    case size
+
+    public var label: String { rawValue.capitalized }
+}
+
+/// Shared-tab type filter chips (om-iu-rowdepth). Mirrors the
+/// `SharedFile.iconName` mime/extension mapping; anything outside the four
+/// kinds (archives, audio, video, unknown) lands in `.other`.
+public enum SharedFilesTypeFilter: String, CaseIterable, Sendable {
+    case all
+    case docs
+    case images
+    case sheets
+    case slides
+    case other
+
+    public var label: String {
+        switch self {
+        case .all: return "All"
+        case .docs: return "Docs"
+        case .images: return "Images"
+        case .sheets: return "Sheets"
+        case .slides: return "Slides"
+        case .other: return "Other"
+        }
+    }
+
+    public func matches(_ file: SharedFile) -> Bool {
+        switch self {
+        case .all: return true
+        case .docs: return Self.kind(of: file) == .docs
+        case .images: return Self.kind(of: file) == .images
+        case .sheets: return Self.kind(of: file) == .sheets
+        case .slides: return Self.kind(of: file) == .slides
+        case .other: return Self.kind(of: file) == .other
+        }
+    }
+
+    private static func kind(of file: SharedFile) -> SharedFilesTypeFilter {
+        let m = (file.mime ?? "").lowercased()
+        let ext = (file.name as NSString).pathExtension.lowercased()
+        if m.hasPrefix("image/")
+            || ["png", "jpg", "jpeg", "gif", "heic", "webp"].contains(ext)
+        {
+            return .images
+        }
+        if m.hasPrefix("text/") || m == "application/pdf"
+            || m.contains("msword") || m.contains("wordprocessingml")
+            || m.contains("rtf")
+            || ["pdf", "doc", "docx", "pages", "txt", "md", "rtf"].contains(ext)
+        {
+            return .docs
+        }
+        if m.contains("spreadsheet") || m.contains("sheet")
+            || m.contains("excel") || m.contains("csv")
+            || ["xls", "xlsx", "numbers", "csv"].contains(ext)
+        {
+            return .sheets
+        }
+        if m.contains("presentation") || m.contains("powerpoint")
+            || m.contains("keynote")
+            || ["ppt", "pptx", "key"].contains(ext)
+        {
+            return .slides
+        }
+        return .other
+    }
+}
+
 @MainActor
 public final class SharedFilesStore: ObservableObject {
     public typealias ListFetcher = @Sendable (String, Int32) throws -> SharedFilesResponse
@@ -54,6 +131,9 @@ public final class SharedFilesStore: ObservableObject {
     public typealias ProgressFetcher = @Sendable () throws -> UploadProgressResponse
     public typealias OpenURLFn = @Sendable (URL) -> Bool
     public typealias CopyLinkFn = @Sendable (String) -> Void
+    /// File-size probe (bytes), nil when unreadable (stages as 0 B).
+    /// Same seam as the composer (om-iu-rowdepth pre-gate).
+    public typealias SizeProbe = ComposeAttachmentsStore.SizeProbe
 
     @Published public private(set) var files: [SharedFile] = []
     @Published public private(set) var state: SharedFilesState = .loading
@@ -67,6 +147,13 @@ public final class SharedFilesStore: ObservableObject {
     /// Breadcrumb path from root (empty = root). Drives view crumbs + back.
     @Published public private(set) var crumbs: [SharedFolderCrumb] = []
     @Published public private(set) var managingIDs: Set<String> = []
+    /// Paths skipped by the 4 MB pre-gate on the last upload call.
+    @Published public private(set) var gatedUploads: [String] = []
+    /// Cap message for the last gated upload (composer wording).
+    @Published public private(set) var uploadError: String?
+    /// Sort + type filter (bound to the toolbar controls).
+    @Published public var sort: SharedFilesSort = .date
+    @Published public var filter: SharedFilesTypeFilter = .all
     public private(set) var chatID: String?
     public private(set) var isDemo = false
 
@@ -90,6 +177,7 @@ public final class SharedFilesStore: ObservableObject {
     private static let rootKey = "root"
     private var currentKey: String { crumbs.last?.key ?? Self.rootKey }
     private let copyLinkFn: CopyLinkFn
+    private let sizeProbe: SizeProbe
     private var openGeneration = 0
 
     /// Default URL opener. No-op (returns false) under XCTest so tests never
@@ -137,7 +225,8 @@ public final class SharedFilesStore: ObservableObject {
         },
         progress: @escaping ProgressFetcher = { try RustCore.sharedUploadProgress() },
         openURL: @escaping OpenURLFn = SharedFilesStore.defaultOpenURL,
-        copyLink: @escaping CopyLinkFn = SharedFilesStore.defaultCopyLink
+        copyLink: @escaping CopyLinkFn = SharedFilesStore.defaultCopyLink,
+        sizeProbe: @escaping SizeProbe = ComposeAttachmentsStore.defaultSizeProbe
     ) {
         self.listFetcher = list
         self.childrenFetcher = children
@@ -151,6 +240,12 @@ public final class SharedFilesStore: ObservableObject {
         self.progressFetcher = progress
         self.openURLFn = openURL
         self.copyLinkFn = copyLink
+        self.sizeProbe = sizeProbe
+    }
+
+    /// Files after the type filter + sort (what the list renders).
+    public var displayedFiles: [SharedFile] {
+        Self.displayed(files, sort: sort, filter: filter)
     }
 
     /// Open a chat/channel: fetch the shared list via core, replace files.
@@ -279,15 +374,44 @@ public final class SharedFilesStore: ObservableObject {
         state = files.isEmpty ? .empty : .loaded
     }
 
-    /// Upload a local file (any size: core routes >4 MB through a
-    /// resumable session) and prepend the result to the CURRENT level
-    /// (root or drilled folder). While the spinner runs, `%` polls the
-    /// core progress gauge. Demo mode fabricates the row locally.
+    /// Upload one local file (single-file convenience over `upload(paths:)`).
     public func upload(path: String) {
-        guard !uploading, let id = chatID else { return }
+        upload(paths: [path])
+    }
+
+    /// Multi-upload (om-iu-rowdepth, matches the composer): probe every path,
+    /// pre-gate over-cap files into `gatedUploads`/`uploadError` (the fetcher
+    /// is never called for them), then upload the rest in pick order,
+    /// upserting each result. Failures mark `state` but don't stop later
+    /// files. Demo mode fabricates each row locally.
+    public func upload(paths: [String]) {
+        guard !uploading, let id = chatID, !paths.isEmpty else { return }
+        var ok: [String] = []
+        var gated: [(path: String, size: UInt64)] = []
+        for path in paths {
+            let size = sizeProbe(path) ?? 0
+            if ComposeAttachments.isTooLarge(size: size) {
+                gated.append((path, size))
+            } else {
+                ok.append(path)
+            }
+        }
+        gatedUploads = gated.map(\.path)
+        if let first = gated.first {
+            var msg = ComposeAttachments.capMessage(actual: first.size)
+            if gated.count > 1 { msg += " (+\(gated.count - 1) more)" }
+            uploadError = msg
+        } else {
+            uploadError = nil
+        }
+        guard !ok.isEmpty else { return }
         if isDemo {
-            let name = (path as NSString).lastPathComponent
-            files.insert(SharedFile(id: "demo-up-\(files.count + 1)", name: name, size: 1024), at: 0)
+            for path in ok {
+                let name = (path as NSString).lastPathComponent
+                files.insert(
+                    SharedFile(id: "demo-up-\(files.count + 1)", name: name, size: 1024),
+                    at: 0)
+            }
             cache[currentKey] = files
             state = .loaded
             return
@@ -304,13 +428,15 @@ public final class SharedFilesStore: ObservableObject {
                 uploadProgress = nil
             }
             let fetcher = uploadFetcher
-            do {
-                let resp = try await Task.detached { try fetcher(id, path) }.value
-                files = Self.upsert(resp.file, into: files)
-                cache[currentKey] = files
-                state = .loaded
-            } catch {
-                state = .error(Self.message(for: error))
+            for path in ok {
+                do {
+                    let resp = try await Task.detached { try fetcher(id, path) }.value
+                    files = Self.upsert(resp.file, into: files)
+                    cache[currentKey] = files
+                    state = .loaded
+                } catch {
+                    state = .error(Self.message(for: error))
+                }
             }
         }
     }
@@ -330,6 +456,12 @@ public final class SharedFilesStore: ObservableObject {
         }
     }
 
+    /// Dismiss the over-cap upload banner.
+    public func clearUploadError() {
+        uploadError = nil
+        gatedUploads = []
+    }
+
     /// Open the SharePoint page in the browser. No-op without a web_url.
     /// Returns the URL opened, if any (test seam).
     @discardableResult
@@ -339,14 +471,19 @@ public final class SharedFilesStore: ObservableObject {
         return url
     }
 
-    /// Save via core drive download to ~/Downloads. Needs drive_id; without
-    /// it falls back to opening the pre-signed download_url in the browser.
-    /// Returns the destination path (core path) or nil for browser fallback.
+    /// Quick save via core drive download to ~/Downloads/<name>.
+    /// The view prefers `saveAs` (NSSavePanel defaulting there).
     public func save(_ file: SharedFile) {
+        saveAs(file, to: Self.downloadDestination(filename: file.name))
+    }
+
+    /// Save via core drive download to an explicit destination (the Save-as
+    /// panel's pick). Needs drive_id; without it falls back to opening the
+    /// pre-signed download_url in the browser (dest unused).
+    public func saveAs(_ file: SharedFile, to dest: String) {
         if let drive = file.drive_id {
             guard !savingIDs.contains(file.id) else { return }
             savingIDs.insert(file.id)
-            let dest = Self.downloadDestination(filename: file.name)
             let fetcher = downloadFetcher
             let itemID = file.id
             Task {
@@ -520,6 +657,22 @@ public final class SharedFilesStore: ObservableObject {
         return min(1.0, Double(uploaded) / Double(total))
     }
 
+    /// Save-as panel default directory: ~/Downloads (pure, testable).
+    public static func saveAsDirectory() -> URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Downloads")
+    }
+
+    /// Save-as panel default filename: the shared name, verbatim.
+    public static func saveAsName(for file: SharedFile) -> String {
+        file.name
+    }
+
+    /// Full Save-as default: ~/Downloads/<name>.
+    public static func saveAsDestination(for file: SharedFile) -> String {
+        downloadDestination(filename: file.name)
+    }
+
     /// Pure upsert: same id replaces in place, new id prepends (newest first).
     public static func upsert(_ file: SharedFile, into list: [SharedFile]) -> [SharedFile] {
         var out = list
@@ -544,8 +697,65 @@ public final class SharedFilesStore: ObservableObject {
                 id: f.id, name: name, size: f.size, mime: f.mime,
                 web_url: f.web_url, download_url: f.download_url,
                 drive_id: f.drive_id, created: f.created, modified: f.modified,
-                sender: f.sender, attachment_id: f.attachment_id)
+                sender: f.sender, attachment_id: f.attachment_id,
+                is_folder: f.is_folder, share_url: f.share_url)
         }
+    }
+
+    private static let isoDate: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
+
+    private static let isoDateFrac: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+
+    /// Sort key: modified, else created, else nil (sorts last under .date).
+    public static func dateValue(_ file: SharedFile) -> Date? {
+        for raw in [file.modified, file.created].compactMap({ $0 }) {
+            if let d = isoDate.date(from: raw) ?? isoDateFrac.date(from: raw) {
+                return d
+            }
+        }
+        return nil
+    }
+
+    /// Pure sort (name A→Z, date newest-first, size largest-first; id tiebreak).
+    public static func sorted(_ list: [SharedFile], by order: SharedFilesSort) -> [SharedFile] {
+        list.sorted { a, b in
+            switch order {
+            case .name:
+                let c = a.name.localizedCaseInsensitiveCompare(b.name)
+                if c != .orderedSame { return c == .orderedAscending }
+            case .date:
+                switch (dateValue(a), dateValue(b)) {
+                case let (da?, db?):
+                    if da != db { return da > db }
+                case (_?, nil): return true
+                case (nil, _?): return false
+                case (nil, nil): break
+                }
+            case .size:
+                if a.size != b.size { return a.size > b.size }
+            }
+            return a.id < b.id
+        }
+    }
+
+    /// Pure type-filter (`.all` passes everything through untouched).
+    public static func filtered(_ list: [SharedFile], by filter: SharedFilesTypeFilter) -> [SharedFile] {
+        filter == .all ? list : list.filter { filter.matches($0) }
+    }
+
+    /// Pure filter-then-sort (backs `displayedFiles`).
+    public static func displayed(
+        _ list: [SharedFile], sort: SharedFilesSort, filter: SharedFilesTypeFilter
+    ) -> [SharedFile] {
+        Self.sorted(Self.filtered(list, by: filter), by: sort)
     }
 
     static func message(for error: Error) -> String {
@@ -554,7 +764,8 @@ public final class SharedFilesStore: ObservableObject {
     }
 }
 
-/// Shared-tab file list: rows with Open + Save, Upload + Refresh toolbar.
+/// Shared-tab file list: rows with Open + Save-as, multi-upload, sort +
+/// type-filter controls, Refresh toolbar.
 public struct SharedFilesView: View {
     @ObservedObject public var store: SharedFilesStore
     @State private var renameTarget: SharedFile?
@@ -573,6 +784,7 @@ public struct SharedFilesView: View {
     public var body: some View {
         VStack(spacing: 0) {
             toolbar
+            controls
             Divider()
             if !store.isRoot { breadcrumbs }
             if !store.isRoot { Divider() }
@@ -700,36 +912,77 @@ public struct SharedFilesView: View {
     }
 
     private var toolbar: some View {
-        HStack {
-            Text("\(store.files.count) items")
-                .font(.caption).monospaced()
-                .foregroundStyle(.secondary)
-            if let saved = store.savedPath {
-                Text("saved \(saved)")
-                    .font(.caption)
-                    .foregroundStyle(.green)
-                    .lineLimit(1)
-                    .textSelection(.enabled)
-            }
-            Spacer()
-            if store.uploading {
-                if let frac = store.uploadProgress {
-                    Text("\(Int((frac * 100).rounded()))%")
-                        .font(.caption).monospaced()
-                        .foregroundStyle(.secondary)
+        VStack(spacing: 4) {
+            HStack {
+                Text("\(store.displayedFiles.count) files")
+                    .font(.caption).monospaced()
+                    .foregroundStyle(.secondary)
+                if let saved = store.savedPath {
+                    Text("saved \(saved)")
+                        .font(.caption)
+                        .foregroundStyle(.green)
+                        .lineLimit(1)
+                        .textSelection(.enabled)
                 }
-                ProgressView().controlSize(.small)
+                Spacer()
+                if store.uploading {
+                    if let frac = store.uploadProgress {
+                        Text("\(Int((frac * 100).rounded()))%")
+                            .font(.caption).monospaced()
+                            .foregroundStyle(.secondary)
+                    }
+                    ProgressView().controlSize(.small)
+                }
+                Button("Upload…") { pickAndUpload() }
+                    .font(.caption)
+                    .disabled(store.uploading || store.chatID == nil)
+                    .help("Upload files (<4 MB each) to this chat")
+                Button("Refresh") { store.refresh() }
+                    .font(.caption)
+                    .disabled(store.chatID == nil)
             }
-            Button("Upload…") { pickAndUpload() }
-                .font(.caption)
-                .disabled(store.uploading || store.chatID == nil)
-                .help("Upload a file to this chat (large files use resumable upload)")
-            Button("Refresh") { store.refresh() }
-                .font(.caption)
-                .disabled(store.chatID == nil)
+            if let err = store.uploadError {
+                HStack {
+                    Text(err)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .lineLimit(1)
+                    Spacer()
+                    Button("Dismiss") { store.clearUploadError() }
+                        .font(.caption)
+                        .buttonStyle(.link)
+                }
+            }
         }
         .padding(.horizontal)
         .padding(.vertical, 8)
+    }
+
+    private var controls: some View {
+        HStack(spacing: 8) {
+            Picker("Sort", selection: $store.sort) {
+                ForEach(SharedFilesSort.allCases, id: \.self) { order in
+                    Text(order.label).tag(order)
+                }
+            }
+            .pickerStyle(.segmented)
+            .frame(maxWidth: 210)
+            .help("Sort shared files")
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(SharedFilesTypeFilter.allCases, id: \.self) { kind in
+                        Button(kind.label) { store.filter = kind }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .opacity(store.filter == kind ? 1 : 0.55)
+                            .help("Show \(kind.label.lowercased()) files")
+                    }
+                }
+            }
+            Spacer()
+        }
+        .padding(.horizontal)
+        .padding(.bottom, 8)
     }
 
     @ViewBuilder
@@ -770,7 +1023,7 @@ public struct SharedFilesView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .loaded:
-            List(store.files) { file in
+            List(store.displayedFiles) { file in
                 SharedFileRow(
                     file: file,
                     saving: store.savingIDs.contains(file.id),
@@ -778,7 +1031,7 @@ public struct SharedFilesView: View {
                     linked: store.link(for: file) != nil,
                     managing: store.managingIDs.contains(file.id),
                     onOpen: { store.open(file) },
-                    onSave: { store.save(file) },
+                    onSave: { saveAsPanel(file) },
                     onDrill: { store.drill(file) },
                     onLink: { store.shareLink(file) }
                 )
@@ -816,9 +1069,26 @@ public struct SharedFilesView: View {
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
-        panel.allowsMultipleSelection = false
+        panel.allowsMultipleSelection = true
+        if panel.runModal() == .OK, !panel.urls.isEmpty {
+            store.upload(paths: panel.urls.map(\.path))
+        }
+    }
+
+    /// Save-as panel defaulting to ~/Downloads/<name>; the picked path goes
+    /// to core. No drive_id → quick `save` (browser fallback for the
+    /// pre-signed URL, no panel).
+    private func saveAsPanel(_ file: SharedFile) {
+        guard file.drive_id != nil else {
+            store.save(file)
+            return
+        }
+        let panel = NSSavePanel()
+        panel.directoryURL = SharedFilesStore.saveAsDirectory()
+        panel.nameFieldStringValue = SharedFilesStore.saveAsName(for: file)
+        panel.canCreateDirectories = true
         if panel.runModal() == .OK, let url = panel.url {
-            store.upload(path: url.path)
+            store.saveAs(file, to: url.path)
         }
     }
 }
@@ -899,7 +1169,7 @@ struct SharedFileRow: View {
                         Button("Save", action: onSave)
                             .buttonStyle(.link)
                             .font(.caption)
-                            .help("Save to ~/Downloads")
+                            .help("Save as… (defaults to ~/Downloads)")
                     }
                     if file.drive_id != nil {
                         SharedFileLinkButton(linking: linking, linked: linked, onTap: onLink)
