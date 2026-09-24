@@ -7,6 +7,8 @@
 //
 //   let store = SharedFilesStore()
 //   store.open(chatID: "19:...")   // list via core (replaces files)
+//   store.drill(folder)            // children via core, crumb pushed
+//   store.back()                   // cached parent, no refetch
 //   store.upload(path: "/tmp/a.pdf")
 //   store.save(file)               // core download to ~/Downloads
 // Tests inject mock fetchers (same seam as ChatListViewModel.Fetcher).
@@ -22,9 +24,25 @@ public enum SharedFilesState: Equatable, Sendable {
     case error(String)
 }
 
+/// One breadcrumb step into a folder (om-iu-foldernav). Root has no crumb.
+public struct SharedFolderCrumb: Equatable, Sendable {
+    public let driveID: String
+    public let itemID: String
+    public let name: String
+
+    public init(driveID: String, itemID: String, name: String) {
+        self.driveID = driveID
+        self.itemID = itemID
+        self.name = name
+    }
+
+    var key: String { "\(driveID)\n\(itemID)" }
+}
+
 @MainActor
 public final class SharedFilesStore: ObservableObject {
     public typealias ListFetcher = @Sendable (String, Int32) throws -> SharedFilesResponse
+    public typealias ChildrenFetcher = @Sendable (String, String, Int32) throws -> SharedFileChildrenResponse
     public typealias UploadFetcher = @Sendable (String, String) throws -> SharedFileUploadResponse
     public typealias DownloadFetcher = @Sendable (String, String, String) throws -> SharedFileDownloadResponse
     public typealias OpenURLFn = @Sendable (URL) -> Bool
@@ -34,13 +52,24 @@ public final class SharedFilesStore: ObservableObject {
     @Published public private(set) var uploading = false
     @Published public private(set) var savingIDs: Set<String> = []
     @Published public private(set) var savedPath: String?
+    /// Breadcrumb path from root (empty = root). Drives view crumbs + back.
+    @Published public private(set) var crumbs: [SharedFolderCrumb] = []
     public private(set) var chatID: String?
     public private(set) var isDemo = false
 
+    /// True at the chat root list (no drill-in). View re-renders via crumbs.
+    public var isRoot: Bool { crumbs.isEmpty }
+
     private let listFetcher: ListFetcher
+    private let childrenFetcher: ChildrenFetcher
     private let uploadFetcher: UploadFetcher
     private let downloadFetcher: DownloadFetcher
     private let openURLFn: OpenURLFn
+    /// Per-folder list cache: rootKey + crumb keys. Back/crumb jumps read
+    /// here (no refetch); refresh() bypasses for the current level only.
+    private var cache: [String: [SharedFile]] = [:]
+    private static let rootKey = "root"
+    private var currentKey: String { crumbs.last?.key ?? Self.rootKey }
     private var openGeneration = 0
 
     /// Default URL opener. No-op (returns false) under XCTest so tests never
@@ -52,7 +81,12 @@ public final class SharedFilesStore: ObservableObject {
     }
 
     public nonisolated init(
-        list: @escaping ListFetcher = { try RustCore.sharedFiles(chatID: $0, limit: $1) },
+        list: @escaping ListFetcher = {
+            try RustCore.sharedFiles(chatID: $0, limit: $1, includeFolders: true)
+        },
+        children: @escaping ChildrenFetcher = {
+            try RustCore.sharedChildren(driveID: $0, itemID: $1, limit: $2)
+        },
         upload: @escaping UploadFetcher = { try RustCore.sharedUpload(chatID: $0, path: $1) },
         download: @escaping DownloadFetcher = {
             try RustCore.sharedDownload(driveID: $0, itemID: $1, dest: $2)
@@ -60,15 +94,20 @@ public final class SharedFilesStore: ObservableObject {
         openURL: @escaping OpenURLFn = SharedFilesStore.defaultOpenURL
     ) {
         self.listFetcher = list
+        self.childrenFetcher = children
         self.uploadFetcher = upload
         self.downloadFetcher = download
         self.openURLFn = openURL
     }
 
     /// Open a chat/channel: fetch the shared list via core, replace files.
-    /// Stale completions are dropped (fast chat-switching lands newest).
+    /// Resets crumbs + cache. Stale completions are dropped (fast
+    /// chat-switching lands newest).
     public func open(chatID: String, limit: Int32 = 20) {
         self.chatID = chatID
+        crumbs = []
+        cache = [:]
+        isDemo = false
         state = .loading
         savedPath = nil
         openGeneration += 1
@@ -78,6 +117,7 @@ public final class SharedFilesStore: ObservableObject {
             do {
                 let resp = try await Task.detached { try fetcher(chatID, limit) }.value
                 guard gen == openGeneration else { return }
+                cache[Self.rootKey] = resp.files
                 files = resp.files
                 state = resp.files.isEmpty ? .empty : .loaded
             } catch {
@@ -87,27 +127,114 @@ public final class SharedFilesStore: ObservableObject {
         }
     }
 
-    /// Fire-and-forget reload.
-    public func refresh(limit: Int32 = 20) {
+    /// Fire-and-forget reload of the CURRENT level (root list or folder
+    /// children). Bypasses the cache for this level only.
+    public func refresh(limit: Int32 = 20, childrenLimit: Int32 = 50) {
         guard let id = chatID else { return }
-        open(chatID: id, limit: limit)
+        if let crumb = crumbs.last {
+            fetchChildren(crumb, limit: childrenLimit)
+        } else {
+            open(chatID: id, limit: limit)
+        }
     }
 
-    /// Demo mode: canned files offline (no core).
+    /// Drill into a folder row: push crumb, show cached kids or fetch.
+    /// No-op for plain files and folders without drive_id (I5 edge: rare
+    /// chat-path item, shown as file). Demo mode stays offline (empty).
+    public func drill(_ file: SharedFile, limit: Int32 = 50) {
+        guard file.isFolder, let drive = file.drive_id else { return }
+        let crumb = SharedFolderCrumb(driveID: drive, itemID: file.id, name: file.name)
+        crumbs.append(crumb)
+        if let hit = cache[crumb.key] {
+            files = hit
+            state = hit.isEmpty ? .empty : .loaded
+            return
+        }
+        if isDemo {
+            files = []
+            cache[crumb.key] = []
+            state = .empty
+            return
+        }
+        fetchChildren(crumb, limit: limit)
+    }
+
+    /// Up one level (no refetch: parents stay cached). No-op at root.
+    public func back() {
+        guard !crumbs.isEmpty else { return }
+        crumbs.removeLast()
+        showCurrent()
+    }
+
+    /// Breadcrumb jump to depth d (0 = root). No-op unless d < depth.
+    public func goTo(depth: Int) {
+        let d = max(0, depth)
+        guard d < crumbs.count else { return }
+        crumbs.removeLast(crumbs.count - d)
+        showCurrent()
+    }
+
+    public func goToRoot() {
+        goTo(depth: 0)
+    }
+
+    /// Display the cached list for the current level (back/crumb jumps).
+    private func showCurrent() {
+        if let hit = cache[currentKey] {
+            files = hit
+            state = hit.isEmpty ? .empty : .loaded
+        } else {
+            refresh()
+        }
+    }
+
+    /// Fetch one folder's children via core (I5 FFI). Late completions
+    /// still cache, but only display when still on that folder.
+    private func fetchChildren(_ crumb: SharedFolderCrumb, limit: Int32) {
+        state = .loading
+        savedPath = nil
+        openGeneration += 1
+        let gen = openGeneration
+        Task {
+            let fetcher = childrenFetcher
+            do {
+                let resp = try await Task.detached {
+                    try fetcher(crumb.driveID, crumb.itemID, limit)
+                }.value
+                guard gen == openGeneration else { return }
+                cache[crumb.key] = resp.files
+                if crumbs.last == crumb {
+                    files = resp.files
+                    state = resp.files.isEmpty ? .empty : .loaded
+                }
+            } catch {
+                guard gen == openGeneration else { return }
+                if crumbs.last == crumb {
+                    state = .error(Self.message(for: error))
+                }
+            }
+        }
+    }
+
+    /// Demo mode: canned files offline (no core). Resets nav, seeds cache.
     public func showDemo(chatID: String, files: [SharedFile]) {
         self.chatID = chatID
+        crumbs = []
+        cache = [Self.rootKey: files]
         self.files = files
         isDemo = true
         state = files.isEmpty ? .empty : .loaded
     }
 
-    /// Upload a local file (<4 MB core limit) and prepend the result.
-    /// Demo mode fabricates the row locally.
+    /// Upload a local file (<4 MB core limit) and prepend the result to
+    /// the CURRENT level (root or drilled folder). Demo mode fabricates
+    /// the row locally.
     public func upload(path: String) {
         guard !uploading, let id = chatID else { return }
         if isDemo {
             let name = (path as NSString).lastPathComponent
             files.insert(SharedFile(id: "demo-up-\(files.count + 1)", name: name, size: 1024), at: 0)
+            cache[currentKey] = files
             state = .loaded
             return
         }
@@ -118,6 +245,7 @@ public final class SharedFilesStore: ObservableObject {
             do {
                 let resp = try await Task.detached { try fetcher(id, path) }.value
                 files = Self.upsert(resp.file, into: files)
+                cache[currentKey] = files
                 state = .loaded
             } catch {
                 state = .error(Self.message(for: error))
@@ -195,13 +323,46 @@ public struct SharedFilesView: View {
         VStack(spacing: 0) {
             toolbar
             Divider()
+            if !store.isRoot { breadcrumbs }
+            if !store.isRoot { Divider() }
             content
         }
     }
 
+    /// Back + breadcrumb trail (root "Files" + folder crumbs). Depth jumps
+    /// read the store cache (no refetch).
+    private var breadcrumbs: some View {
+        HStack(spacing: 4) {
+            Button("‹ Back") { store.back() }
+                .font(.caption)
+                .buttonStyle(.link)
+            Text("·").foregroundStyle(.secondary)
+            Button("Files") { store.goToRoot() }
+                .font(.caption)
+                .buttonStyle(.link)
+            ForEach(Array(store.crumbs.enumerated()), id: \.offset) { i, crumb in
+                Text("/").foregroundStyle(.secondary).font(.caption)
+                if i == store.crumbs.count - 1 {
+                    Text(crumb.name)
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .lineLimit(1)
+                } else {
+                    Button(crumb.name) { store.goTo(depth: i + 1) }
+                        .font(.caption)
+                        .buttonStyle(.link)
+                        .lineLimit(1)
+                }
+            }
+            Spacer()
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 6)
+    }
+
     private var toolbar: some View {
         HStack {
-            Text("\(store.files.count) files")
+            Text("\(store.files.count) items")
                 .font(.caption).monospaced()
                 .foregroundStyle(.secondary)
             if let saved = store.savedPath {
@@ -240,9 +401,9 @@ public struct SharedFilesView: View {
                 Spacer()
                 Image(systemName: "folder")
                     .font(.largeTitle).foregroundStyle(.secondary)
-                Text("No shared files yet.")
+                Text(store.isRoot ? "No shared files yet." : "This folder is empty.")
                     .font(.headline)
-                Text("Files shared in this conversation appear here.")
+                Text(store.isRoot ? "Files shared in this conversation appear here." : "Files in this folder appear here.")
                     .font(.callout).foregroundStyle(.secondary)
                 Spacer()
             }
@@ -268,7 +429,8 @@ public struct SharedFilesView: View {
                     file: file,
                     saving: store.savingIDs.contains(file.id),
                     onOpen: { store.open(file) },
-                    onSave: { store.save(file) }
+                    onSave: { store.save(file) },
+                    onDrill: { store.drill(file) }
                 )
             }
             .listStyle(.plain)
@@ -291,48 +453,78 @@ struct SharedFileRow: View {
     var saving: Bool = false
     var onOpen: () -> Void = {}
     var onSave: () -> Void = {}
+    var onDrill: () -> Void = {}
+
+    /// Folders drill in (no Open/Save: never downloadable per I5). Folders
+    /// without drive_id render as plain file rows (no drill target).
+    private var drillable: Bool { file.isFolder && file.drive_id != nil }
 
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: file.iconName)
-                .font(.title2)
-                .foregroundStyle(.secondary)
-                .frame(width: 28)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(file.name)
-                    .font(.body)
-                    .lineLimit(1)
-                    .textSelection(.enabled)
-                HStack(spacing: 6) {
-                    Text(file.sizeLabel)
-                        .font(.caption).monospaced()
+        if drillable {
+            HStack(spacing: 10) {
+                Image(systemName: "folder")
+                    .font(.title2)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 28)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(file.name)
+                        .font(.body)
+                        .lineLimit(1)
+                        .textSelection(.enabled)
+                    Text("Folder")
+                        .font(.caption)
                         .foregroundStyle(.secondary)
-                    if let sender = file.sender {
-                        Text("· \(sender)")
-                            .font(.caption)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.vertical, 4)
+            .contentShape(Rectangle())
+            .onTapGesture(perform: onDrill)
+        } else {
+            HStack(spacing: 10) {
+                Image(systemName: file.isFolder ? "folder" : file.iconName)
+                    .font(.title2)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 28)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(file.name)
+                        .font(.body)
+                        .lineLimit(1)
+                        .textSelection(.enabled)
+                    HStack(spacing: 6) {
+                        Text(file.sizeLabel)
+                            .font(.caption).monospaced()
                             .foregroundStyle(.secondary)
-                            .lineLimit(1)
+                        if let sender = file.sender {
+                            Text("· \(sender)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+                }
+                Spacer()
+                if saving {
+                    ProgressView().controlSize(.small)
+                } else {
+                    if file.web_url != nil {
+                        Button("Open", action: onOpen)
+                            .buttonStyle(.link)
+                            .font(.caption)
+                            .help("Open in SharePoint (browser)")
+                    }
+                    if file.drive_id != nil || file.download_url != nil {
+                        Button("Save", action: onSave)
+                            .buttonStyle(.link)
+                            .font(.caption)
+                            .help("Save to ~/Downloads")
                     }
                 }
             }
-            Spacer()
-            if saving {
-                ProgressView().controlSize(.small)
-            } else {
-                if file.web_url != nil {
-                    Button("Open", action: onOpen)
-                        .buttonStyle(.link)
-                        .font(.caption)
-                        .help("Open in SharePoint (browser)")
-                }
-                if file.drive_id != nil || file.download_url != nil {
-                    Button("Save", action: onSave)
-                        .buttonStyle(.link)
-                        .font(.caption)
-                        .help("Save to ~/Downloads")
-                }
-            }
+            .padding(.vertical, 4)
         }
-        .padding(.vertical, 4)
     }
 }
