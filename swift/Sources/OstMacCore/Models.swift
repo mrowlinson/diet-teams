@@ -391,7 +391,7 @@ public struct JoinParseResponse: Decodable, Sendable {
 /// `ConversationStore.ingest(_:)`; matching `id` => in-place edit update.
 /// One grouped reaction count: picker emoji + number of reactors.
 /// Wire format from core: `{"emoji","count"}`. Absent on old payloads.
-public struct ReactionCount: Decodable, Sendable, Equatable {
+public struct ReactionCount: Codable, Sendable, Equatable {
     public let emoji: String
     public let count: Int
 
@@ -401,7 +401,7 @@ public struct ReactionCount: Decodable, Sendable, Equatable {
     }
 }
 
-public struct ChatMessage: Decodable, Sendable, Identifiable, Equatable {
+public struct ChatMessage: Codable, Sendable, Identifiable, Equatable {
     public let id: String
     public let sender: String
     public let timestamp: String

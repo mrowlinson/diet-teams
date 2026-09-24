@@ -74,6 +74,9 @@ struct DiagnosticsView: View {
             Section("Meetings") {
                 MeetingsDiagRow(store: state.meetings)
             }
+            Section("Meeting") {
+                MeetingDiagRow(roster: state.meeting, chat: state.meetingChat, events: state.feedRoster)
+            }
             Section("Call") {
                 callRow
                 LabeledContent(
@@ -204,6 +207,30 @@ struct TypingDiagRow: View {
             "Typing",
             value: DiagnosticsFormat.typingLine(
                 events: events, active: store.activeCount))
+            .textSelection(.enabled)
+    }
+}
+
+/// Meeting counters row (om-meet-chat): roster + persisted-thread
+/// counts live here only (the Meeting window shows no numbers).
+struct MeetingDiagRow: View {
+    @ObservedObject var roster: MeetingRosterStore
+    @ObservedObject var chat: MeetingChatStore
+    let events: Int
+
+    var body: some View {
+        LabeledContent(
+            "Roster",
+            value: DiagnosticsFormat.rosterLine(
+                events: events, active: roster.activeCount,
+                speaking: roster.speakingCount, muted: roster.mutedCount))
+            .textSelection(.enabled)
+        LabeledContent(
+            "Thread",
+            value: chat.threadID == nil
+                ? "none"
+                : DiagnosticsFormat.meetingThreadLine(
+                    messages: chat.messages.count, live: chat.meetingActive))
             .textSelection(.enabled)
     }
 }

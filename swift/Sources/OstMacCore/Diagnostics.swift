@@ -69,4 +69,17 @@ public enum DiagnosticsFormat {
     public static func meetingsLine(fetched: Int, joins: Int, lobby: String) -> String {
         "\(fetched) upcoming · \(joins) joins · \(lobby)"
     }
+
+    /// Meeting-roster counters (om-meet-chat): session events + live
+    /// rows + speaking + muted. Diagnostics window only — the roster
+    /// shows no counts.
+    public static func rosterLine(events: Int, active: Int, speaking: Int, muted: Int) -> String {
+        "\(events) events · \(active) in roster · \(speaking) speaking · \(muted) muted"
+    }
+
+    /// Meeting-thread one-liner (om-meet-chat): persisted message
+    /// count + live/ended state. Diagnostics window only.
+    public static func meetingThreadLine(messages: Int, live: Bool) -> String {
+        "\(messages) messages · \(live ? "live" : "ended")"
+    }
 }
