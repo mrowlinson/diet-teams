@@ -1,6 +1,6 @@
 //! Microsoft Graph API: joined teams and channels
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 
 use super::client::TeamsClient;
@@ -81,6 +81,48 @@ pub struct ChannelInfo {
     pub web_url: Option<String>,
 }
 
+/// Graph path for creating a channel in one team (pure so tests pin it).
+pub fn create_channel_path(team_id: &str) -> String {
+    format!("/teams/{}/channels", team_id)
+}
+
+/// POST body for channel creation: `displayName` plus `description` only
+/// when non-blank (pure so tests pin it).
+pub fn create_channel_body(name: &str, description: Option<&str>) -> serde_json::Value {
+    let mut body = serde_json::json!({ "displayName": name });
+    if let Some(d) = description {
+        if !d.trim().is_empty() {
+            body["description"] = serde_json::Value::String(d.to_string());
+        }
+    }
+    body
+}
+
+/// Reject ids that would break out of the Graph path segment.
+fn check_id(what: &str, id: &str) -> Result<()> {
+    if id.trim().is_empty() {
+        bail!("empty {}", what);
+    }
+    if id.contains('/')
+        || id.contains('?')
+        || id.contains('#')
+        || id.chars().any(|c| c.is_whitespace())
+    {
+        bail!("{} must not contain '/', '?', '#' or whitespace", what);
+    }
+    Ok(())
+}
+
+fn channel_info(ch: Channel) -> ChannelInfo {
+    ChannelInfo {
+        name: ch.display_name.unwrap_or_else(|| ch.id.clone()),
+        id: ch.id,
+        description: ch.description,
+        membership_type: ch.membership_type,
+        web_url: ch.web_url,
+    }
+}
+
 /// List joined teams with their channels and return structured data.
 pub async fn list_teams_data(client: &TeamsClient) -> Result<Vec<TeamInfo>> {
     tracing::debug!("Fetching joined teams...");
@@ -103,17 +145,7 @@ pub async fn list_teams_data(client: &TeamsClient) -> Result<Vec<TeamInfo>> {
                     .json()
                     .await
                     .context("Failed to parse channels response")?;
-                channels_resp
-                    .value
-                    .into_iter()
-                    .map(|ch| ChannelInfo {
-                        name: ch.display_name.unwrap_or_else(|| ch.id.clone()),
-                        id: ch.id,
-                        description: ch.description,
-                        membership_type: ch.membership_type,
-                        web_url: ch.web_url,
-                    })
-                    .collect()
+                channels_resp.value.into_iter().map(channel_info).collect()
             }
             Err(e) => {
                 tracing::warn!("Failed to fetch channels for {}: {:#}", team_name, e);
@@ -129,4 +161,76 @@ pub async fn list_teams_data(client: &TeamsClient) -> Result<Vec<TeamInfo>> {
     }
 
     Ok(result)
+}
+
+/// Create one standard channel in a team and return it.
+///
+/// Graph `POST /teams/{team-id}/channels` (`Teamwork.Create` on the
+/// first-party client id; a 403 surfaces as the call's detail). Empty
+/// names and path-breaking team ids are rejected before any network.
+pub async fn create_channel_data(
+    client: &TeamsClient,
+    team_id: &str,
+    name: &str,
+    description: Option<&str>,
+) -> Result<ChannelInfo> {
+    check_id("team_id", team_id)?;
+    if name.trim().is_empty() {
+        bail!("empty name");
+    }
+    let path = create_channel_path(team_id);
+    let body = create_channel_body(name, description);
+    let resp = client.graph_post(&path, &body).await?;
+    let channel: Channel = resp
+        .json()
+        .await
+        .context("Failed to parse created channel response")?;
+    Ok(channel_info(channel))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn id_guard_rejects_path_breaking() {
+        for bad in ["", "   ", "a/b", "a?b", "a#b", "a b"] {
+            assert!(check_id("team_id", bad).is_err(), "id {:?}", bad);
+        }
+        assert!(check_id("team_id", "550e8400-e29b-41d4-a716-446655440000").is_ok());
+    }
+
+    #[test]
+    fn create_path_names_team_channels() {
+        assert_eq!(
+            create_channel_path("team-1"),
+            "/teams/team-1/channels"
+        );
+    }
+
+    #[test]
+    fn create_body_carries_display_name_and_optional_description() {
+        let with = create_channel_body("General 2", Some("Second room"));
+        assert_eq!(with["displayName"], "General 2");
+        assert_eq!(with["description"], "Second room");
+        let bare = create_channel_body("Random", None);
+        assert_eq!(bare["displayName"], "Random");
+        assert!(bare.get("description").is_none());
+        let blank = create_channel_body("Random", Some("   "));
+        assert!(blank.get("description").is_none());
+    }
+
+    #[test]
+    fn created_channel_parses_with_name_fallback() {
+        let named: Channel = serde_json::from_str(
+            r#"{"id":"19:new@thread.tacv2","displayName":"New room"}"#,
+        )
+        .unwrap();
+        let info = channel_info(named);
+        assert_eq!(info.id, "19:new@thread.tacv2");
+        assert_eq!(info.name, "New room");
+        let unnamed: Channel =
+            serde_json::from_str(r#"{"id":"19:anon@thread.tacv2"}"#).unwrap();
+        assert_eq!(channel_info(unnamed).name, "19:anon@thread.tacv2");
+    }
 }
