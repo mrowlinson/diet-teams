@@ -244,6 +244,7 @@ final class AppState: ObservableObject {
     let unread = UnreadStore(dock: NullDockBadge())
     let mentions = MentionStore()
     let receipts = ReceiptStore()
+    let pinnedMessages: PinnedMessageStore
     let auth = AuthViewModel()
     let presence = PresenceStore()
     let call: CallStore
@@ -271,6 +272,8 @@ final class AppState: ObservableObject {
     let showHistory: Bool
     /// --show-notif-live: offline banner-proof injection (demo only).
     let showNotifLive: Bool
+    /// --show-pins: demo 1:1 thread + two seeded pins (strip shot).
+    let showPins: Bool
     @Published var openChatID: String?
     @Published var signedIn: Bool?
     @Published var coreVersion = "?"
@@ -312,7 +315,7 @@ final class AppState: ObservableObject {
     init(args: [String]) {
         isDemo = args.contains("--demo") || args.contains("--demo-rich")
             || args.contains("--demo-reactions") || args.contains("--show-sidebarchurn")
-            || args.contains("--demo-botposts")
+            || args.contains("--demo-botposts") || args.contains("--show-pins")
         showNotes = args.contains("--show-notes")
         showJump = args.contains("--show-jump") // shot hook: palette open at launch
         call = CallStore(demo: isDemo)
@@ -323,6 +326,14 @@ final class AppState: ObservableObject {
         showHistoryError = args.contains("--show-history-error")
         showHistory = args.contains("--show-history") || showHistoryError
         showNotifLive = args.contains("--show-notif-live")
+        showPins = args.contains("--show-pins")
+        if showPins {
+            // Shot hook only: throwaway defaults (never the real pins).
+            pinnedMessages = PinnedMessageStore(
+                defaults: UserDefaults(suiteName: "shot-pins") ?? .standard)
+        } else {
+            pinnedMessages = PinnedMessageStore()
+        }
         if showCatchUp {
             // Shot hook only: throwaway defaults (never the real ones),
             // canned summary, no network.
@@ -350,6 +361,8 @@ final class AppState: ObservableObject {
             preselectID = DemoData.historyID
         } else if args.contains("--show-reply") {
             preselectID = DemoData.repliesID
+        } else if args.contains("--show-pins") {
+            preselectID = DemoData.avaID
         } else if args.contains("--demo-rich") {
             preselectID = DemoData.richID
         } else if args.contains("--demo-reactions") {
@@ -737,6 +750,12 @@ final class AppState: ObservableObject {
             if showReply {
                 let target = msgs.first(where: { $0.id == "rep-2" }) ?? msgs.first
                 if let target { conv.beginReply(to: target) }
+            }
+            // Shot hook: seed two pins on the 1:1 thread (the strip shot).
+            if showPins {
+                for m in msgs.prefix(2) {
+                    pinnedMessages.pin(chatID: id, message: m)
+                }
             }
             notes.showDemo()
         } else {
@@ -1143,6 +1162,7 @@ struct RootView: View {
                             call: state.call, shared: state.shared, notes: state.notes,
                             catchUp: state.catchUp, typing: state.typing,
                             receipts: state.receipts,
+                            pins: state.pinnedMessages,
                             isGroup: state.chats.selectedChat?.is_group ?? true,
                             initialTab: CommandLine.arguments.contains("--show-shared") ? 1
                                 : (state.showNotes ? 2 : 0),

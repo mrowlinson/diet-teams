@@ -1,7 +1,7 @@
-// ReactionMenuBridge.swift — om-reactions/om-msgactions/om-replies/om-editdel/om-react-polish:
+// ReactionMenuBridge.swift — om-reactions/om-msgactions/om-replies/om-editdel/om-react-polish/om-pinmessages:
 // the bubble's ONE right-click menu (inline emoji row + Reply / Copy /
-// Forward / Save, plus Edit / Delete on own bubbles — all top-level,
-// no submenu).
+// Forward / Save / Pin-Unpin, plus Edit / Delete on own bubbles — all
+// top-level, no submenu).
 //
 // Why AppKit: SwiftUI renders ControlGroup-in-menu as a submenu with an
 // inline preview (verified by screenshot: the row carries a ">" that
@@ -37,6 +37,9 @@ struct ReactionMenuBridge: NSViewRepresentable {
     var onReply: () -> Void = {}
     var onEdit: () -> Void = {}
     var onDelete: () -> Void = {}
+    /// Pinned state (om-pinmessages): drives the Pin/Unpin label.
+    var isPinned: Bool = false
+    var onTogglePin: () -> Void = {}
 
     func makeNSView(context: Context) -> ReactionMenuAnchorView {
         let view = ReactionMenuAnchorView()
@@ -50,6 +53,8 @@ struct ReactionMenuBridge: NSViewRepresentable {
         view.onReply = onReply
         view.onEdit = onEdit
         view.onDelete = onDelete
+        view.isPinned = isPinned
+        view.onTogglePin = onTogglePin
         context.coordinator.monitor = NSEvent.addLocalMonitorForEvents(
             matching: .rightMouseDown
         ) { [weak view] event in
@@ -73,6 +78,8 @@ struct ReactionMenuBridge: NSViewRepresentable {
         view.onReply = onReply
         view.onEdit = onEdit
         view.onDelete = onDelete
+        view.isPinned = isPinned
+        view.onTogglePin = onTogglePin
     }
 
     func dismantleNSView(_: ReactionMenuAnchorView, coordinator: Coordinator) {
@@ -103,6 +110,8 @@ final class ReactionMenuAnchorView: NSView {
     var onReply: () -> Void = {}
     var onEdit: () -> Void = {}
     var onDelete: () -> Void = {}
+    var isPinned: Bool = false
+    var onTogglePin: () -> Void = {}
 
     /// Upward overhang of the tapback badges (badge half-height ~10 +
     /// the ZStack's 16pt lift, plus 2pt breathing room). Shared by the
@@ -178,6 +187,11 @@ final class ReactionMenuAnchorView: NSView {
             title: "Save…", action: #selector(saveAction), keyEquivalent: "")
         save.target = self
         menu.addItem(save)
+        let pin = NSMenuItem(
+            title: PinnedMessages.menuTitle(isPinned: isPinned),
+            action: #selector(togglePinAction), keyEquivalent: "")
+        pin.target = self
+        menu.addItem(pin)
         if message.isOwn {
             let edit = NSMenuItem(
                 title: "Edit…", action: #selector(editAction), keyEquivalent: "")
@@ -255,6 +269,10 @@ final class ReactionMenuAnchorView: NSView {
 
     @objc private func deleteAction() {
         onDelete()
+    }
+
+    @objc private func togglePinAction() {
+        onTogglePin()
     }
 }
 
