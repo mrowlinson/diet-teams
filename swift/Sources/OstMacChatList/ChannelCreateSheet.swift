@@ -56,7 +56,7 @@ public struct ChannelCreateSheet: View {
             if let error = model.createError {
                 Text(error)
                     .font(DietType.callout)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(Color(nsColor: DietColor.danger))
             }
             HStack {
                 Spacer()

@@ -10,6 +10,7 @@
 //   let health = HealthStore() // live core fetchers
 //   await health.run()         // fills `report` (Settings diagnostics)
 // Tests inject mock fetchers (same seam as PresenceStore).
+import DietDesign
 import Foundation
 import SwiftUI
 
@@ -212,19 +213,20 @@ public struct HealthView: View {
                     .disabled(store.running)
             }
             if let err = store.error {
-                Text(err).font(.caption).foregroundStyle(.red)
+                Text(err).font(DietType.caption1)
+                    .foregroundStyle(Color(nsColor: DietColor.danger))
                     .textSelection(.enabled)
             }
             if let report = store.report {
                 if let upn = report.accountUPN {
                     LabeledContent("Account", value: upn)
-                        .font(.caption)
+                        .font(DietType.caption1)
                 }
                 tokenSection(report.tokens)
                 probeSection(report.probes)
             } else if store.error == nil {
                 Text(store.running ? "Checking…" : "Not checked yet")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(DietType.caption1).foregroundStyle(DietColor.textSecondaryColor)
             }
         }
     }
@@ -238,50 +240,57 @@ public struct HealthView: View {
         case nil: store.running ? "Checking…" : "Unknown"
         }
         let color: Color = switch overall {
-        case .ok: .green
-        case .degraded: .orange
-        case .broken: .red
-        case nil: .gray
+        case .ok: Color(nsColor: DietColor.success)
+        case .degraded: Color(nsColor: DietColor.warning)
+        case .broken: Color(nsColor: DietColor.danger)
+        case nil: DietColor.textTertiaryColor
         }
         return HStack(spacing: 4) {
             Circle().fill(color).frame(width: 8, height: 8)
-            Text(label).font(.headline)
+            Text(label).font(DietType.headline)
         }
     }
 
     private func tokenSection(_ tokens: [HealthToken]) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text("Tokens").font(.caption).bold()
+            Text("Tokens").font(DietType.caption1).bold()
             ForEach(tokens, id: \.audience) { t in
                 HStack {
                     Circle().fill(tokenColor(t)).frame(width: 6, height: 6)
-                    Text(t.audience).font(.caption).monospaced()
+                    Text(t.audience).font(DietType.caption1).monospaced()
                     Spacer()
-                    Text(t.state).font(.caption).foregroundStyle(.secondary)
+                    Text(t.state).font(DietType.caption1)
+                        .foregroundStyle(DietColor.textSecondaryColor)
                 }
             }
         }
     }
 
     private func tokenColor(_ t: HealthToken) -> Color {
-        !t.present ? .gray : t.expired ? .red : .green
+        !t.present
+            ? DietColor.textTertiaryColor
+            : t.expired ? Color(nsColor: DietColor.danger) : Color(nsColor: DietColor.success)
     }
 
     private func probeSection(_ probes: [HealthProbe]) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("Probes").font(.caption).bold()
+            Text("Probes").font(DietType.caption1).bold()
             ForEach(probes, id: \.name) { p in
                 VStack(alignment: .leading, spacing: 0) {
                     HStack {
                         Image(systemName: p.ok ? "checkmark.circle" : "xmark.circle")
-                            .foregroundStyle(p.ok ? .green : .red)
-                        Text(p.name).font(.caption).monospaced()
+                            .foregroundStyle(
+                                p.ok
+                                    ? Color(nsColor: DietColor.success)
+                                    : Color(nsColor: DietColor.danger))
+                        Text(p.name).font(DietType.caption1).monospaced()
                         Spacer()
                         Text("\(p.durationMs)ms")
-                            .font(.caption).monospaced().foregroundStyle(.secondary)
+                            .font(DietType.caption1).monospaced()
+                            .foregroundStyle(DietColor.textSecondaryColor)
                     }
                     Text(p.detail)
-                        .font(.caption2).foregroundStyle(.secondary)
+                        .font(DietType.caption2).foregroundStyle(DietColor.textSecondaryColor)
                         .lineLimit(2)
                         .textSelection(.enabled)
                 }

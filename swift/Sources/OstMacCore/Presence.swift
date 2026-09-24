@@ -324,14 +324,14 @@ public struct PresencePicker: View {
                 }
                 .disabled(store.setting)
             }
-            Divider()
+            Divider() // native Menu separator; keep.
             Button("Refresh status") { store.refreshOwnSoon() }
         } label: {
             HStack(spacing: 4) {
                 PresenceDot(availability: store.own?.availability)
                 Text(store.own.map { PresenceFormat.label(availability: $0.availability, activity: $0.activity) } ?? "Unknown")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(DietType.caption1)
+                    .foregroundStyle(DietColor.textSecondaryColor)
             }
         }
         .menuStyle(.borderlessButton)

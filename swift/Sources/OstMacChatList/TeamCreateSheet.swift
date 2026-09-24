@@ -101,7 +101,7 @@ public struct TeamCreateSheet: View {
             if let message = phase.failureMessage {
                 Text(message)
                     .font(DietType.callout)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(Color(nsColor: DietColor.danger))
             }
             HStack {
                 Spacer()
@@ -123,7 +123,7 @@ public struct TeamCreateSheet: View {
         Group {
             HStack(spacing: DietSpace.xs) {
                 Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
+                    .foregroundStyle(Color(nsColor: DietColor.success))
                 Text("Created “\(teamName)”")
                     .font(DietType.body)
                     .foregroundStyle(DietColor.textPrimaryColor)

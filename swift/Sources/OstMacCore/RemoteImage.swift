@@ -5,6 +5,7 @@
 // so paging/streaming re-renders never refetch. All phases share one fixed
 // slot (RemoteImageSlot) so resolving bytes never shifts the timeline.
 import AppKit
+import DietDesign
 import SwiftUI
 
 /// Load state for one bubble image. Plain enum keeps the state machine
@@ -239,9 +240,9 @@ struct ZoomedImage: View {
                 }
                 .padding(8)
                 .help(err)
-                Divider()
+                DietDividerH()
             }
-            Divider()
+            DietDividerH()
             HStack(spacing: 8) {
                 Slider(
                     value: Binding(
