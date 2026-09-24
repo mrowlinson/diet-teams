@@ -1,8 +1,8 @@
-// ChatTimelineView.swift — om-scroll/om-history/om-editdel/om-react-polish/om-scrollbottom:
+// ChatTimelineView.swift — om-scroll/om-history/om-editdel/om-react-polish/om-scrollbottom/om-pinmessages:
 // message timeline with follow/pill, prepend anchoring, armed+debounced
 // paging, history loading/error states, edit/delete passthrough, the
-// more-picker shot hook, settle re-asserts, and a jump-to-latest while
-// scrolled up with nothing new.
+// more-picker shot hook, settle re-asserts, a jump-to-latest while
+// scrolled up with nothing new, and the pinned strip (tap jumps).
 //
 // Extracted from ConversationView so the scroll state (ChatScrollModel)
 // is owned per chat: the parent `.id()`s this view by chatID, giving
@@ -23,6 +23,8 @@ struct ChatTimelineView: View {
     var onOpenDoc: (InlineDoc) -> Void = { InlineDocs.open($0) }
     /// Read receipts (om-receipts): viewed-latest sends + own Seen state.
     @ObservedObject var receipts: ReceiptStore = ReceiptStore()
+    /// Pinned messages (om-pinmessages): the strip + bubble menu state.
+    @ObservedObject var pins: PinnedMessageStore = PinnedMessageStore()
     /// Preview-row tap (om-linkpreview passthrough).
     var onOpenLink: (URL) -> Void = { LinkPreviewOpen.default($0) }
     @StateObject private var scroll = ChatScrollModel()
@@ -32,8 +34,16 @@ struct ChatTimelineView: View {
 
     var body: some View {
         ScrollViewReader { proxy in
-            ZStack(alignment: .bottom) {
-                ScrollView {
+            VStack(spacing: 0) {
+                // Pinned strip (om-pinmessages): pinned to the top of the
+                // timeline (never scrolls away). Tap jumps to the bubble.
+                PinnedStripView(
+                    rows: pins.rows(for: store.chatID, messages: store.messages),
+                    onJump: { jumpToPin(proxy, id: $0) },
+                    onUnpin: { pins.unpin(chatID: store.chatID, messageID: $0) })
+                DietSeamH()
+                ZStack(alignment: .bottom) {
+                    ScrollView {
                     LazyVStack(alignment: .leading, spacing: DietSpace.sm) {
                         pagingSentinel
                         loadMoreRow
@@ -83,7 +93,12 @@ struct ChatTimelineView: View {
                                             chatID: $0, messageID: msg.id,
                                             messages: store.messages)
                                     } ?? false,
-                                    onOpenLink: onOpenLink
+                                    onOpenLink: onOpenLink,
+                                    isPinned: pins.isPinned(
+                                        chatID: store.chatID, messageID: msg.id),
+                                    onTogglePin: {
+                                        pins.toggle(chatID: store.chatID, message: msg)
+                                    }
                                 )
                                 .id(msg.id)
                                 .onAppear {
@@ -177,6 +192,7 @@ struct ChatTimelineView: View {
                         .buttonStyle(.plain)
                         .help("Jump to latest messages")
                         .padding(.bottom, DietSpace.sm)
+                    }
                     }
                 }
             }
@@ -303,6 +319,15 @@ struct ChatTimelineView: View {
         scroll.jumpToLatest(tailID: store.messages.last?.id)
         scrollToBottom(proxy)
         sendReadPositionIfViewingLatest()
+    }
+
+    /// Strip tap (om-pinmessages): jump to the pinned bubble when it is
+    /// in the loaded window; missing bubbles stay put (never conjure).
+    private func jumpToPin(_ proxy: ScrollViewProxy, id: String) {
+        guard PinnedMessages.jumpTarget(pinID: id, messages: store.messages) != nil else { return }
+        DispatchQueue.main.async {
+            withAnimation { proxy.scrollTo(id, anchor: .center) }
+        }
     }
 
     private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool = true) {

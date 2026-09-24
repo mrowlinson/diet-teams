@@ -20,6 +20,8 @@ public struct ConversationView: View {
     @ObservedObject public var typing: TypingStore
     @ObservedObject public var receipts: ReceiptStore
     @ObservedObject public var attachments: ComposeAttachmentsStore
+    /// Pinned messages per thread (om-pinmessages): passed to the timeline.
+    @ObservedObject public var pins: PinnedMessageStore
     /// False for 1:1 chats (header shows the chatmate dot).
     private let isGroup: Bool
     @State private var draft = ""
@@ -59,6 +61,7 @@ public struct ConversationView: View {
         typing: TypingStore = TypingStore(),
         receipts: ReceiptStore = ReceiptStore(),
         attachments: ComposeAttachmentsStore = ComposeAttachmentsStore(),
+        pins: PinnedMessageStore = PinnedMessageStore(),
         isGroup: Bool = true, initialTab: Int = 0, catchUpOpen: Bool = false,
         onForward: @escaping (ChatMessage) -> Void = { _ in },
         editOpen: Bool = false, deleteOpen: Bool = false,
@@ -73,6 +76,7 @@ public struct ConversationView: View {
         self.typing = typing
         self.receipts = receipts
         self.attachments = attachments
+        self.pins = pins
         self.isGroup = isGroup
         self.onForward = onForward
         _tab = State(initialValue: initialTab)
@@ -114,6 +118,7 @@ public struct ConversationView: View {
                     sharedFiles: shared.chatID == store.chatID ? shared.files : [],
                     onOpenDoc: { _ = shared.open($0.file) },
                     receipts: receipts,
+                    pins: pins,
                     onOpenLink: onOpenLink)
                     .id("chat-\(store.chatID ?? "-")")
                 DietSeamH()
@@ -613,6 +618,9 @@ struct MessageBubble: View {
     /// Injected so tests never touch the browser; default is guarded
     /// (https-only, NSWorkspace).
     var onOpenLink: (URL) -> Void = { LinkPreviewOpen.default($0) }
+    /// Pinned state (om-pinmessages): drives the Pin/Unpin menu label.
+    var isPinned: Bool = false
+    var onTogglePin: () -> Void = {}
 
     var body: some View {
         HStack(spacing: DietSpace.xs) {
@@ -722,16 +730,17 @@ struct MessageBubble: View {
             .foregroundStyle(DietColor.textPrimaryColor)
             .opacity(failed ? 0.85 : 1)
             // Right-click menu via AppKit bridge: ONE menu (inline emoji
-            // row + Reply / Copy / Forward / Save, all top-level, no
-            // submenu — see ReactionMenuBridge). A covering overlay is
-            // deliberately NOT used: the monitor approach leaves links
-            // and badge taps untouched.
+            // row + Reply / Copy / Forward / Save / Pin-Unpin, all
+            // top-level, no submenu — see ReactionMenuBridge). A covering
+            // overlay is deliberately NOT used: the monitor approach leaves
+            // links and badge taps untouched.
             .background(
                 ReactionMenuBridge(
                     message: message, onReact: onReact, failed: failed,
                     onCopy: { copyBody() }, onForward: onForward,
                     onSave: { saveBody() }, onRetry: onRetry,
-                    onReply: onReply, onEdit: onEdit, onDelete: onDelete))
+                    onReply: onReply, onEdit: onEdit, onDelete: onDelete,
+                    isPinned: isPinned, onTogglePin: onTogglePin))
             if !message.reactions.isEmpty {
                 ReactionTapbacks(reactions: message.reactions, onTap: onReact)
                     .offset(x: message.isOwn ? DietSpace.sm : -DietSpace.sm, y: -DietSpace.md)

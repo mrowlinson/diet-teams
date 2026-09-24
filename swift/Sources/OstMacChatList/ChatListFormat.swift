@@ -50,6 +50,15 @@ public enum ChatListFormat {
         return chats.filter { mentionedIDs.contains($0.id) }
     }
 
+    /// Hidden filter (om-mute-hide): drop chats whose id is in
+    /// `hiddenIDs` (the RulesStore hidden set). Order is preserved
+    /// exactly. `showHidden` bypasses (restore pass: every chat shows).
+    /// Empty set → all chats. Unknown ids are ignored.
+    public static func filterHidden(_ chats: [ChatItem], hiddenIDs: Set<String>, showHidden: Bool = false) -> [ChatItem] {
+        guard !showHidden, !hiddenIDs.isEmpty else { return chats }
+        return chats.filter { !hiddenIDs.contains($0.id) }
+    }
+
     /// One-line `sender: preview` summary. Missing parts are dropped;
     /// both missing → `""` (view shows a placeholder).
     public static func previewLine(sender: String?, preview: String?) -> String {

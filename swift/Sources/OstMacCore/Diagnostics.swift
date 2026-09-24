@@ -138,4 +138,18 @@ public enum DiagnosticsFormat {
     public static func notifLine(posted: Int, skipped: Int, lastReason: String) -> String {
         "\(posted) posted · \(skipped) skipped · last \(lastReason.isEmpty ? "—" : lastReason)"
     }
+
+    /// User-pin one-liner (om-userpins): persisted pin count.
+    /// Diagnostics window only — sidebar rows show a pin glyph,
+    /// never a number.
+    public static func pinsLine(count: Int) -> String {
+        "\(count) pinned"
+    }
+
+    /// Leave/block counters (om-leave-block): threads left this
+    /// session, users currently blocked, failed leave calls. The
+    /// sidebar and Settings show no numbers; the counts live here only.
+    public static func leaveBlockLine(leaves: Int, blocks: Int, failed: Int) -> String {
+        "\(leaves) left · \(blocks) blocked · \(failed) failed"
+    }
 }

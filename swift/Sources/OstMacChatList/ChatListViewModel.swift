@@ -20,10 +20,15 @@ public enum ChatListState: Equatable, Sendable {
 /// Default fetcher calls `RustCore.chats` (blocking FFI + network) on a
 /// detached task. Tests inject a mock fetcher. Conforms to ``ChatSelection``
 /// so the conversation lane can share this instance as its selection source.
+/// Also owns the leave/block flows (om-leave-block): leaving calls core
+/// and drops the row locally on success; blocking records the user and
+/// drops the row immediately. Neither path ever refetches the list.
 @MainActor
 public final class ChatListViewModel: ObservableObject, ChatSelection {
     /// Sync fetch (runs off-main). Throws `CoreCallError` on core failure.
     public typealias Fetcher = @Sendable (Int32) throws -> ChatsResponse
+    /// Sync leave call (runs off-main). Throws `CoreCallError` on failure.
+    public typealias Leaver = @Sendable (String) throws -> LeaveResponse
 
     /// Latest rows (only meaningful in `.loaded`; stale otherwise).
     @Published public private(set) var chats: [ChatItem] = []
@@ -31,27 +36,82 @@ public final class ChatListViewModel: ObservableObject, ChatSelection {
     @Published public private(set) var state: ChatListState = .loading
     /// Sidebar selection (see ``ChatSelection``).
     @Published public var selectedChatID: String?
+    /// Leave calls in flight (sidebar disables + spins these rows).
+    @Published public private(set) var leavingIDs: Set<String> = []
+    /// Last leave failure (sidebar error alert; nil when clear).
+    @Published public private(set) var leaveError: String?
+    /// Successful leaves this session (Diagnostics only).
+    @Published public private(set) var leavesCompleted = 0
+    /// Failed leave calls this session (Diagnostics only).
+    @Published public private(set) var leaveFailures = 0
 
     public var selectedChat: ChatItem? {
         chats.first { $0.id == selectedChatID }
             ?? selectedChatID.flatMap(PinnedChats.row(for:))
     }
 
-    /// Sidebar order: Mentions, Notifications, then recency. Pure
-    /// projection over `chats` (which stays real-chats-only,
-    /// recency-ordered); every ingest/filter/restart path re-derives it,
-    /// so the pin invariant holds without a stored copy that could drift.
+    /// Sidebar order: Mentions, Notifications, user pins (pin-time
+    /// order), then recency. Pure projection over `chats` (which stays
+    /// real-chats-only, recency-ordered) plus the persisted pin list;
+    /// every ingest/filter/restart path re-derives it, so the pin
+    /// invariant holds without a stored copy that could drift.
     public var displayChats: [ChatItem] {
-        PinnedChats.sorted(chats)
+        PinnedChats.sorted(chats, pins: pins.orderedIDs)
     }
 
-    private let fetcher: Fetcher
+    /// User-pinned chats (persisted; the sidebar's Pin/Unpin context
+    /// menu acts through `pin(_:)`/`unpin(_:)` below).
+    public let pins: UserPinStore
 
-    public init(fetcher: @escaping Fetcher = { try RustCore.chats(limit: $0) }) {
+    /// Shared blocked-user list (Settings + Diagnostics read this same
+    /// instance; the app passes its persistent one). Default is
+    /// memory-only so tests and previews never touch real defaults.
+    public let blocked: BlockedStore
+
+    /// Fired with the chat id after a row leaves locally (leave success
+    /// or block). The app clears per-chat satellite state here (unread,
+    /// mention flags) — never a list refresh.
+    public var onLocalRemove: ((String) -> Void)?
+
+    private let fetcher: Fetcher
+    private let leaver: Leaver
+    private var cancellables = Set<AnyCancellable>()
+
+    public init(
+        fetcher: @escaping Fetcher = { try RustCore.chats(limit: $0) },
+        pins: UserPinStore = UserPinStore(),
+        leaver: @escaping Leaver = { try RustCore.leaveChat(chatID: $0) },
+        blocked: BlockedStore = BlockedStore(defaults: nil)
+    ) {
         self.fetcher = fetcher
+        self.leaver = leaver
+        self.blocked = blocked
+        self.pins = pins
+        self.pins.objectWillChange
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &cancellables)
+    }
+
+    /// True when the chat is user-pinned (context-menu state).
+    public func isPinned(_ id: String) -> Bool {
+        pins.isPinned(id)
+    }
+
+    /// Pin a chat (no-op for synthetic/blank/duplicate ids — the
+    /// store refuses them; the list is never refetched here).
+    public func pin(_ id: String) {
+        pins.pin(id)
+    }
+
+    /// Unpin a chat (unknown ids are a no-op; the row returns to
+    /// recency order on the next `displayChats` read).
+    public func unpin(_ id: String) {
+        pins.unpin(id)
     }
 
     /// Fetch the list. Drops the selection when its chat is gone.
+    /// Blocked threads are filtered before publish (they never render).
     public func load(limit: Int32 = 50) async {
         state = .loading
         let fetcher = fetcher
@@ -59,17 +119,73 @@ public final class ChatListViewModel: ObservableObject, ChatSelection {
             let response = try await Task.detached {
                 try fetcher(limit)
             }.value
-            chats = response.chats
-            state = response.chats.isEmpty ? .empty : .loaded
+            let visible = blocked.filtered(response.chats)
+            chats = visible
+            state = visible.isEmpty ? .empty : .loaded
             if let sel = selectedChatID,
                !PinnedChats.isSynthetic(sel),
-               !response.chats.contains(where: { $0.id == sel })
+               !visible.contains(where: { $0.id == sel })
             {
                 selectedChatID = nil
             }
         } catch {
             state = .error(Self.message(for: error))
         }
+    }
+
+    /// Leave one group chat: call core, then drop the row locally and
+    /// migrate the selection (see ``LeaveSelection``). No refetch —
+    /// the server row simply stops arriving. Unknown, synthetic, blank,
+    /// or already-leaving ids are a no-op. Failure keeps the row and
+    /// publishes `leaveError` (sidebar alert offers Retry).
+    public func leave(chatID: String) async {
+        let id = chatID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !id.isEmpty, !PinnedChats.isSynthetic(id) else { return }
+        guard chats.contains(where: { $0.id == id }) else { return }
+        guard !leavingIDs.contains(id) else { return }
+        leavingIDs.insert(id)
+        leaveError = nil
+        let leaver = leaver
+        do {
+            _ = try await Task.detached { try leaver(id) }.value
+            leavingIDs.remove(id)
+            leavesCompleted += 1
+            removeLocally(chatID: id)
+        } catch {
+            leavingIDs.remove(id)
+            leaveFailures += 1
+            leaveError = Self.message(for: error)
+        }
+    }
+
+    /// Block one 1:1 thread's user: record the block, then drop the row
+    /// locally and migrate the selection. Synchronous and local-only
+    /// (Teams exposes no block endpoint — enforcement is the hidden row
+    /// plus the app's notify/unread/mention gates). Unknown, synthetic,
+    /// or blank ids are a no-op.
+    public func block(chatID: String) {
+        let id = chatID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !id.isEmpty, !PinnedChats.isSynthetic(id) else { return }
+        guard let row = chats.first(where: { $0.id == id }) else { return }
+        blocked.block(chatID: id, name: row.name)
+        removeLocally(chatID: id)
+    }
+
+    /// Dismiss the leave error (sidebar alert Cancel).
+    public func clearLeaveError() {
+        leaveError = nil
+    }
+
+    /// Drop one row without refetching; migrate a stranded selection to
+    /// its neighbor (never the dead thread, never a blind first-row
+    /// jump for untouched selections). Unknown ids are a no-op.
+    public func removeLocally(chatID: String) {
+        guard chats.contains(where: { $0.id == chatID }) else { return }
+        let next = LeaveSelection.fallback(
+            removedID: chatID, chats: chats, selectedID: selectedChatID)
+        chats.removeAll { $0.id == chatID }
+        selectedChatID = next
+        onLocalRemove?(chatID)
     }
 
     /// Fire-and-forget reload (error-state Retry, resync, sign-in).

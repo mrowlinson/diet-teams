@@ -344,4 +344,239 @@ final class PinnedChatsTests: XCTestCase {
         XCTAssertEqual(
             PinnedChats.stableID(for: Self.chat(id: "8:e", name: "  ")), "8:e")
     }
+
+    // MARK: - User pins (om-userpins)
+
+    nonisolated func isolatedDefaults() -> UserDefaults {
+        UserDefaults(suiteName: "test-userpins-\(UUID().uuidString)") ?? .standard
+    }
+
+    func testIsPinnable() {
+        XCTAssertTrue(PinnedChats.isPinnable("8:a"))
+        XCTAssertTrue(PinnedChats.isPinnable("19:meeting@thread.v2"))
+        XCTAssertFalse(PinnedChats.isPinnable(PinnedChats.mentionsID))
+        XCTAssertFalse(PinnedChats.isPinnable(PinnedChats.notificationsID))
+        XCTAssertFalse(PinnedChats.isPinnable(""))
+        XCTAssertFalse(PinnedChats.isPinnable("   "))
+    }
+
+    func testUserPinsSitBetweenSyntheticAndRecency() {
+        let out = PinnedChats.sorted(
+            [
+                Self.chat(id: "8:a", name: "A"),
+                Self.chat(id: "8:b", name: "B"),
+                Self.chat(id: "8:c", name: "C"),
+            ],
+            pins: ["8:b"])
+        XCTAssertEqual(
+            out.map(\.id),
+            [PinnedChats.mentionsID, PinnedChats.notificationsID, "8:b", "8:a", "8:c"])
+    }
+
+    func testPinTimeOrderOldestFirst() {
+        let chats = [
+            Self.chat(id: "8:a", name: "A"),
+            Self.chat(id: "8:b", name: "B"),
+            Self.chat(id: "8:c", name: "C"),
+        ]
+        // Pin c first, then a: the oldest pin leads the section.
+        let out = PinnedChats.sorted(chats, pins: ["8:c", "8:a"])
+        XCTAssertEqual(
+            out.map(\.id),
+            [PinnedChats.mentionsID, PinnedChats.notificationsID, "8:c", "8:a", "8:b"])
+    }
+
+    func testPinUnknownIDsDontRender() {
+        let out = PinnedChats.sorted(
+            [
+                Self.chat(id: "8:a", name: "A"),
+                Self.chat(id: "8:b", name: "B"),
+            ],
+            pins: ["8:gone", "8:a"])
+        // Unknown ids skip rendering; the rest keep recency order.
+        XCTAssertEqual(
+            out.map(\.id),
+            [PinnedChats.mentionsID, PinnedChats.notificationsID, "8:a", "8:b"])
+    }
+
+    func testPinSyntheticAndDuplicateIDsSkipped() {
+        let out = PinnedChats.sorted(
+            [
+                Self.chat(id: "8:a", name: "A"),
+                Self.chat(id: "8:b", name: "B"),
+            ],
+            pins: [
+                PinnedChats.mentionsID, "8:a",
+                PinnedChats.notificationsID, "8:a",
+            ])
+        XCTAssertEqual(
+            out.map(\.id),
+            [PinnedChats.mentionsID, PinnedChats.notificationsID, "8:a", "8:b"])
+    }
+
+    func testSortedWithPinsIdempotent() {
+        let input = [
+            Self.chat(id: "8:b", name: "B"),
+            Self.chat(id: "8:a", name: "A"),
+            Self.chat(id: "8:c", name: "C"),
+        ]
+        let once = PinnedChats.sorted(input, pins: ["8:c", "8:gone"])
+        XCTAssertEqual(
+            once.map(\.id),
+            [PinnedChats.mentionsID, PinnedChats.notificationsID, "8:c", "8:b", "8:a"])
+        XCTAssertEqual(PinnedChats.sorted(once, pins: ["8:c", "8:gone"]), once)
+    }
+
+    func testPinUnpinViaModel() async {
+        let model = ChatListViewModel(
+            fetcher: { _ in
+                Self.response([
+                    Self.chat(id: "8:a", name: "A"),
+                    Self.chat(id: "8:b", name: "B"),
+                    Self.chat(id: "8:c", name: "C"),
+                ])
+            },
+            pins: UserPinStore(defaults: isolatedDefaults()))
+        await model.load()
+        XCTAssertFalse(model.isPinned("8:b"))
+        model.pin("8:b")
+        XCTAssertTrue(model.isPinned("8:b"))
+        XCTAssertEqual(
+            model.displayChats.map(\.id),
+            [PinnedChats.mentionsID, PinnedChats.notificationsID, "8:b", "8:a", "8:c"])
+        // Stored rows stay recency-ordered (existing contract).
+        XCTAssertEqual(model.chats.map(\.id), ["8:a", "8:b", "8:c"])
+        model.pin("8:c")
+        XCTAssertEqual(
+            model.displayChats.map(\.id),
+            [PinnedChats.mentionsID, PinnedChats.notificationsID, "8:b", "8:c", "8:a"])
+        model.unpin("8:b")
+        XCTAssertFalse(model.isPinned("8:b"))
+        // Unpinned rows return to recency order.
+        XCTAssertEqual(
+            model.displayChats.map(\.id),
+            [PinnedChats.mentionsID, PinnedChats.notificationsID, "8:c", "8:a", "8:b"])
+        model.unpin("8:unknown")
+        XCTAssertEqual(model.pins.count, 1)
+    }
+
+    func testPinSyntheticIsNoop() async {
+        let model = ChatListViewModel(
+            fetcher: { _ in
+                Self.response([Self.chat(id: "8:a", name: "A")])
+            },
+            pins: UserPinStore(defaults: isolatedDefaults()))
+        await model.load()
+        let before = model.displayChats
+        model.pin(PinnedChats.mentionsID)
+        model.pin(PinnedChats.notificationsID)
+        model.pin("")
+        XCTAssertEqual(model.pins.count, 0)
+        XCTAssertEqual(model.displayChats, before)
+    }
+
+    func testPinSurvivesIngestOrder() async {
+        let model = ChatListViewModel(
+            fetcher: { _ in
+                Self.response([
+                    Self.chat(id: "8:a", name: "A"),
+                    Self.chat(id: "8:b", name: "B"),
+                    Self.chat(id: "8:c", name: "C"),
+                ])
+            },
+            pins: UserPinStore(defaults: isolatedDefaults()))
+        await model.load()
+        model.pin("8:b")
+        // Bubbled recency never jumps above the pinned section.
+        model.ingest(realtime: Self.live(chat: "8:c"))
+        XCTAssertEqual(model.chats.map(\.id), ["8:c", "8:a", "8:b"])
+        XCTAssertEqual(
+            model.displayChats.map(\.id),
+            [PinnedChats.mentionsID, PinnedChats.notificationsID, "8:b", "8:c", "8:a"])
+        // Live text on the pinned row refreshes its preview in place
+        // without moving the pinned section.
+        model.ingest(realtime: Self.live(chat: "8:b", text: "pinned hello"))
+        XCTAssertEqual(
+            model.displayChats.map(\.id),
+            [PinnedChats.mentionsID, PinnedChats.notificationsID, "8:b", "8:c", "8:a"])
+        XCTAssertEqual(model.displayChats[2].last_message_preview, "pinned hello")
+    }
+
+    func testPinsPersistAcrossStores() {
+        let defaults = isolatedDefaults()
+        let first = UserPinStore(defaults: defaults)
+        first.pin("8:b")
+        first.pin("8:a")
+        XCTAssertEqual(first.orderedIDs, ["8:b", "8:a"])
+        let second = UserPinStore(defaults: defaults)
+        XCTAssertEqual(second.orderedIDs, ["8:b", "8:a"])
+        XCTAssertTrue(second.isPinned("8:b"))
+        XCTAssertEqual(second.count, 2)
+        second.unpin("8:b")
+        let third = UserPinStore(defaults: defaults)
+        XCTAssertEqual(third.orderedIDs, ["8:a"])
+    }
+
+    func testPinsRestoreIntoDisplayAfterRestart() async {
+        let defaults = isolatedDefaults()
+        UserPinStore(defaults: defaults).pin("8:b")
+        // Restart = a fresh model over the persisted store.
+        let model = ChatListViewModel(
+            fetcher: { _ in
+                Self.response([
+                    Self.chat(id: "8:a", name: "A"),
+                    Self.chat(id: "8:b", name: "B"),
+                ])
+            },
+            pins: UserPinStore(defaults: defaults))
+        await model.load()
+        XCTAssertEqual(
+            model.displayChats.map(\.id),
+            [PinnedChats.mentionsID, PinnedChats.notificationsID, "8:b", "8:a"])
+    }
+
+    func testStoreSanitizesOnLoad() {
+        let defaults = isolatedDefaults()
+        defaults.set(
+            [
+                PinnedChats.mentionsID, "  ", "8:b", "8:b",
+                PinnedChats.notificationsID, "8:a",
+            ],
+            forKey: UserPinStore.defaultsKey)
+        let store = UserPinStore(defaults: defaults)
+        XCTAssertEqual(store.orderedIDs, ["8:b", "8:a"])
+    }
+
+    func testRepinKeepsPinTime() {
+        let store = UserPinStore(defaults: isolatedDefaults())
+        store.pin("8:b")
+        store.pin("8:a")
+        store.pin("8:b")
+        XCTAssertEqual(store.orderedIDs, ["8:b", "8:a"])
+    }
+
+    func testDedupePreservedWithUserPins() {
+        let real = Self.chat(id: "19:notify@thread.v2", name: "Notifications")
+        let out = PinnedChats.sorted(
+            [Self.chat(id: "8:a", name: "A"), real],
+            pins: ["8:a"])
+        // The real thread still occupies the synthetic slot; the user
+        // pin renders after it. Exactly one Notifications row.
+        XCTAssertEqual(
+            out.map(\.id),
+            [PinnedChats.mentionsID, "19:notify@thread.v2", "8:a"])
+        XCTAssertEqual(out.filter { $0.name == "Notifications" }.count, 1)
+    }
+
+    func testPinnedDedupeWinnerNotDuplicated() {
+        let real = Self.chat(id: "19:notify@thread.v2", name: "Notifications")
+        let out = PinnedChats.sorted(
+            [Self.chat(id: "8:a", name: "A"), real],
+            pins: ["19:notify@thread.v2"])
+        // A pinned chat that already occupies a synthetic slot stays
+        // there — it is never duplicated into the pinned section.
+        XCTAssertEqual(
+            out.map(\.id),
+            [PinnedChats.mentionsID, "19:notify@thread.v2", "8:a"])
+    }
 }

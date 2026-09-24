@@ -318,9 +318,9 @@ public final class MessageNotifications: ObservableObject {
     /// Meeting-start reasons synthesize "Meeting starting: <chat>" (raw
     /// beacons/blobs never shown); otherwise "sender in chat" (sender
     /// alone when the chat has no better name; 1:1 chats collapse "X in
-    /// X" to "X"). The live banner path maps titles/bodies via NcDelivery
-    /// (plus preview/sound/lock/elevation) but does NOT collapse 1:1
-    /// "X in X" yet — open follow-up, see the waveF merge report.
+    /// X" to "X"). The live banner path (NcDelivery.makeBanner) carries
+    /// the same collapse (plus preview/sound/lock/elevation); oracle
+    /// agreement on 1:1 + group titles is pinned in NcDeliveryTests.
     nonisolated public static func makeRulesNote(
         for msg: RealtimeMessage, chatName: String, reason: String
     ) -> PostedNotification {

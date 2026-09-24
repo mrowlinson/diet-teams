@@ -20,6 +20,7 @@ struct SettingsView: View {
     /// Roster snapshot (read-only; never triggers a chat-list refresh).
     private let chats: [ChatItem]
     @ObservedObject private var quiet: QuietHoursStore
+    @ObservedObject private var blocked: BlockedStore
     @AppStorage("tenorAPIKey") private var tenorAPIKey = ""
     private let fixedAccount: AccountInfo?
 
@@ -30,7 +31,8 @@ struct SettingsView: View {
         notifs: MessageNotifications = MessageNotifications(),
         rules: RulesStore = RulesStore(),
         chats: [ChatItem] = [],
-        quiet: QuietHoursStore = QuietHoursStore()
+        quiet: QuietHoursStore = QuietHoursStore(),
+        blocked: BlockedStore = BlockedStore(defaults: nil)
     ) {
         _auth = ObservedObject(wrappedValue: auth)
         _catchUp = ObservedObject(wrappedValue: catchUp)
@@ -38,6 +40,7 @@ struct SettingsView: View {
         _rules = ObservedObject(wrappedValue: rules)
         self.chats = chats
         _quiet = ObservedObject(wrappedValue: quiet)
+        _blocked = ObservedObject(wrappedValue: blocked)
         fixedAccount = nil
     }
 
@@ -50,6 +53,7 @@ struct SettingsView: View {
         _rules = ObservedObject(wrappedValue: RulesStore())
         chats = []
         _quiet = ObservedObject(wrappedValue: QuietHoursStore())
+        _blocked = ObservedObject(wrappedValue: BlockedStore(defaults: nil))
         fixedAccount = account
     }
 
@@ -101,6 +105,29 @@ struct SettingsView: View {
                         }
                     }
                     Text("Muted chats never banner and never accrue unread (rules reason “chat-muted”).")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Section("Blocked users") {
+                    if blocked.users.isEmpty {
+                        Text("No blocked users. Block someone from a 1:1 chat in the sidebar (right-click).")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(blocked.sortedUsers) { user in
+                            HStack {
+                                Text(user.displayName)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                Spacer()
+                                Button("Unblock") {
+                                    blocked.unblock(chatID: user.chatID)
+                                }
+                            }
+                            .help("Unblock \(user.displayName)")
+                        }
+                    }
+                    Text("Blocked users never banner and never accrue unread. Unblocked chats reappear when the list next loads.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

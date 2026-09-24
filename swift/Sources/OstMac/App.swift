@@ -185,7 +185,7 @@ struct OstMacAppMain: App {
             SettingsView(
                 auth: state.auth, catchUp: state.catchUp, notifs: state.notifs,
                 rules: state.rules, chats: state.chats.chats,
-                quiet: state.quietHours)
+                quiet: state.quietHours, blocked: state.blocked)
         }
         .commands { OstMacCommands() }
     }
@@ -229,6 +229,10 @@ private struct OstMacCommands: Commands {
 @MainActor
 final class AppState: ObservableObject {
     let isDemo: Bool
+    /// Blocked users (om-leave-block): shared by the chat list (row
+    /// filter), Settings (Unblock), Diagnostics (count), and the live
+    /// feed gate below. Demo runs memory-only (never the real defaults).
+    let blocked: BlockedStore
     let chats: ChatListViewModel
     let teams: TeamsViewModel
     let reminders: RemindersViewModel
@@ -244,6 +248,7 @@ final class AppState: ObservableObject {
     let unread = UnreadStore(dock: NullDockBadge())
     let mentions = MentionStore()
     let receipts = ReceiptStore()
+    let pinnedMessages: PinnedMessageStore
     let auth = AuthViewModel()
     let presence = PresenceStore()
     let call: CallStore
@@ -271,6 +276,8 @@ final class AppState: ObservableObject {
     let showHistory: Bool
     /// --show-notif-live: offline banner-proof injection (demo only).
     let showNotifLive: Bool
+    /// --show-pins: demo 1:1 thread + two seeded pins (strip shot).
+    let showPins: Bool
     @Published var openChatID: String?
     @Published var signedIn: Bool?
     @Published var coreVersion = "?"
@@ -312,7 +319,7 @@ final class AppState: ObservableObject {
     init(args: [String]) {
         isDemo = args.contains("--demo") || args.contains("--demo-rich")
             || args.contains("--demo-reactions") || args.contains("--show-sidebarchurn")
-            || args.contains("--demo-botposts")
+            || args.contains("--demo-botposts") || args.contains("--show-pins")
         showNotes = args.contains("--show-notes")
         showJump = args.contains("--show-jump") // shot hook: palette open at launch
         call = CallStore(demo: isDemo)
@@ -323,6 +330,14 @@ final class AppState: ObservableObject {
         showHistoryError = args.contains("--show-history-error")
         showHistory = args.contains("--show-history") || showHistoryError
         showNotifLive = args.contains("--show-notif-live")
+        showPins = args.contains("--show-pins")
+        if showPins {
+            // Shot hook only: throwaway defaults (never the real pins).
+            pinnedMessages = PinnedMessageStore(
+                defaults: UserDefaults(suiteName: "shot-pins") ?? .standard)
+        } else {
+            pinnedMessages = PinnedMessageStore()
+        }
         if showCatchUp {
             // Shot hook only: throwaway defaults (never the real ones),
             // canned summary, no network.
@@ -350,6 +365,8 @@ final class AppState: ObservableObject {
             preselectID = DemoData.historyID
         } else if args.contains("--show-reply") {
             preselectID = DemoData.repliesID
+        } else if args.contains("--show-pins") {
+            preselectID = DemoData.avaID
         } else if args.contains("--demo-rich") {
             preselectID = DemoData.richID
         } else if args.contains("--demo-reactions") {
@@ -369,12 +386,16 @@ final class AppState: ObservableObject {
         } else {
             autoSay = nil
         }
+        blocked = isDemo ? BlockedStore(defaults: nil) : BlockedStore()
         if isDemo {
             // Shot hook: the churn dataset swaps the whole list (the
             // standard demo rows + count assertions stay untouched).
             let seed = showSidebarChurn
                 ? DemoData.churnChatsResponse() : DemoData.chatsResponse()
-            chats = ChatListViewModel(fetcher: { _ in seed })
+            chats = ChatListViewModel(
+                fetcher: { _ in seed },
+                leaver: { LeaveResponse(ok: true, chat_id: $0) },
+                blocked: blocked)
             teams = TeamsViewModel(fetcher: { DemoData.teamsResponse() })
             reminders = RemindersViewModel(
                 listsFetcher: { DemoData.remindersResponse() },
@@ -392,10 +413,16 @@ final class AppState: ObservableObject {
             mentions.adopt(DemoData.mentionedChatIDs)
             history.seedDemo() // canned recents (in-memory, offline)
         } else {
-            chats = ChatListViewModel()
+            chats = ChatListViewModel(blocked: blocked)
             teams = TeamsViewModel()
             reminders = RemindersViewModel()
             meetings = MeetingsViewModel()
+        }
+        // om-leave-block: a locally-removed row drops its satellite
+        // state (unread, mention flags) — never a list refresh.
+        chats.onLocalRemove = { [weak self] id in
+            self?.unread.markRead(chatID: id)
+            self?.mentions.markRead(chatID: id)
         }
         chats.$selectedChatID
             .dropFirst()
@@ -434,6 +461,12 @@ final class AppState: ObservableObject {
         // om-quiet-hours: forward quiet changes so the Diagnostics
         // rows tick live (schedule flips, DND expiry, suppressions).
         quietHours.objectWillChange
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &cancellables)
+        // om-userpins: forward chat-list changes so the Diagnostics
+        // pin count ticks live (the model already forwards its store).
+        chats.objectWillChange
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.objectWillChange.send() }
             .store(in: &cancellables)
@@ -647,6 +680,7 @@ final class AppState: ObservableObject {
     private func openSelected(_ id: String?) {
         guard let id else {
             openChatID = nil
+            conv.close() // never show a dead thread behind the empty detail
             return
         }
         guard id != openChatID else { return } // already open (direct --chat path)
@@ -701,11 +735,13 @@ final class AppState: ObservableObject {
         // demo-react default 404d the installed build); demo
         // selections never reach shared defaults either.
         guard isDemo || !DemoData.isDemoID(id) else { return }
+        // Blocked threads never open (jump/direct paths fail closed).
+        guard !blocked.isBlocked(chatID: id) else { return }
         openChatID = id
         if SelectionRestore.shouldPersist(chatID: id) {
             persistedSelection = id
         }
-        unread.markRead(chatID: id) // om-notifbadge: opening marks read
+        unread.markRead(chatID: id) // om-notifbadge + om-markunread: opening marks read (counts + horizon override)
         mentions.markRead(chatID: id) // om-mentions: opening clears the flag
         if isDemo {
             // om-receipts: demo peers read through the tail (offline Seen).
@@ -737,6 +773,12 @@ final class AppState: ObservableObject {
             if showReply {
                 let target = msgs.first(where: { $0.id == "rep-2" }) ?? msgs.first
                 if let target { conv.beginReply(to: target) }
+            }
+            // Shot hook: seed two pins on the 1:1 thread (the strip shot).
+            if showPins {
+                for m in msgs.prefix(2) {
+                    pinnedMessages.pin(chatID: id, message: m)
+                }
             }
             notes.showDemo()
         } else {
@@ -824,6 +866,16 @@ final class AppState: ObservableObject {
     private func handleRealtime(_ msg: RealtimeMessage) {
         feedEvents += 1
         refreshFeedStatus()
+        // om-leave-block: blocked senders skip everything (list, typing,
+        // unread, mentions, banners) — counted as a skip in Diagnostics.
+        // Unknown threads default to 1:1, so a new thread from a blocked
+        // mate still matches by name.
+        let threadGroup = chats.chats.first(where: { $0.id == msg.chatID })?.is_group ?? false
+        if blocked.isBlocked(chatID: msg.chatID, senderName: msg.sender, isGroup: threadGroup) {
+            notifSkipped += 1
+            notifLastReason = "blocked-user"
+            return
+        }
         typing.noteMessage(
             chatID: msg.chatID, sender: msg.sender, senderID: msg.senderID)
         chats.ingest(realtime: msg)
@@ -1128,6 +1180,7 @@ struct RootView: View {
                         presence: state.presence,
                         unread: state.unread,
                         mentions: state.mentions,
+                        rules: state.rules,
                         openChatID: state.openChatID,
                         initialSection: RootView.initialSection,
                         initialFilter: OstMacAppMain.filterQuery(args: CommandLine.arguments),
@@ -1143,6 +1196,7 @@ struct RootView: View {
                             call: state.call, shared: state.shared, notes: state.notes,
                             catchUp: state.catchUp, typing: state.typing,
                             receipts: state.receipts,
+                            pins: state.pinnedMessages,
                             isGroup: state.chats.selectedChat?.is_group ?? true,
                             initialTab: CommandLine.arguments.contains("--show-shared") ? 1
                                 : (state.showNotes ? 2 : 0),

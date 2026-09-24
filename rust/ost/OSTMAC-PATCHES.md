@@ -249,6 +249,18 @@ needing maintainer buy-in. Minor PRs stand alone; majors are separate PRs.
     (MacBook mic + BoomAudio resolve AND open; mic_test dB numbers,
     tone_play exit 0).
 
+27. [minor] `src/api/chat.rs` + `src/api/mod.rs` + `src/main.rs` —
+    **leave chat (om-leave-block lane)**. `leave_chat_with_client`
+    removes self from one thread's roster via
+    `DELETE .../v1/threads/{id}/members/{mri}` (skypetoken auth,
+    existing `chat_delete` with `None` body); the own MRI resolves via
+    `whoami_data` (`8:orgid:{oid}`, see `own_member_mri`), pure target
+    in `leave_member_url`. Empty chat ids (and empty owner ids) bail
+    pre-network. `leave_chat` CLI entry (`teams-cli leave --to <id>`)
+    prints "Left chat.". Best-effort: NOT live-verified — do not
+    upstream until `leave` succeeds against a signed-in box (same bar
+    as ledger 17 reactions). Unit tests: MRI + endpoint shapes.
+
 ## Upstream PRs (2026-09-22, base 0892144; main red on sdp E0308 until #5)
 
 Minor (standalone modulo #5-first; merge in any order after):

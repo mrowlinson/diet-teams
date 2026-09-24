@@ -155,6 +155,13 @@ public enum RustCore {
         }
     }
 
+    /// Leave one group chat via core (blocking FFI: call off main thread).
+    public static func leaveChat(chatID: String) throws -> LeaveResponse {
+        try chatID.withCString { ptr in
+            try call(ostmac_leave(ptr), as: LeaveResponse.self)
+        }
+    }
+
     /// Mark one conversation read up to a message (blocking FFI: call off
     /// the main thread). Empty ids throw via core's arg envelope.
     public static func markRead(chatID: String, messageID: String) throws -> MarkReadResponse {

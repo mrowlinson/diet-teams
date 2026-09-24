@@ -7,6 +7,7 @@
 //! - teams: joined teams with channels (requires sign-in)
 //! - messages: full history for one chat (requires sign-in)
 //! - send/edit/delete: post, edit, or delete a chat message (requires sign-in)
+//! - leave: remove self from a group chat thread (requires sign-in)
 //! - presence: own get/set + per-user get (Graph presence, requires sign-in)
 //! - resolve_mri: Teams `8:orgid:` MRI to Graph user (requires sign-in)
 //! - reminders: Microsoft To Do lists/tasks/add/complete (Graph, sign-in)
@@ -802,6 +803,35 @@ pub fn delete_json(chat_id: &str, message_id: &str) -> String {
     match run() {
         Ok(s) => s,
         Err(e) => err_json("delete", e),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Leave chat (om-leave-block lane)
+// ---------------------------------------------------------------------------
+
+/// Leave one group chat (remove self from the thread roster). Returns
+/// `{ok:true, chat_id}` or `{ok:false}`. Empty ids are rejected before
+/// any network.
+pub fn leave_json(chat_id: &str) -> String {
+    if chat_id.trim().is_empty() {
+        return err_json("arg", "empty chat_id");
+    }
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            ost::api::leave_chat_with_client(&client, chat_id.trim())
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            Ok(json!({"ok": true, "chat_id": chat_id.trim()}).to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("leave", e),
     }
 }
 
@@ -1985,6 +2015,15 @@ pub extern "C" fn ostmac_delete(
     }
 }
 
+/// Leave one group chat. See [`leave_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_leave(chat_id: *const c_char) -> *mut c_char {
+    match cstr_to_string(chat_id) {
+        Ok(t) => string_to_c(leave_json(&t)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
 /// Mark one conversation read up to a message. See [`mark_read_json`].
 #[no_mangle]
 pub extern "C" fn ostmac_mark_read(
@@ -2633,6 +2672,15 @@ mod tests {
     }
 
     #[test]
+    fn leave_empty_args_is_error() {
+        for bad in ["", "   "] {
+            let v: serde_json::Value = serde_json::from_str(&leave_json(bad)).unwrap();
+            assert_eq!(v["ok"], false, "chat={:?}", bad);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
     fn receipt_json_shape() {
         let r = ost::api::ReadReceipt {
             user: "8:orgid:a".to_string(),
@@ -2667,6 +2715,14 @@ mod tests {
             assert_eq!(v["error"], "arg");
 
             let p = ostmac_receipts(std::ptr::null());
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+
+            let p = ostmac_leave(std::ptr::null());
             assert!(!p.is_null());
             let s = CStr::from_ptr(p).to_string_lossy().into_owned();
             ostmac_free(p);

@@ -177,6 +177,23 @@ public final class ConversationStore: ObservableObject {
         open(chatID: id, limit: limit)
     }
 
+    /// Close the thread (selection cleared, chat left): drop the id,
+    /// bubbles, and pending state. The generation bump cancels in-flight
+    /// opens, so stale completions can't repopulate a dead thread.
+    public func close() {
+        openGeneration += 1
+        chatID = nil
+        chatName = nil
+        messages = []
+        pageToken = nil
+        loading = false
+        loadingMore = false
+        error = nil
+        didLoad = false
+        failedIDs = []
+        replyTarget = nil
+    }
+
     /// Shot hook: surface a canned fetch error in demo mode only.
     /// Live stores ignore it (real errors come from core).
     public func seedDemoError(_ message: String) {

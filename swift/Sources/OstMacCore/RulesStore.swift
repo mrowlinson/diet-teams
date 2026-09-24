@@ -1,10 +1,11 @@
 // RulesStore.swift — om-notif-settings lane: observable rules config.
 //
 // Single source of truth for RulesConfig in the app: loads rules.json
-// once, publishes the config, and persists every mute/unmute
-// immediately (best-effort save — a failed write keeps the in-memory
-// value for the session). AppState reads `config` for its per-event
-// rules decisions; Settings binds the per-chat override list here.
+// once, publishes the config, and persists every mute/unmute and
+// hide/unhide immediately (best-effort save — a failed write keeps the
+// in-memory value for the session). AppState reads `config` for its
+// per-event rules decisions; Settings binds the per-chat override list
+// here and the sidebar the mute/hide context menu.
 import Combine
 import Foundation
 
@@ -42,6 +43,24 @@ public final class RulesStore: ObservableObject {
             config.mutedChatIDs.insert(chatID)
         } else {
             config.mutedChatIDs.remove(chatID)
+        }
+        try? config.save(to: path)
+    }
+
+    /// True when the chat is hidden from the sidebar list.
+    public func isHidden(chatID: String) -> Bool {
+        config.hiddenChatIDs.contains(chatID)
+    }
+
+    /// Hide or unhide one chat, persisting immediately. No-ops (same
+    /// value) skip the write. Visibility only — banners and unread are
+    /// untouched (see RulesConfig.hiddenChatIDs).
+    public func setHidden(chatID: String, hidden: Bool) {
+        guard !chatID.isEmpty, config.hiddenChatIDs.contains(chatID) != hidden else { return }
+        if hidden {
+            config.hiddenChatIDs.insert(chatID)
+        } else {
+            config.hiddenChatIDs.remove(chatID)
         }
         try? config.save(to: path)
     }
