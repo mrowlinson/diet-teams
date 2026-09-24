@@ -2862,6 +2862,9 @@ mod tests {
         let c = ost::api::ChannelInfo {
             id: "19:new@thread.tacv2".to_string(),
             name: "New room".to_string(),
+            description: None,
+            membership_type: None,
+            web_url: None,
         };
         let v = channel_to_json(&c);
         assert_eq!(v["id"], "19:new@thread.tacv2");
