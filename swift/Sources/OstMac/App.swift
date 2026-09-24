@@ -22,6 +22,7 @@
 // send via core — never use it on shared chats for testing.
 // --show-about / --show-settings / --show-av open those windows at launch (shot hooks).
 // --show-diagnostics opens the Diagnostics window at launch (shot hook).
+// --show-calls opens the Recent Calls window at launch (shot hook).
 // --av-mic-denied seeds the Call A/V panel's mic-denied hint (shot hook).
 // --show-teams opens the sidebar on the Teams browser (shot hook).
 // --show-shared opens the conversation on the Shared files tab (shot hook).
@@ -152,6 +153,10 @@ struct OstMacAppMain: App {
             AvPanelView()
         }
         .defaultSize(width: 600, height: 740)
+        Window("Recent Calls", id: AppIdentity.callsWindowID) {
+            CallHistoryView(store: state.history)
+        }
+        .defaultSize(width: 380, height: 480)
         Window("Diagnostics", id: AppIdentity.diagWindowID) {
             DiagnosticsView()
                 .environmentObject(state)
@@ -181,6 +186,7 @@ private struct OstMacCommands: Commands {
         }
         CommandMenu("Call") {
             Button("Call A/V Test") { openWindow(id: AppIdentity.avWindowID) }
+            Button("Recent Calls") { openWindow(id: AppIdentity.callsWindowID) }
         }
         CommandMenu("Go") {
             Button("Jump to Chat…") {
@@ -211,6 +217,7 @@ final class AppState: ObservableObject {
     let auth = AuthViewModel()
     let presence = PresenceStore()
     let call: CallStore
+    let history = CallHistoryStore()
     let notes = NotesStore()
     let showNotes: Bool
     let catchUp: CatchUpStore
@@ -331,6 +338,7 @@ final class AppState: ObservableObject {
                 presence.adoptChatPeer(chatID: chatID, response: peer)
             }
             mentions.adopt(DemoData.mentionedChatIDs)
+            history.seedDemo() // canned recents (in-memory, offline)
         } else {
             chats = ChatListViewModel()
             teams = TeamsViewModel()
@@ -356,6 +364,24 @@ final class AppState: ObservableObject {
         receipts.objectWillChange
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &cancellables)
+        // om-call-history: recents record from the slot (connect flips,
+        // local end) + the feed (rings, remote end); redial re-places.
+        // Forward history changes so the Diagnostics counts tick live.
+        history.objectWillChange
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &cancellables)
+        history.onRedial = { [weak self] record in
+            Task { @MainActor [weak self] in self?.redial(record) }
+        }
+        call.$call
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] c in
+                Task { @MainActor [weak self] in
+                    self?.history.noteActiveCall(c)
+                }
+            }
             .store(in: &cancellables)
         // om-notif: banner click opens the chat; inline reply sends.
         _ = NotificationCenter.default.addObserver(
@@ -441,7 +467,10 @@ final class AppState: ObservableObject {
                 Task { @MainActor [weak self] in self?.handleResync() }
             }
             feed.onCall { [weak self] ev in
-                Task { @MainActor [weak self] in self?.call.ingest(ev) }
+                Task { @MainActor [weak self] in
+                    self?.call.ingest(ev)
+                    self?.history.noteEvent(ev)
+                }
             }
             feed.onTyping { [weak self] ev in
                 Task { @MainActor [weak self] in self?.handleTyping(ev) }
@@ -500,6 +529,17 @@ final class AppState: ObservableObject {
         guard let msg = forwardMessage else { return }
         forwardMessage = nil
         conv.forward(msg, toChatID: destID, destName: destName)
+    }
+
+    /// Recents redial (om-call-history): re-place on the record's
+    /// thread. No-op without a thread (incoming legs carry none) or
+    /// while another call is active.
+    func redial(_ record: CallRecord) {
+        let thread = record.thread.trimmingCharacters(
+            in: .whitespacesAndNewlines)
+        guard !thread.isEmpty else { return }
+        guard !(call.call?.isActive ?? false) else { return }
+        call.place(threadID: thread)
     }
 
     /// Jump palette: chats route through the sidebar selection (keeps the
@@ -892,6 +932,9 @@ struct RootView: View {
             }
             if CommandLine.arguments.contains("--show-av") {
                 openWindow(id: AppIdentity.avWindowID)
+            }
+            if CommandLine.arguments.contains("--show-calls") {
+                openWindow(id: AppIdentity.callsWindowID)
             }
             if CommandLine.arguments.contains("--show-diagnostics") {
                 openWindow(id: AppIdentity.diagWindowID)

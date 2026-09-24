@@ -72,6 +72,12 @@ struct DiagnosticsView: View {
             }
             Section("Call") {
                 callRow
+                LabeledContent(
+                    "Recent",
+                    value: DiagnosticsFormat.callsLine(
+                        total: state.history.totalCount,
+                        missed: state.history.missedCount))
+                    .textSelection(.enabled)
                 if let err = state.call.error {
                     LabeledContent("Last error") {
                         Text(err)
