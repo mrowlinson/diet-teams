@@ -11,9 +11,9 @@
 //! Audio rides the same engine via cpal (`ost::calling::audio`): mic capture
 //! when a device exists, 1kHz tone fallback, speaker render, echo record.
 //!
-//! The engine runs on its own OS thread + tokio runtime (the per-call `rt()`
-//! is dropped when place returns, so media cannot live on it). Loops poll a
-//! shutdown flag on 500ms recv timeouts so `stop` joins within ~1s.
+//! The engine runs on its own OS thread + tokio runtime (media cannot live
+//! on the shared `rt()`: `block_on` there is synchronous per call). Loops
+//! poll a shutdown flag on 500ms recv timeouts so `stop` joins within ~1s.
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
