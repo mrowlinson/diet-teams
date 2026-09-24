@@ -178,7 +178,9 @@ struct OstMacAppMain: App {
         }
         .defaultSize(width: 720, height: 480)
         Settings {
-            SettingsView(auth: state.auth, catchUp: state.catchUp, notifs: state.notifs)
+            SettingsView(
+                auth: state.auth, catchUp: state.catchUp, notifs: state.notifs,
+                rules: state.rules, chats: state.chats.chats)
         }
         .commands { OstMacCommands() }
     }
@@ -280,11 +282,12 @@ final class AppState: ObservableObject {
     private var stateTimer: Timer?
     private var started = false
     private var contentOpened = false
-    // om-rules: notify/skip rules over the live feed (file-loaded once at
-    // launch; edits need a relaunch). meetingDedup collapses meeting
-    // bursts; ownerMRI is learned async (name backup covers the gap).
+    // om-rules: notify/skip rules over the live feed (RulesStore loads
+    // rules.json once; Settings mute edits apply live, no relaunch).
+    // meetingDedup collapses meeting bursts; ownerMRI is learned async
+    // (name backup covers the gap).
     private var meetingDedup = MeetingStartDedup()
-    private var rulesConfig = RulesConfig.loadBestEffort()
+    let rules = RulesStore()
     private var ownerMRI: String?
 
     init(args: [String]) {
@@ -730,7 +733,8 @@ final class AppState: ObservableObject {
                 msg,
                 chatName: chats.chats.first(where: { $0.id == msg.chatID })?.name,
                 openChatID: openChatID,
-                ownDisplayName: conv.ownDisplayName)
+                ownDisplayName: conv.ownDisplayName,
+                mutedChatIDs: rules.config.mutedChatIDs)
         }
         if let mri = msg.senderID,
            msg.sender != conv.ownDisplayName,
@@ -766,14 +770,14 @@ final class AppState: ObservableObject {
     /// backup covers the gap). Shared by the rules decision and the
     /// mention tracker so both gates see the same identity.
     private var resolvedOwnerMRI: String? {
-        rulesConfig.owner.mri.isEmpty ? ownerMRI : rulesConfig.owner.mri
+        rules.config.owner.mri.isEmpty ? ownerMRI : rules.config.owner.mri
     }
 
     /// One rules decision for a live event (owns the meeting-start
     /// window claim). Owner identity prefers configured/learned MRI with
     /// a live display-name backup.
     private func rulesDecision(for msg: RealtimeMessage, chatName: String) -> ChatFilter.Decision {
-        var cfg = rulesConfig
+        var cfg = rules.config
         if let own = conv.ownDisplayName, !own.isEmpty { cfg.owner.displayName = own }
         return ChatFilter.decide(
             message: msg, chatDisplayName: chatName, ownerMRI: resolvedOwnerMRI,
@@ -782,12 +786,15 @@ final class AppState: ObservableObject {
 
     /// Rules-based banner for one live event (om-rules: TN ChatFilter
     /// port). Posts through Notifier only on .notify. Respects the
-    /// Settings banner toggle (om-settings-trim) so OFF is really off.
+    /// Settings banner toggle (om-settings-trim) so OFF is really off,
+    /// plus the preview toggle (message-text bodies hide; synthesized
+    /// meeting bodies are not message content, so they stay) and the
+    /// sound toggle (silent post).
     private func maybeNotify(_ msg: RealtimeMessage, chatName: String, decision: ChatFilter.Decision) {
         guard notifs.enabled else { return }
         guard case .notify(let reason) = decision else { return }
         let title: String
-        let body: String
+        var body: String
         if reason == ChatFilter.meetingStartingReason {
             // Synthesized body (raw beacons/blobs never shown).
             if chatName.isEmpty || chatName == msg.chatID {
@@ -804,9 +811,13 @@ final class AppState: ObservableObject {
             title = msg.sender.isEmpty ? chatName : "\(msg.sender) in \(chatName)"
             body = msg.text
         }
+        if !notifs.showPreview, reason != ChatFilter.meetingStartingReason {
+            body = MessageNotifications.hiddenPreviewBody
+        }
         Notifier.shared.post(
             title: title, body: body,
-            id: msg.msgId.isEmpty ? nil : msg.msgId, chatID: msg.chatID)
+            id: msg.msgId.isEmpty ? nil : msg.msgId, chatID: msg.chatID,
+            sound: notifs.sound)
     }
 
     /// Wire the notifier: Reply posts through core send, Open chat jumps.
