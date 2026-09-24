@@ -67,6 +67,13 @@ public enum RustCore {
         try call(ostmac_teams(), as: TeamsResponse.self)
     }
 
+    /// Join one team by id (self-enroll, blocking FFI: call off main thread).
+    public static func teamJoin(teamID: String) throws -> TeamJoinResponse {
+        try teamID.withCString { ptr in
+            try call(ostmac_team_join(ptr), as: TeamJoinResponse.self)
+        }
+    }
+
     public static func messages(chatID: String, limit: Int32 = 50) throws -> MessagesResponse {
         try chatID.withCString { ptr in
             try call(ostmac_messages(ptr, limit), as: MessagesResponse.self)

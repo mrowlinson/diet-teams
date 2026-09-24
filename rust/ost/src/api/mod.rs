@@ -54,7 +54,7 @@ pub use notes::{
     read_note_page_data,
 };
 pub use presence::get_presence_data;
-pub use teams::list_teams_data;
+pub use teams::{join_team_data, list_teams_data};
 pub use todo::{
     complete_todo_task_data, create_todo_task_data, list_todo_lists_data,
     list_todo_tasks_data,

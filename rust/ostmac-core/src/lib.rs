@@ -519,6 +519,36 @@ pub fn teams_json() -> String {
     }
 }
 
+/// Join one team by id (self-enroll, `POST /teams/{id}/members`).
+/// Returns `{ok:true, team_id}` or `{ok:false}`. Requires sign-in.
+/// Empty ids and ids containing path separators are rejected before
+/// any network. Join-by-code is out of scope (not a Graph API).
+pub fn team_join_json(team_id: &str) -> String {
+    let id = team_id.trim();
+    if id.is_empty() {
+        return err_json("arg", "empty team_id");
+    }
+    if id.contains(['/', '?', '#']) {
+        return err_json("arg", "invalid team_id");
+    }
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let joined = ost::api::join_team_data(&client, id)
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            Ok(json!({"ok": true, "team_id": joined}).to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("team_join", e),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Messages (one chat: history + send)
 // ---------------------------------------------------------------------------
@@ -1864,6 +1894,15 @@ pub extern "C" fn ostmac_teams() -> *mut c_char {
     string_to_c(teams_json())
 }
 
+/// Join one team by id (requires sign-in). See [`team_join_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_team_join(team_id: *const c_char) -> *mut c_char {
+    match cstr_to_string(team_id) {
+        Ok(id) => string_to_c(team_join_json(&id)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
 /// Message history JSON for one chat. See [`messages_json`].
 #[no_mangle]
 pub extern "C" fn ostmac_messages(chat_id: *const c_char, limit: c_int) -> *mut c_char {
@@ -2667,6 +2706,28 @@ mod tests {
             let v: serde_json::Value =
                 serde_json::from_str(&receipts_json(bad)).unwrap();
             assert_eq!(v["ok"], false, "thread={:?}", bad);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
+    fn team_join_bad_args_is_error() {
+        for bad in ["", "   ", "team/1", "a?b", "a#b"] {
+            let v: serde_json::Value = serde_json::from_str(&team_join_json(bad)).unwrap();
+            assert_eq!(v["ok"], false, "id={:?}", bad);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
+    fn ffi_team_join_null_is_arg_error() {
+        unsafe {
+            let p = ostmac_team_join(std::ptr::null());
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
             assert_eq!(v["error"], "arg");
         }
     }
