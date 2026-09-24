@@ -779,11 +779,17 @@ final class AppState: ObservableObject {
                 }
             }
             notes.showDemo()
+            shared.showDemo(chatID: id, files: DemoData.sharedFiles(for: id))
         } else {
             conv.open(chatID: id, chatName: chatName)
             // Notes scope: channels read the team (M365 group) notebook;
             // plain chats read the user's own OneNote (no shared notebook).
             notes.open(groupID: teamID(forChannel: id))
+            // om-fix-tabs: prefetch Shared on open (cached rows make the
+            // tab switch instant); the store skips when already current.
+            if shared.chatID != id {
+                shared.open(chatID: id)
+            }
             // om-receipts: peer positions for Seen state (no list refresh).
             receipts.refresh(threadID: id)
         }
