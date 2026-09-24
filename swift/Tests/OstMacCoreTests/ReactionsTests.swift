@@ -201,6 +201,37 @@ final class ReactionsTests: XCTestCase {
         window.close()
     }
 
+    // MARK: - Picker dismiss (om-react-picker: Esc path)
+
+    func testDismissPickerWithoutShowIsNoOp() {
+        // Idempotent: windowless anchors dismiss clean (no popover,
+        // no window — pure state check).
+        let bare = ReactionMenuAnchorView(
+            frame: NSRect(x: 0, y: 0, width: 200, height: 60))
+        bare.dismissPicker()
+        XCTAssertFalse(bare.isPickerShown)
+    }
+
+    func testDismissPickerReleasesSeatedPopover() {
+        // The view's Esc onDismiss funnels through dismissPicker: the
+        // popover closes and the retained ref drops (no leak, shown
+        // flips false). Seated but UNSHOWN: showing a real popover here
+        // over-releases at pool drain (AppKit close machinery — the
+        // suite's one real show stays in testShowPickerInWindowShows).
+        // The live shown→Esc-dismissed path is proven end-to-end by the
+        // lane's scripted shot run (--show-picker + keystroke Esc).
+        let view = ReactionMenuAnchorView(
+            frame: NSRect(x: 0, y: 0, width: 200, height: 60))
+        view.picker = NSPopover()
+        XCTAssertNotNil(view.picker)
+        view.dismissPicker()
+        XCTAssertNil(view.picker)
+        XCTAssertFalse(view.isPickerShown)
+        // Double-dismiss stays a no-op.
+        view.dismissPicker()
+        XCTAssertFalse(view.isPickerShown)
+    }
+
     // MARK: - Live FFI validation (arg rejection, no network)
 
     func testLiveFFIReactRejectsBadArgs() {
