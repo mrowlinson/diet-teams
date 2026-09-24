@@ -1,77 +1,109 @@
-# Diet Teams — ost (Teams) on macOS: spike + scaffold
+# Diet Teams
 
-Proves `ost` (Rust Teams client) builds and runs on macOS, carves a minimal
-embeddable core (auth device-code + chat list + Trouter events), and drives it
-from a minimal SwiftUI shell over a C ABI (JSON over the boundary).
+Native macOS client for Microsoft Teams: chat list, conversation, live
+updates, calls. A SwiftUI app over a Rust core (`ostmac-core` FFI staticlib)
+built on vendored [`ost`](https://github.com/eisbaw/ost). Runs fully offline
+in `--demo` with canned data; sign in via device code or browser to go live.
 
-## Layout
+![Diet Teams main window (demo mode)](docs/shots/om-reskin-chrome-demo.png)
+![Teams channel (demo mode)](docs/shots/om-reskin-teams-channel.png)
+![Device-code sign-in (demo placeholder)](docs/shots/om-reskin-chrome-auth-code.png)
 
-- `rust/ost/` — vendored ost sources (+ `OSTMAC-PATCHES.md`: what changed, why)
-- `rust/ostmac-core/` — FFI crate (`staticlib` + `rlib`), C ABI in
-  `swift/Sources/COstMac/include/ostmac_core.h`
-- `swift/` — SPM package: `COstMac` (headers), `OstMacCore` (Swift wrapper:
-  auth state machine + views, conversation store, realtime feed, branding,
-  demo data), `OstMacChatList` (chat sidebar + `ChatSelection` contract),
-  `OstMac` (the single app: sidebar + conversation + live feed, About,
-  Settings, sign-in sheet + Auth window), `OstMacMCP` (stdio MCP server
-  core) + `ostmac-mcp` executable (see `docs/mcp.md`), `OstMacCoreTests`,
-  `OstMacMCPTests`
-- `scripts/` — `build-rust.sh`, `build-app.sh`, `package.sh` (signed
-  release `Diet Teams.app`, `--install` to /Applications), `make-dmg.sh` (V1
-  installer `tmp/Diet Teams-<ver>.dmg`), `install.sh`, `make-icon.sh`
-  (renders `OstMac.icns`), `test.sh`
-- `docs/shots/` — viewed screenshots (TUI + SwiftUI shell)
+## Features
 
-## Build / run
+Chat & conversation
+: Sidebar (Chats / Teams / Reminders) + conversation with Chat / Shared /
+  Notes tabs, live Trouter feed, paged history, ⌘K jump palette, filters.
+: Send, edit, delete, quote replies, emoji reactions, forward/copy, rich
+  rendering (mentions, code, inline images, bot posts, link previews),
+  read receipts, typing indicators.
+: Shared files (list/upload/download); GIF picker (bring-your-own Tenor key).
+
+Teams, meetings, reminders, notes
+: Teams/channels browser; upcoming meetings + join-string parsing; To Do
+  lists/tasks; OneNote notebooks/sections/pages read + paragraph append.
+
+Calls
+: Signaling (place/accept/end, echo-bot test), live A/V banner,
+  mic/speaker/camera panel with probes, recent call history.
+
+Notifications & presence
+: Native banners with rules, quiet hours, @me/@team mention alerts,
+  per-chat mutes; own + per-user presence.
+
+Auth & session
+: Device-code + browser (PKCE capture) sign-in, 13-state auth gate,
+  refresh/expiry handling, persisted on-disk session.
+
+Extras
+: AI thread catch-up (bring-your-own key, kept in the macOS keychain),
+  diagnostics/health windows, MCP server (`ostmac-mcp`, see `docs/mcp.md`).
+
+## Requirements
+
+- macOS 14+, Xcode command line tools (`swift`, `xcodebuild`), Rust (`cargo`)
+
+## Build / install / run
 
 ```sh
 ./scripts/test.sh        # rust tests + swift tests (builds rust first)
-./scripts/build-app.sh   # Diet Teams.app
+./scripts/build-rust.sh  # vendored ost + ostmac-core staticlib (release)
+./scripts/build-app.sh   # Diet Teams.app in swift/.build/release
 open "swift/.build/release/Diet Teams.app"
 open "swift/.build/release/Diet Teams.app" --args --demo  # offline canned data
-./scripts/package.sh     # signed release tmp/Diet Teams.app (icon + plist)
-./scripts/make-dmg.sh    # V1 installer tmp/Diet Teams-1.0.0.dmg
-./scripts/install.sh     # copy release app to /Applications
+./scripts/package.sh [--install]  # signed release tmp/Diet Teams.app (+ /Applications)
+./scripts/make-dmg.sh    # versioned installer in tmp/
+./scripts/install.sh     # copy the release app to /Applications
 ```
 
-Prereqs: Xcode CLT (`swift`, `xcodebuild`), `cargo`. No Linux-only features
-(`audio`, `video-capture`) — default features only.
+Signing: `CODESIGN_IDENTITY` wins; else the first Apple Development
+identity; else ad-hoc (mic/camera grants won't stick across rebuilds).
 
-## Measured (2026-09-21, arm64, macOS 27)
+## Usage
 
-- ost builds: yes (1 upstream fix required, see PATCHES). Warnings: 104
-  pre-existing (unused imports/vars). Binaries: debug 35M, release 10M.
-- TUI: renders unsigned after stay-open patch; sidebar/messages/compose/help
-  all work; all data paths need sign-in. Shots: `docs/shots/tui-*.png`.
-- Lib spike: device start+poll (real URL+code), chat list (unsigned → clean
-  error JSON), Trouter channel (roundtrip tested; live connect needs sign-in).
-- SwiftUI shell: window opens, core 0.1.0 init=0, status visible, device flow
-  driven to code prompt. `.app` 7.6M, idle RSS ~94MB (status screen + poll
-  loop). Shots: `docs/shots/spike-*.png`.
-- Tests: `cargo test` ostmac-core 6/6, ost 91+91/91+91, `swift test` 6/6.
-- Packaging: real identity (`Diet Teams`, `dev.ostmac.OstMac`, 0.1.0, macOS
-  14+), chat-bubble `.icns`, main menu (About window, Settings shell with
-  read-only account row, Quit), `scripts/package.sh` (signed release
-  `.app`, `--install`) + `scripts/install.sh`. Release `.app` 8.3M, idle
-  RSS ~137MB (demo, 3 windows open). Signed `Apple Development:
-  Michael Rowlinson (FS59877444)`. Shots: `docs/shots/ostmac-*.png`.
+- Try offline first: `--demo` (also `--demo-rich`, `--demo-reactions`,
+  `--demo-botposts`, `--chat <id>`).
+- Sign in from the app: device code (copy code / open browser) or
+  browser sign-in; the session persists across launches. Settings shows
+  the account row plus token/probe diagnostics.
+- `ostmac-mcp` exposes chats to MCP clients (Claude Desktop) — see
+  `docs/mcp.md`. It reuses the app's session; sign in once in the app.
 
-## V1 (1.0.0)
+## Architecture
 
-Ships: installable (signed `.app` + DMG) + device-code sign-in + chat
-list + paging + conversation + send + live feed. Version is stamped in
-one place each: `OstMac-Info.plist`, `AppIdentity.version`,
-`ostmac-core` Cargo.toml + `ostmac_version()`. Out of scope:
-notifications, presence, teams, badges, attachments, reply/react/edit.
+- `swift/` — SPM package: `OstMac` (the app), `OstMacCore` (state +
+  views), `OstMacChatList` (sidebar), `DietDesign` (design system),
+  `OstMacMCP` + `ostmac-mcp` executable, `COstMac` (C header).
+- `rust/ostmac-core/` — FFI `staticlib`: ~80-function C ABI, JSON over
+  the boundary, every string freed with `ostmac_free`.
+- `rust/ost/` — vendored upstream `ost` (built as a lib) plus our
+  documented patch stack (`OSTMAC-PATCHES.md`, tagged `[minor]`/`[major]`).
+- `scripts/` — `build-rust.sh`, `build-app.sh`, `package.sh`,
+  `make-dmg.sh`, `install.sh`, `make-icon.sh`, `test.sh`.
+- `docs/shots/` — demo-mode screenshots (all sanitized, no live data).
 
-## Sign-in boundary
+Rust builds first; Swift links the staticlib. JSON keeps the FFI
+boundary version-tolerant.
 
-`login` / device-code runs to the browser prompt and stops there — completing
-sign-in needs the owner in a browser. After sign-in, re-run chats + Trouter
-connect to exercise the live paths.
+## Testing
 
-## FFI choice
+`./scripts/test.sh` runs ost unit tests, ostmac-core tests, a release
+core build, then the Swift suites (`OstMacCoreTests`, `OstMacMCPTests`,
+`DietDesignTests`).
 
-C ABI + handwritten header (cbindgen-fallback equivalent) instead of
-swift-bridge: fewer moving parts for the spike, JSON keeps the boundary
-version-tolerant. Revisit swift-bridge if the surface grows past ~15 calls.
+## Upstream & credits
+
+Teams protocol core: [eisbaw/ost](https://github.com/eisbaw/ost) (Open
+Source Teams client, Rust) — thank you. It is vendored under `rust/ost`
+so the app builds on macOS and exposes a library surface; every local
+change is a documented patch in `rust/ost/OSTMAC-PATCHES.md`.
+
+## Contributing
+
+PRs welcome. Run `./scripts/test.sh` first, and keep screenshots
+demo-mode only (`--demo` flags) — no live chats, names, or tokens in
+commits.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
