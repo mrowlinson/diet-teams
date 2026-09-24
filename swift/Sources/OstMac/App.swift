@@ -241,6 +241,10 @@ final class AppState: ObservableObject {
     let reminders: RemindersViewModel
     let meetings: MeetingsViewModel
     let conv = ConversationStore()
+    /// Message search (om-ja-search): the jump palette's Messages scope
+    /// searches through this store. Demo runs substring-over-fixtures
+    /// (offline); live hits Graph via core.
+    let messageSearch: MessageSearchStore
     let shared = SharedFilesStore()
     let feed = RealtimeFeed()
     let typing = TypingStore()
@@ -396,6 +400,11 @@ final class AppState: ObservableObject {
             autoSay = nil
         }
         blocked = isDemo ? BlockedStore(defaults: nil) : BlockedStore()
+        messageSearch = isDemo
+            ? MessageSearchStore(searcher: { query, _, _ in
+                DemoData.messageSearchResponse(for: query)
+            })
+            : MessageSearchStore()
         if isDemo {
             // Shot hook: the churn dataset swaps the whole list (the
             // standard demo rows + count assertions stay untouched).
@@ -727,7 +736,46 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Message-hit jump (om-ja-search): open the hit's conversation, then
+    /// land on the bubble. Already-open threads seek in place (no
+    /// reload); other threads open with the seek armed (bounded
+    /// page-back, then the timeline jumps).
+    func jumpToMessage(_ hit: SearchHit) {
+        showJump = false
+        if hit.chatID == openChatID {
+            conv.seek(messageID: hit.messageID)
+            return
+        }
+        pendingSeekMessageID = hit.messageID
+        jump(chatID: hit.chatID, chatName: displayName(for: hit.chatID))
+    }
+
+    /// Sidebar + channel name for one conversation id (hit subtitles and
+    /// jump headers share it). Unknown ids fall back to the generic label.
+    func displayName(for chatID: String) -> String {
+        chatNameOrNil(for: chatID) ?? "Conversation"
+    }
+
+    /// Name for one conversation id, nil when unknown (palette hit
+    /// subtitles omit the chat rather than print the generic label).
+    func chatNameOrNil(for chatID: String) -> String? {
+        if let name = chats.chat(id: chatID)?.name { return name }
+        for team in teams.teams {
+            if let ch = team.channels.first(where: { $0.id == chatID }) {
+                return "\(team.name) > #\(ch.name)"
+            }
+        }
+        return nil
+    }
+
+    /// Armed message seek (om-ja-search): `jumpToMessage` sets it, `open`
+    /// consumes it (even on the guard exits, so a refused open never
+    /// leaks a stale seek into the next open).
+    private var pendingSeekMessageID: String?
+
     private func open(chatID id: String, chatName: String?) {
+        let seek = pendingSeekMessageID
+        pendingSeekMessageID = nil
         // Demo threads never load outside the demo flags (a stale
         // demo-react default 404d the installed build); demo
         // selections never reach shared defaults either.
@@ -759,6 +807,9 @@ final class AppState: ObservableObject {
                     chatID: id, chatName: name, messages: msgs,
                     failed: DemoData.failedIDs(for: id))
             }
+            // Message-hit jump (om-ja-search): demo threads load
+            // synchronously, so the seek lands in-memory (no paging).
+            if let seek { conv.seek(messageID: seek) }
             // Shot hook: arm the forward sheet on a mid-thread bubble
             // (Tom's mocks note in the default thread), once.
             if showForward, forwardMessage == nil {
@@ -781,7 +832,7 @@ final class AppState: ObservableObject {
             notes.showDemo()
             shared.showDemo(chatID: id, files: DemoData.sharedFiles(for: id))
         } else {
-            conv.open(chatID: id, chatName: chatName)
+            conv.open(chatID: id, chatName: chatName, seekMessageID: seek)
             // Notes scope: channels read the team (M365 group) notebook;
             // plain chats read the user's own OneNote (no shared notebook).
             notes.open(groupID: teamID(forChannel: id))
@@ -1237,7 +1288,10 @@ struct RootView: View {
         .sheet(isPresented: $state.showJump) {
             JumpPaletteSheet(
                 chats: state.chats, teams: state.teams,
-                initialQuery: OstMacAppMain.jumpQuery(args: CommandLine.arguments)
+                search: state.messageSearch,
+                initialQuery: OstMacAppMain.jumpQuery(args: CommandLine.arguments),
+                chatNameFor: { state.chatNameOrNil(for: $0) },
+                onPickMessage: { state.jumpToMessage($0) }
             ) { id, name in
                 state.showJump = false
                 state.jump(chatID: id, chatName: name)
@@ -1307,7 +1361,10 @@ struct RootView: View {
 struct JumpPaletteSheet: View {
     @ObservedObject var chats: ChatListViewModel
     @ObservedObject var teams: TeamsViewModel
+    @ObservedObject var search: MessageSearchStore
     let initialQuery: String
+    let chatNameFor: (String) -> String?
+    let onPickMessage: (SearchHit) -> Void
     let onPick: (String, String) -> Void
 
     var body: some View {
@@ -1315,6 +1372,9 @@ struct JumpPaletteSheet: View {
             targets: JumpTargets.build(
                 chats: chats.chats, teams: teams.teams),
             initialQuery: initialQuery,
+            searchStore: search,
+            chatNameFor: chatNameFor,
+            onPickMessage: onPickMessage,
             onPick: onPick)
     }
 }

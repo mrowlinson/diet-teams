@@ -823,6 +823,57 @@ pub fn messages_page_json(chat_id: &str, page_token: &str, limit: usize) -> Stri
     }
 }
 
+fn search_hit_to_json(h: &ost::api::SearchHitInfo) -> serde_json::Value {
+    json!({
+        "message_id": h.message_id,
+        "chat_id": h.chat_id,
+        "team_id": h.team_id,
+        "channel_id": h.channel_id,
+        "sender": h.sender,
+        "timestamp": h.timestamp,
+        "preview": h.preview,
+        "subject": h.subject,
+    })
+}
+
+/// Teams message search as JSON (Graph `/search/query`, one `from`/`size`
+/// window). Requires sign-in; unsigned yields `{ok:false}`. Empty `query`
+/// is rejected before any network; `size` clamps to Graph's `1..=25`.
+/// `next_from` (null when exhausted) chains the next window.
+pub fn search_json(query: &str, from: usize, size: usize) -> String {
+    if query.trim().is_empty() {
+        return err_json("arg", "empty query");
+    }
+    let size = ost::api::clamp_size(size);
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let page = ost::api::search_messages_data(&client, query, from, size)
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let items: Vec<_> = page.hits.iter().map(search_hit_to_json).collect();
+            Ok(json!({
+                "ok": true,
+                "query": query,
+                "from": from,
+                "size": size,
+                "total": page.total,
+                "more": page.more,
+                "next_from": ost::api::next_from(from, &page),
+                "hits": items,
+            })
+            .to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("search", e),
+    }
+}
+
 /// Post one quote reply to a chat message. Returns `{ok:true, chat_id}`
 /// or `{ok:false}`. The parent attribution comes from the caller (no
 /// history fetch); ost truncates `parent_text` to the quote snippet.
@@ -2681,6 +2732,22 @@ pub extern "C" fn ostmac_messages_page(
     };
     match cstr_to_string(page_token) {
         Ok(t) => string_to_c(messages_page_json(&id, &t, lim)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
+/// Teams message search, one `from`/`size` window. See [`search_json`].
+/// Negative `from` clamps to 0; non-positive `size` means 25.
+#[no_mangle]
+pub extern "C" fn ostmac_search(
+    query: *const c_char,
+    from: c_int,
+    size: c_int,
+) -> *mut c_char {
+    let from = if from < 0 { 0 } else { from as usize };
+    let size = if size <= 0 { 25 } else { size as usize };
+    match cstr_to_string(query) {
+        Ok(q) => string_to_c(search_json(&q, from, size)),
         Err(e) => string_to_c(err_json("arg", e)),
     }
 }
@@ -5061,6 +5128,38 @@ mod tests {
             assert_eq!(v["ok"], false);
             assert_eq!(v["error"], "arg");
         }
+    }
+
+    #[test]
+    fn search_rejects_empty_query_without_network() {
+        // om-ja-search: blank queries never reach Graph.
+        for bad in ["", "   "] {
+            let v: serde_json::Value =
+                serde_json::from_str(&search_json(bad, 0, 25)).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
+    fn search_hit_json_shape() {
+        // om-ja-search: channel-hit projection (chat_id = channel).
+        let h = ost::api::SearchHitInfo {
+            message_id: "m9".to_string(),
+            chat_id: "19:chan@thread.tacv2".to_string(),
+            team_id: Some("t1".to_string()),
+            channel_id: Some("19:chan@thread.tacv2".to_string()),
+            sender: "Tom".to_string(),
+            timestamp: "2026-09-22T09:13:05Z".to_string(),
+            preview: "...lane...".to_string(),
+            subject: None,
+        };
+        let v = search_hit_to_json(&h);
+        assert_eq!(v["message_id"], "m9");
+        assert_eq!(v["chat_id"], "19:chan@thread.tacv2");
+        assert_eq!(v["team_id"], "t1");
+        assert_eq!(v["sender"], "Tom");
+        assert!(v["subject"].is_null());
     }
 
     #[test]

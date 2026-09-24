@@ -134,6 +134,15 @@ public enum RustCore {
         }
     }
 
+    /// Teams message search, one from/size window (blocking FFI + network:
+    /// call off the main thread). `next_from` (nil when exhausted)
+    /// chains the next window via `from`.
+    public static func search(query: String, from: Int32 = 0, size: Int32 = 25) throws -> SearchResponse {
+        try query.withCString { ptr in
+            try call(ostmac_search(ptr, from, size), as: SearchResponse.self)
+        }
+    }
+
     public static func send(chatID: String, text: String) throws -> SendResponse {
         try chatID.withCString { idPtr in
             try text.withCString { textPtr in
