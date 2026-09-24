@@ -129,6 +129,21 @@ public struct TeamsBrowser: View {
                                         isOpen: channel.id == openChatID,
                                         onOpen: onOpen)
                                         .unreadBadge(unread.count(for: channel.id))
+                                        // om-markunread: same native row
+                                        // menu as the chats list (top-level
+                                        // only). Badge updates in place; the
+                                        // browser never refetches.
+                                        .contextMenu {
+                                            if unread.count(for: channel.id) > 0 {
+                                                Button("Mark as Read") {
+                                                    unread.markRead(chatID: channel.id)
+                                                }
+                                            } else {
+                                                Button("Mark as Unread") {
+                                                    unread.markUnread(chatID: channel.id)
+                                                }
+                                            }
+                                        }
                                 }
                             }
                         } label: {

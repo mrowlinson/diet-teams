@@ -718,7 +718,7 @@ final class AppState: ObservableObject {
         if SelectionRestore.shouldPersist(chatID: id) {
             persistedSelection = id
         }
-        unread.markRead(chatID: id) // om-notifbadge: opening marks read
+        unread.markRead(chatID: id) // om-notifbadge + om-markunread: opening marks read (counts + horizon override)
         mentions.markRead(chatID: id) // om-mentions: opening clears the flag
         if isDemo {
             // om-receipts: demo peers read through the tail (offline Seen).

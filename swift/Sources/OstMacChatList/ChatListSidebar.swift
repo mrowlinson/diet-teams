@@ -103,6 +103,24 @@ public struct ChatListSidebar: View {
                         )
                         .tag(chat.id)
                         .unreadBadge(unread.count(for: chat.id))
+                        // om-markunread: native row menu, top-level only
+                        // (never a submenu). Real threads only — the
+                        // synthetic pinned rows carry no read state.
+                        // Touches UnreadStore alone: the badge updates in
+                        // place, the list never refetches or re-sorts.
+                        .contextMenu {
+                            if !PinnedChats.isSynthetic(chat.id) {
+                                if unread.count(for: chat.id) > 0 {
+                                    Button("Mark as Read") {
+                                        unread.markRead(chatID: chat.id)
+                                    }
+                                } else {
+                                    Button("Mark as Unread") {
+                                        unread.markUnread(chatID: chat.id)
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
                 .listStyle(.sidebar)

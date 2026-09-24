@@ -10,6 +10,12 @@
 //   unread.ingest(decision: decision, chatID: msg.chatID, openChatID: openChatID)
 //   unread.markRead(chatID: id) // on open
 //
+// om-markunread: manual mark-as-unread/read rides a per-thread read
+// horizon override (`overrides`). `markUnread` pins a thread unread at
+// its current tail (badge shows at least 1); the sidebar badge reads
+// the visible count in place (no list refetch, no reorder — the
+// ChatListViewModel is untouched); opening the thread clears the
+// override via the same `markRead` the open path already calls.
 // Threading: @MainActor (ObservableObject for the sidebar + NSApp dock).
 // The dock sink is injectable for tests (FakeDockBadge records labels).
 import AppKit
@@ -59,6 +65,11 @@ public final class FakeDockBadge: DockBadging, @unchecked Sendable {
 public final class UnreadStore: ObservableObject {
     /// Unread per chat id. Zero-count chats are absent, never stored as 0.
     @Published public private(set) var counts: [String: Int] = [:]
+    /// Manual read-horizon overrides (om-markunread): threads pinned
+    /// unread via Mark as Unread. Cleared ids are absent, never stored
+    /// empty. Client-side only (never sent to core); opening a thread
+    /// clears its override via `markRead`.
+    @Published public private(set) var overrides: Set<String> = []
 
     private let dock: any DockBadging
 
@@ -68,9 +79,15 @@ public final class UnreadStore: ObservableObject {
         self.dock = dock ?? SystemDockBadge()
     }
 
-    /// Total unread across chats (the dock number).
+    /// Total unread across chats (the dock number), overrides included:
+    /// each overridden thread contributes at least 1.
     public var total: Int {
-        counts.values.reduce(0, +)
+        Self.visibleTotal(counts: counts, overrides: overrides)
+    }
+
+    /// Chats with a visible badge (Diagnostics count), overrides included.
+    public var chatCount: Int {
+        Self.visibleChats(counts: counts, overrides: overrides)
     }
 
     /// Dock label for the current total: nil at zero (clears the tile).
@@ -81,6 +98,33 @@ public final class UnreadStore: ObservableObject {
     /// Pure label: nil at zero, else the decimal total.
     nonisolated public static func badgeLabel(forTotal total: Int) -> String? {
         total > 0 ? "\(total)" : nil
+    }
+
+    /// Pure visible count for one thread (om-markunread badge math): the
+    /// auto count, floored at 1 while its horizon override stands. An
+    /// override absorbs the first auto point (mark-unread then one new
+    /// message still shows 1, not 2); further accruals count past it.
+    nonisolated public static func visibleCount(auto: Int, overridden: Bool) -> Int {
+        overridden ? max(auto, 1) : max(auto, 0)
+    }
+
+    /// Pure visible total over every thread (the dock number).
+    nonisolated public static func visibleTotal(counts: [String: Int], overrides: Set<String>) -> Int {
+        var total = 0
+        for (id, auto) in counts {
+            total += visibleCount(auto: auto, overridden: overrides.contains(id))
+        }
+        for id in overrides where counts[id] == nil {
+            total += 1
+        }
+        return total
+    }
+
+    /// Pure visible chat count: threads with a badge (auto or override).
+    nonisolated public static func visibleChats(counts: [String: Int], overrides: Set<String>) -> Int {
+        var ids = Set(counts.keys)
+        ids.formUnion(overrides)
+        return ids.count
     }
 
     /// Pure accrual gate: notify counts unless the chat is already open
@@ -95,13 +139,18 @@ public final class UnreadStore: ObservableObject {
     }
 
     /// Accrue one rules decision for a chat. Skips and open-chat
-    /// notifies are no-ops (no dock write).
+    /// notifies are no-ops (no dock write). Accruals that leave the
+    /// visible total unchanged (an override absorbing the first point)
+    /// also skip the dock write.
     public func ingest(
         decision: ChatFilter.Decision, chatID: String, openChatID: String?
     ) {
         guard Self.shouldCount(decision: decision, chatID: chatID, openChatID: openChatID) else { return }
+        let before = total
         counts[chatID, default: 0] += 1
-        syncDock()
+        if total != before {
+            syncDock()
+        }
     }
 
     /// Convenience: decide via ChatFilter (stateful meeting window),
@@ -125,22 +174,57 @@ public final class UnreadStore: ObservableObject {
         return decision
     }
 
-    /// Unread for one chat (0 when absent).
+    /// Unread for one chat (0 when absent). Overrides floor the
+    /// visible count at 1; the sidebar badge reads this in place.
     public func count(for chatID: String) -> Int {
-        counts[chatID] ?? 0
+        Self.visibleCount(
+            auto: counts[chatID] ?? 0,
+            overridden: overrides.contains(chatID))
     }
 
-    /// Opening a chat marks it read (drops its count, syncs the dock).
-    /// Unknown ids are a no-op (no dock write).
+    /// True while a horizon override stands for this thread.
+    public func isOverridden(chatID: String) -> Bool {
+        overrides.contains(chatID)
+    }
+
+    /// True while the thread shows a badge (auto or override).
+    public func isUnread(chatID: String) -> Bool {
+        count(for: chatID) > 0
+    }
+
+    /// Pin a thread unread at its current tail (om-markunread): the
+    /// badge shows at least 1 until the thread opens. Blank ids and
+    /// re-marks are no-ops (no dock write); marking an already-unread
+    /// thread still records the override (clearing stays one open) but
+    /// skips the dock write when the visible total is unchanged. Never
+    /// touches the chat list — the badge updates in place.
+    public func markUnread(chatID: String) {
+        let id = chatID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !id.isEmpty else { return }
+        guard !overrides.contains(id) else { return }
+        let before = total
+        overrides.insert(id)
+        if total != before {
+            syncDock()
+        }
+    }
+
+    /// Opening a chat marks it read: drops its auto count AND its
+    /// horizon override, syncs the dock. Unknown ids are a no-op (no
+    /// dock write).
     public func markRead(chatID: String) {
-        guard counts.removeValue(forKey: chatID) != nil else { return }
+        let hadCount = counts.removeValue(forKey: chatID) != nil
+        let hadOverride = overrides.remove(chatID) != nil
+        guard hadCount || hadOverride else { return }
         syncDock()
     }
 
-    /// Clear every chat (sign-out). Empty is a no-op (no dock write).
+    /// Clear every chat (sign-out): counts and overrides. Empty is a
+    /// no-op (no dock write).
     public func markAllRead() {
-        guard !counts.isEmpty else { return }
+        guard !counts.isEmpty || !overrides.isEmpty else { return }
         counts.removeAll()
+        overrides.removeAll()
         syncDock()
     }
 
