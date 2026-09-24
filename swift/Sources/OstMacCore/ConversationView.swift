@@ -16,6 +16,7 @@ public struct ConversationView: View {
     @ObservedObject public var shared: SharedFilesStore
     @ObservedObject public var notes: NotesStore
     @ObservedObject public var catchUp: CatchUpStore
+    @ObservedObject public var receipts: ReceiptStore
     /// False for 1:1 chats (header shows the chatmate dot).
     private let isGroup: Bool
     @State private var draft = ""
@@ -49,6 +50,7 @@ public struct ConversationView: View {
         store: ConversationStore, presence: PresenceStore = PresenceStore(),
         call: CallStore = CallStore(), shared: SharedFilesStore = SharedFilesStore(),
         notes: NotesStore = NotesStore(), catchUp: CatchUpStore = CatchUpStore(),
+        receipts: ReceiptStore = ReceiptStore(),
         isGroup: Bool = true, initialTab: Int = 0, catchUpOpen: Bool = false,
         onForward: @escaping (ChatMessage) -> Void = { _ in },
         editOpen: Bool = false, deleteOpen: Bool = false
@@ -59,6 +61,7 @@ public struct ConversationView: View {
         self.shared = shared
         self.notes = notes
         self.catchUp = catchUp
+        self.receipts = receipts
         self.isGroup = isGroup
         self.onForward = onForward
         _tab = State(initialValue: initialTab)
@@ -97,7 +100,8 @@ public struct ConversationView: View {
                     store: store, onForward: onForward,
                     onEdit: beginEdit, onDelete: beginDelete,
                     sharedFiles: shared.chatID == store.chatID ? shared.files : [],
-                    onOpenDoc: { _ = shared.open($0.file) })
+                    onOpenDoc: { _ = shared.open($0.file) },
+                    receipts: receipts)
                     .id("chat-\(store.chatID ?? "-")")
                 DietSeamH()
                 sendBox
@@ -467,6 +471,9 @@ struct MessageBubble: View {
     /// Doc-row Open tap (om-inline-docs): the host previews the file
     /// (SharedFilesStore.open parity). Default opens the SharePoint page.
     var onOpenDoc: (InlineDoc) -> Void = { InlineDocs.open($0) }
+    /// Own-message read state (om-receipts): some peer frontier sits at
+    /// or past this bubble. Own bubbles only; others ignore it.
+    var isRead: Bool = false
 
     var body: some View {
         HStack(spacing: DietSpace.xs) {
@@ -543,6 +550,16 @@ struct MessageBubble: View {
                                 .buttonStyle(.link)
                                 .tint(Color(nsColor: DietColor.danger))
                         }
+                    }
+                    if message.isOwn, isRead, !failed {
+                        HStack(spacing: DietSpace.xxs) {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: DietSize.iconMD))
+                            Text("Seen")
+                                .font(DietType.caption2)
+                        }
+                        .foregroundStyle(DietColor.textTertiaryColor)
+                        .accessibilityLabel("Seen")
                     }
             }
             .padding(DietSpace.sm + DietSpace.xs)

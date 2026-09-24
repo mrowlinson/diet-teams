@@ -155,6 +155,23 @@ public enum RustCore {
         }
     }
 
+    /// Mark one conversation read up to a message (blocking FFI: call off
+    /// the main thread). Empty ids throw via core's arg envelope.
+    public static func markRead(chatID: String, messageID: String) throws -> MarkReadResponse {
+        try chatID.withCString { idPtr in
+            try messageID.withCString { midPtr in
+                try call(ostmac_mark_read(idPtr, midPtr), as: MarkReadResponse.self)
+            }
+        }
+    }
+
+    /// Peer read positions for one thread (blocking FFI: call off main).
+    public static func receipts(threadID: String) throws -> ReceiptsResponse {
+        try threadID.withCString { ptr in
+            try call(ostmac_receipts(ptr), as: ReceiptsResponse.self)
+        }
+    }
+
     /// One fetched inline image: decoded bytes + content type, if any.
     /// Blocking FFI (network): call off the main thread.
     public static func mediaFetch(url: String) throws -> (data: Data, contentType: String?) {

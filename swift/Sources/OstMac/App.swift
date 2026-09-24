@@ -206,6 +206,7 @@ final class AppState: ObservableObject {
     let notifs = MessageNotifications()
     let unread = UnreadStore()
     let mentions = MentionStore()
+    let receipts = ReceiptStore()
     let auth = AuthViewModel()
     let presence = PresenceStore()
     let call: CallStore
@@ -348,6 +349,11 @@ final class AppState: ObservableObject {
             .sink { [weak self] s in
                 Task { @MainActor [weak self] in self?.authChanged(s) }
             }
+            .store(in: &cancellables)
+        // om-receipts: forward receipt changes so Diagnostics counts update.
+        receipts.objectWillChange
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.objectWillChange.send() }
             .store(in: &cancellables)
         // om-notif: banner click opens the chat; inline reply sends.
         _ = NotificationCenter.default.addObserver(
@@ -514,6 +520,11 @@ final class AppState: ObservableObject {
         unread.markRead(chatID: id) // om-notifbadge: opening marks read
         mentions.markRead(chatID: id) // om-mentions: opening clears the flag
         if isDemo {
+            // om-receipts: demo peers read through the tail (offline Seen).
+            if let last = DemoData.messages(for: id).last {
+                receipts.adopt(threadID: id, peers: ["demo-peer": last.id])
+                receipts.noteSent(chatID: id, messageID: last.id)
+            }
             let name = chatName ?? DemoData.name(for: id) ?? "Conversation"
             var msgs = DemoData.messages(for: id)
             if showCatchUp { msgs = Self.longThread(from: msgs) }
@@ -545,6 +556,8 @@ final class AppState: ObservableObject {
             // Notes scope: channels read the team (M365 group) notebook;
             // plain chats read the user's own OneNote (no shared notebook).
             notes.open(groupID: teamID(forChannel: id))
+            // om-receipts: peer positions for Seen state (no list refresh).
+            receipts.refresh(threadID: id)
         }
     }
 
@@ -622,6 +635,11 @@ final class AppState: ObservableObject {
         maybeNotify(msg, chatName: chatName, decision: decision)
         guard msg.isFor(chatID: openChatID) else { return }
         conv.ingest(realtime: msg)
+        // om-receipts: a peer reply implies they read through our tail;
+        // refresh Seen state (no list refresh — receipts only).
+        if !msg.isEdit, !msg.text.isEmpty {
+            receipts.refresh(threadID: msg.chatID)
+        }
     }
 
     /// Owner MRI for live-event matching: configured value wins, else
@@ -762,6 +780,7 @@ final class AppState: ObservableObject {
             presence.clear()
             unread.markAllRead() // om-notifbadge: dock clears on sign-out
             mentions.markAllRead() // om-mentions: flags clear on sign-out
+            receipts.clear() // om-receipts: positions clear on sign-out
             refreshFeedStatus()
         default:
             break
@@ -806,7 +825,7 @@ struct RootView: View {
                         ConversationView(
                             store: state.conv, presence: state.presence,
                             call: state.call, shared: state.shared, notes: state.notes,
-                            catchUp: state.catchUp,
+                            catchUp: state.catchUp, receipts: state.receipts,
                             isGroup: state.chats.selectedChat?.is_group ?? true,
                             initialTab: CommandLine.arguments.contains("--show-shared") ? 1
                                 : (state.showNotes ? 2 : 0),

@@ -77,6 +77,14 @@ char *ostmac_edit(const char *chat_id, const char *message_id, const char *text)
 // Delete one own message: {ok, chat_id, message_id}. Caller frees.
 char *ostmac_delete(const char *chat_id, const char *message_id);
 
+// Mark one conversation read up to a message (consumption horizon PUT):
+// {ok, chat_id, message_id}. Caller frees.
+char *ostmac_mark_read(const char *chat_id, const char *message_id);
+
+// Peer read positions for one thread:
+// {ok, thread_id, receipts:[{user, message_id, horizon}]}. Caller frees.
+char *ostmac_receipts(const char *thread_id);
+
 // Fetch one inline-image URL: {ok, data_base64, content_type?}.
 // Microsoft media hosts attach the Skype token; public hosts fetch
 // without auth. https only. Requires sign-in for auth'd hosts.

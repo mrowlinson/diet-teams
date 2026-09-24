@@ -43,4 +43,11 @@ public enum DiagnosticsFormat {
         case .stopped: "Realtime off"
         }
     }
+
+    /// Read-receipt counters (om-receipts): sent positions, tracked
+    /// threads, peer positions. Timeline shows Seen with no numbers;
+    /// the counts live here only.
+    public static func receiptsLine(sent: Int, threads: Int, peers: Int) -> String {
+        "\(sent) sent · \(threads) threads · \(peers) peers"
+    }
 }

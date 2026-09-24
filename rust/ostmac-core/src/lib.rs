@@ -806,6 +806,72 @@ pub fn delete_json(chat_id: &str, message_id: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Read receipts (om-receipts lane: consumption horizon send + list)
+// ---------------------------------------------------------------------------
+
+fn receipt_to_json(r: &ost::api::ReadReceipt) -> serde_json::Value {
+    json!({
+        "user": r.user,
+        "message_id": r.message_id,
+        "horizon": r.horizon,
+    })
+}
+
+/// Mark one conversation read up to `message_id`. Returns
+/// `{ok:true, chat_id, message_id}` or `{ok:false}`. Empty args are
+/// rejected before any network.
+pub fn mark_read_json(chat_id: &str, message_id: &str) -> String {
+    if chat_id.trim().is_empty() {
+        return err_json("arg", "empty chat_id");
+    }
+    if message_id.trim().is_empty() {
+        return err_json("arg", "empty message_id");
+    }
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            ost::api::mark_read_with_client(&client, chat_id.trim(), message_id.trim())
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            Ok(json!({"ok": true, "chat_id": chat_id.trim(), "message_id": message_id.trim()}).to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("mark_read", e),
+    }
+}
+
+/// Peer read positions for one thread. Returns
+/// `{ok:true, thread_id, receipts:[{user, message_id, horizon}]}` or
+/// `{ok:false}`. Empty `thread_id` is rejected before any network.
+pub fn receipts_json(thread_id: &str) -> String {
+    if thread_id.trim().is_empty() {
+        return err_json("arg", "empty thread_id");
+    }
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let receipts = ost::api::read_receipts_data(&client, thread_id.trim())
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let items: Vec<_> = receipts.iter().map(receipt_to_json).collect();
+            Ok(json!({"ok": true, "thread_id": thread_id.trim(), "receipts": items}).to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("receipts", e),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
 // Media (om-richmedia lane: auth'd inline-image fetch for `<img>` mining)
 // ---------------------------------------------------------------------------
@@ -1859,6 +1925,31 @@ pub extern "C" fn ostmac_delete(
     }
 }
 
+/// Mark one conversation read up to a message. See [`mark_read_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_mark_read(
+    chat_id: *const c_char,
+    message_id: *const c_char,
+) -> *mut c_char {
+    let id = match cstr_to_string(chat_id) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    match cstr_to_string(message_id) {
+        Ok(m) => string_to_c(mark_read_json(&id, &m)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
+/// Peer read positions for one thread. See [`receipts_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_receipts(thread_id: *const c_char) -> *mut c_char {
+    match cstr_to_string(thread_id) {
+        Ok(t) => string_to_c(receipts_json(&t)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
 /// Fetch one inline-image URL. See [`media_fetch_json`]. Caller frees.
 #[no_mangle]
 pub extern "C" fn ostmac_media_fetch(url: *const c_char) -> *mut c_char {
@@ -2445,6 +2536,66 @@ mod tests {
             let v: serde_json::Value =
                 serde_json::from_str(&delete_json(id, mid)).unwrap();
             assert_eq!(v["ok"], false, "id={:?} mid={:?}", id, mid);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
+    fn mark_read_receipts_empty_args_is_error() {
+        for (id, mid) in [("", "m1"), ("   ", "m1"), ("19:x", ""), ("19:x", "  ")] {
+            let v: serde_json::Value =
+                serde_json::from_str(&mark_read_json(id, mid)).unwrap();
+            assert_eq!(v["ok"], false, "id={:?} mid={:?}", id, mid);
+            assert_eq!(v["error"], "arg");
+        }
+        for bad in ["", "   "] {
+            let v: serde_json::Value =
+                serde_json::from_str(&receipts_json(bad)).unwrap();
+            assert_eq!(v["ok"], false, "thread={:?}", bad);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
+    fn receipt_json_shape() {
+        let r = ost::api::ReadReceipt {
+            user: "8:orgid:a".to_string(),
+            message_id: "m1".to_string(),
+            horizon: "1;2;m1".to_string(),
+        };
+        let v = receipt_to_json(&r);
+        assert_eq!(v["user"], "8:orgid:a");
+        assert_eq!(v["message_id"], "m1");
+        assert_eq!(v["horizon"], "1;2;m1");
+    }
+
+    #[test]
+    fn ffi_mark_read_receipts_null_is_arg_error() {
+        let id = CString::new("19:x").unwrap();
+        let mid = CString::new("m1").unwrap();
+        unsafe {
+            let p = ostmac_mark_read(id.as_ptr(), std::ptr::null());
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+
+            let p = ostmac_mark_read(std::ptr::null(), mid.as_ptr());
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+
+            let p = ostmac_receipts(std::ptr::null());
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
             assert_eq!(v["error"], "arg");
         }
     }
