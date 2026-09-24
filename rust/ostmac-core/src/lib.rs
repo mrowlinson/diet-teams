@@ -1163,13 +1163,23 @@ fn shared_file_to_json(f: &ost::api::SharedFile) -> serde_json::Value {
         "created": f.created,
         "modified": f.modified,
         "sender": f.sender,
+        "is_folder": f.is_folder,
         "attachment_id": f.attachment_id,
     })
 }
 
 /// Shared files for one chat/channel as JSON. Requires sign-in; unsigned
 /// yields `{ok:false}`. Empty `chat_id` is rejected before any network.
+/// Default shape (stable): folders filtered, same as `_opts(..., false)`.
 pub fn files_json(chat_id: &str, limit: usize) -> String {
+    files_json_opts(chat_id, limit, false)
+}
+
+/// Shared files, optionally including folders (om-i5-folders).
+/// `include_folders=true` keeps folder driveItems; each item carries
+/// `is_folder`, and folders drill in via [`files_children_json`].
+/// Returns `{ok:true, chat_id, files:[...]}`.
+pub fn files_json_opts(chat_id: &str, limit: usize, include_folders: bool) -> String {
     if chat_id.trim().is_empty() {
         return err_json("arg", "empty chat_id");
     }
@@ -1179,9 +1189,10 @@ pub fn files_json(chat_id: &str, limit: usize) -> String {
             let client = ost::api::client::TeamsClient::new()
                 .await
                 .map_err(|e| format!("{:#}", e))?;
-            let files = ost::api::list_chat_files_data(&client, chat_id, limit)
-                .await
-                .map_err(|e| format!("{:#}", e))?;
+            let files =
+                ost::api::list_chat_files_data_opts(&client, chat_id, limit, include_folders)
+                    .await
+                    .map_err(|e| format!("{:#}", e))?;
             let items: Vec<_> = files.iter().map(shared_file_to_json).collect();
             Ok(json!({"ok": true, "chat_id": chat_id, "files": items}).to_string())
         })
@@ -1189,6 +1200,39 @@ pub fn files_json(chat_id: &str, limit: usize) -> String {
     match run() {
         Ok(s) => s,
         Err(e) => err_json("files", e),
+    }
+}
+
+/// One folder's children by drive+item id (om-i5-folders). Files AND
+/// subfolders, unfiltered; folders carry `is_folder:true` and drill in
+/// via this same call. Empty ids are rejected before any network.
+/// Returns `{ok:true, drive_id, item_id, files:[...]}`.
+pub fn files_children_json(drive_id: &str, item_id: &str, limit: usize) -> String {
+    if drive_id.trim().is_empty() {
+        return err_json("arg", "empty drive_id");
+    }
+    if item_id.trim().is_empty() {
+        return err_json("arg", "empty item_id");
+    }
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let files = ost::api::list_folder_children_data(&client, drive_id, item_id, limit)
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let items: Vec<_> = files.iter().map(shared_file_to_json).collect();
+            Ok(
+                json!({"ok": true, "drive_id": drive_id, "item_id": item_id, "files": items})
+                    .to_string(),
+            )
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("files_children", e),
     }
 }
 
@@ -2349,6 +2393,40 @@ pub extern "C" fn ostmac_files(chat_id: *const c_char, limit: c_int) -> *mut c_c
         Ok(id) => string_to_c(files_json(&id, lim)),
         Err(e) => string_to_c(err_json("arg", e)),
     }
+}
+
+/// Shared files, optionally including folders. See [`files_json_opts`].
+/// `include_folders` nonzero keeps folder driveItems (each `is_folder`).
+#[no_mangle]
+pub extern "C" fn ostmac_files_opts(
+    chat_id: *const c_char,
+    limit: c_int,
+    include_folders: c_int,
+) -> *mut c_char {
+    let lim = if limit <= 0 { 20 } else { limit as usize };
+    match cstr_to_string(chat_id) {
+        Ok(id) => string_to_c(files_json_opts(&id, lim, include_folders != 0)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
+/// One folder's children by drive+item id. See [`files_children_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_files_children(
+    drive_id: *const c_char,
+    item_id: *const c_char,
+    limit: c_int,
+) -> *mut c_char {
+    let lim = if limit <= 0 { 50 } else { limit as usize };
+    let drive = match cstr_to_string(drive_id) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    let item = match cstr_to_string(item_id) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    string_to_c(files_children_json(&drive, &item, lim))
 }
 
 /// Upload a local file to a chat/channel. See [`files_upload_json`].
@@ -4115,6 +4193,7 @@ mod tests {
             created: Some("2026-09-20T10:00:00Z".to_string()),
             modified: None,
             sender: Some("Priya Nair".to_string()),
+            is_folder: false,
             attachment_id: Some("550E8400-E29B-41D4-A716-446655440000".to_string()),
         };
         let v = shared_file_to_json(&f);
@@ -4124,8 +4203,32 @@ mod tests {
         assert_eq!(v["mime"], "application/pdf");
         assert_eq!(v["drive_id"], "D1");
         assert_eq!(v["sender"], "Priya Nair");
+        assert_eq!(v["is_folder"], false);
         assert_eq!(v["attachment_id"], "550E8400-E29B-41D4-A716-446655440000");
         assert!(v["modified"].is_null());
+    }
+
+    #[test]
+    fn shared_folder_json_shape() {
+        let f = ost::api::SharedFile {
+            id: "dir-1".to_string(),
+            name: "Design".to_string(),
+            size: 0,
+            mime: None,
+            web_url: None,
+            download_url: None,
+            drive_id: Some("D1".to_string()),
+            created: None,
+            modified: None,
+            sender: None,
+            is_folder: true,
+            attachment_id: None,
+        };
+        let v = shared_file_to_json(&f);
+        assert_eq!(v["id"], "dir-1");
+        assert_eq!(v["is_folder"], true);
+        assert!(v["mime"].is_null());
+        assert!(v["download_url"].is_null());
     }
 
     #[test]
@@ -4134,6 +4237,18 @@ mod tests {
             let v: serde_json::Value =
                 serde_json::from_str(&files_json(bad, 20)).unwrap();
             assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+            for incl in [false, true] {
+                let v: serde_json::Value =
+                    serde_json::from_str(&files_json_opts(bad, 20, incl)).unwrap();
+                assert_eq!(v["ok"], false, "incl={}", incl);
+                assert_eq!(v["error"], "arg");
+            }
+        }
+        for (d, i) in [("", "i"), ("d", ""), ("  ", "i"), ("d", "  ")] {
+            let v: serde_json::Value =
+                serde_json::from_str(&files_children_json(d, i, 50)).unwrap();
+            assert_eq!(v["ok"], false, "d={:?} i={:?}", d, i);
             assert_eq!(v["error"], "arg");
         }
         for (id, path) in [("", "/tmp/a"), ("19:x", ""), ("19:x", "  ")] {
@@ -4209,6 +4324,30 @@ mod tests {
         let it = CString::new("I1").unwrap();
         unsafe {
             let p = ostmac_files_download(d.as_ptr(), it.as_ptr(), std::ptr::null());
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
+        unsafe {
+            // opts + children NULL ids -> arg error, never a crash.
+            let p = ostmac_files_opts(std::ptr::null(), 20, 1);
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+            let p = ostmac_files_children(std::ptr::null(), it.as_ptr(), 50);
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+            let p = ostmac_files_children(d.as_ptr(), std::ptr::null(), 50);
             assert!(!p.is_null());
             let s = CStr::from_ptr(p).to_string_lossy().into_owned();
             ostmac_free(p);

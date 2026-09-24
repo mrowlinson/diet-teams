@@ -844,13 +844,17 @@ public struct SharedFile: Decodable, Sendable, Identifiable, Equatable {
     /// bubble-match key for `<attachment id>` refs. Nil on old core builds
     /// and for items whose eTag carries no GUID.
     public let attachment_id: String?
+    /// Folder flag from core `is_folder` (om-i5-folders). Nil on old core
+    /// payloads (no key) — decode with `isFolder`, never force-unwrap.
+    public let is_folder: Bool?
 
     public init(
         id: String, name: String, size: UInt64 = 0,
         mime: String? = nil, web_url: String? = nil,
         download_url: String? = nil, drive_id: String? = nil,
         created: String? = nil, modified: String? = nil,
-        sender: String? = nil, attachment_id: String? = nil
+        sender: String? = nil, attachment_id: String? = nil,
+        is_folder: Bool? = nil
     ) {
         self.id = id
         self.name = name
@@ -863,7 +867,12 @@ public struct SharedFile: Decodable, Sendable, Identifiable, Equatable {
         self.modified = modified
         self.sender = sender
         self.attachment_id = attachment_id
+        self.is_folder = is_folder
     }
+
+    /// True when core marked this item a folder. Missing key (old core)
+    /// reads as file.
+    public var isFolder: Bool { is_folder == true }
 
     /// "48211" -> "47.1 KB" (1 decimal, B/KB/MB/GB).
     public var sizeLabel: String {
@@ -927,6 +936,23 @@ public struct SharedFileDownloadResponse: Decodable, Sendable {
     public let ok: Bool
     public let path: String
     public let bytes: UInt64
+}
+
+/// One folder's children from core `ostmac_files_children`
+/// (om-i5-folders): files AND subfolders, unfiltered. Folders drill in
+/// via `sharedChildren(driveID:itemID:)` with their own `drive_id`+`id`.
+public struct SharedFileChildrenResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let drive_id: String?
+    public let item_id: String?
+    public let files: [SharedFile]
+
+    public init(ok: Bool, drive_id: String? = nil, item_id: String? = nil, files: [SharedFile]) {
+        self.ok = ok
+        self.drive_id = drive_id
+        self.item_id = item_id
+        self.files = files
+    }
 }
 
 // MARK: - Presence (om-presence lane)

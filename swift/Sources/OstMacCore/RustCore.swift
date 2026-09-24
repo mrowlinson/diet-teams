@@ -244,9 +244,23 @@ public enum RustCore {
         return (data, resp.content_type)
     }
 
-    public static func sharedFiles(chatID: String, limit: Int32 = 20) throws -> SharedFilesResponse {
+    public static func sharedFiles(chatID: String, limit: Int32 = 20, includeFolders: Bool = false) throws -> SharedFilesResponse {
         try chatID.withCString { ptr in
-            try call(ostmac_files(ptr, limit), as: SharedFilesResponse.self)
+            if includeFolders {
+                try call(ostmac_files_opts(ptr, limit, 1), as: SharedFilesResponse.self)
+            } else {
+                try call(ostmac_files(ptr, limit), as: SharedFilesResponse.self)
+            }
+        }
+    }
+
+    /// One folder's children by drive+item id (om-i5-folders): files AND
+    /// subfolders, unfiltered. Blocking FFI (network): call off main.
+    public static func sharedChildren(driveID: String, itemID: String, limit: Int32 = 50) throws -> SharedFileChildrenResponse {
+        try driveID.withCString { dPtr in
+            try itemID.withCString { iPtr in
+                try call(ostmac_files_children(dPtr, iPtr, limit), as: SharedFileChildrenResponse.self)
+            }
         }
     }
 
