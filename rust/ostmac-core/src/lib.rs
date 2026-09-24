@@ -484,6 +484,9 @@ fn channel_to_json(c: &ost::api::ChannelInfo) -> serde_json::Value {
     json!({
         "id": c.id,
         "name": c.name,
+        "description": c.description,
+        "membership_type": c.membership_type,
+        "web_url": c.web_url,
     })
 }
 
@@ -2441,10 +2444,16 @@ mod tests {
                 ost::api::ChannelInfo {
                     id: "19:general@thread.tacv2".to_string(),
                     name: "General".to_string(),
+                    description: None,
+                    membership_type: None,
+                    web_url: None,
                 },
                 ost::api::ChannelInfo {
                     id: "19:random@thread.tacv2".to_string(),
                     name: "Random".to_string(),
+                    description: None,
+                    membership_type: None,
+                    web_url: None,
                 },
             ],
         };
@@ -2455,6 +2464,32 @@ mod tests {
         assert_eq!(v["channels"][0]["id"], "19:general@thread.tacv2");
         assert_eq!(v["channels"][0]["name"], "General");
         assert_eq!(v["channels"][1]["name"], "Random");
+        // Detail keys always present; null when Graph omits them.
+        assert!(v["channels"][0]["description"].is_null());
+        assert!(v["channels"][0]["membership_type"].is_null());
+        assert!(v["channels"][0]["web_url"].is_null());
+    }
+
+    #[test]
+    fn channel_json_detail_shape() {
+        let t = ost::api::TeamInfo {
+            id: "team-1".to_string(),
+            name: "Engineering".to_string(),
+            channels: vec![ost::api::ChannelInfo {
+                id: "19:general@thread.tacv2".to_string(),
+                name: "General".to_string(),
+                description: Some("Team-wide announcements".to_string()),
+                membership_type: Some("standard".to_string()),
+                web_url: Some("https://teams.cloud.microsoft/l/channel/abc".to_string()),
+            }],
+        };
+        let v = team_to_json(&t);
+        assert_eq!(v["channels"][0]["description"], "Team-wide announcements");
+        assert_eq!(v["channels"][0]["membership_type"], "standard");
+        assert_eq!(
+            v["channels"][0]["web_url"],
+            "https://teams.cloud.microsoft/l/channel/abc"
+        );
     }
 
     #[test]
