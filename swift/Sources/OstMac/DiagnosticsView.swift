@@ -83,6 +83,9 @@ struct DiagnosticsView: View {
             Section("Image preload") {
                 PreloadDiagRow(store: ImagePreloadStore.shared)
             }
+            Section("Quiet hours") {
+                QuietHoursDiagRow(store: state.quietHours)
+            }
             Section("Call") {
                 callRow
                 LabeledContent(
@@ -245,6 +248,28 @@ struct TypingDiagRow: View {
             "Typing",
             value: DiagnosticsFormat.typingLine(
                 events: events, active: store.activeCount))
+            .textSelection(.enabled)
+    }
+}
+
+/// Quiet-hours rows (om-quiet-hours): observes the store so state
+/// flips and the suppressed count tick live. The ONLY place the
+/// suppressed count appears — Settings and the sidebar never show it.
+struct QuietHoursDiagRow: View {
+    @ObservedObject var store: QuietHoursStore
+
+    var body: some View {
+        LabeledContent(
+            "State",
+            value: DiagnosticsFormat.quietHoursLine(
+                dnd: store.dndActive(), schedule: store.scheduleActive(),
+                suppressed: store.suppressedCount))
+            .textSelection(.enabled)
+        LabeledContent(
+            "Schedule",
+            value: store.windowEnabled ? store.window.summary() : "off")
+            .textSelection(.enabled)
+        LabeledContent("Do Not Disturb", value: store.dndStatus())
             .textSelection(.enabled)
     }
 }

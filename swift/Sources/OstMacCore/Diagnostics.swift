@@ -97,4 +97,18 @@ public enum DiagnosticsFormat {
     public static func preloadLine(prefetched: Int, hits: Int, cancelled: Int, inFlight: Int) -> String {
         "\(prefetched) prefetched · \(hits) hits · \(cancelled) cancelled · \(inFlight) in flight"
     }
+
+    /// Quiet-hours state (om-quiet-hours): which source is active plus
+    /// session banners suppressed. Diagnostics window only — the
+    /// suppressed count appears nowhere else (no sidebar, no Settings).
+    public static func quietHoursLine(dnd: Bool, schedule: Bool, suppressed: Int) -> String {
+        let state: String
+        switch (dnd, schedule) {
+        case (false, false): state = "off"
+        case (true, false): state = "on (DND)"
+        case (false, true): state = "on (schedule)"
+        case (true, true): state = "on (schedule + DND)"
+        }
+        return "\(state) · \(suppressed) suppressed"
+    }
 }
