@@ -241,6 +241,10 @@ final class AppState: ObservableObject {
     let reminders: RemindersViewModel
     let meetings: MeetingsViewModel
     let conv = ConversationStore()
+    /// File + people search (om-jb-filesearch): the jump palette's
+    /// Files/People sections search through this store. Demo runs
+    /// substring-over-fixtures (offline); live hits Graph via core.
+    let filePeople: FilePeopleSearchStore
     let shared = SharedFilesStore()
     let feed = RealtimeFeed()
     let typing = TypingStore()
@@ -396,6 +400,11 @@ final class AppState: ObservableObject {
             autoSay = nil
         }
         blocked = isDemo ? BlockedStore(defaults: nil) : BlockedStore()
+        filePeople = isDemo
+            ? FilePeopleSearchStore(
+                fileSearcher: { query, _ in DemoData.fileSearchResponse(for: query) },
+                peopleSearcher: { query, _ in DemoData.peopleSearchResponse(for: query) })
+            : FilePeopleSearchStore()
         if isDemo {
             // Shot hook: the churn dataset swaps the whole list (the
             // standard demo rows + count assertions stay untouched).
@@ -725,6 +734,28 @@ final class AppState: ObservableObject {
         } else {
             open(chatID: id, chatName: chatName)
         }
+    }
+
+    /// File-hit pick (om-jb-filesearch): open the SharePoint page in
+    /// the default browser (https only; hits without a URL no-op).
+    func openSearchFile(_ file: SharedFile) {
+        showJump = false
+        guard let raw = file.web_url, let url = URL(string: raw),
+            url.scheme == "https",
+            let comps = URLComponents(url: url, resolvingAgainstBaseURL: false),
+            comps.host != nil
+        else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    /// Person-hit pick (om-jb-filesearch): copy the work email to the
+    /// clipboard (v1: no 1:1-chat create API to open). Hits without an
+    /// email no-op.
+    func copySearchPersonEmail(_ person: TeamMember) {
+        showJump = false
+        guard let email = person.email, !email.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(email, forType: .string)
     }
 
     private func open(chatID id: String, chatName: String?) {
@@ -1231,7 +1262,10 @@ struct RootView: View {
         .sheet(isPresented: $state.showJump) {
             JumpPaletteSheet(
                 chats: state.chats, teams: state.teams,
-                initialQuery: OstMacAppMain.jumpQuery(args: CommandLine.arguments)
+                search: state.filePeople,
+                initialQuery: OstMacAppMain.jumpQuery(args: CommandLine.arguments),
+                onPickFile: { state.openSearchFile($0) },
+                onPickPerson: { state.copySearchPersonEmail($0) }
             ) { id, name in
                 state.showJump = false
                 state.jump(chatID: id, chatName: name)
@@ -1301,7 +1335,10 @@ struct RootView: View {
 struct JumpPaletteSheet: View {
     @ObservedObject var chats: ChatListViewModel
     @ObservedObject var teams: TeamsViewModel
+    @ObservedObject var search: FilePeopleSearchStore
     let initialQuery: String
+    let onPickFile: (SharedFile) -> Void
+    let onPickPerson: (TeamMember) -> Void
     let onPick: (String, String) -> Void
 
     var body: some View {
@@ -1309,6 +1346,8 @@ struct JumpPaletteSheet: View {
             targets: JumpTargets.build(
                 chats: chats.chats, teams: teams.teams),
             initialQuery: initialQuery,
+            filePeople: search,
+            onPickFile: onPickFile, onPickPerson: onPickPerson,
             onPick: onPick)
     }
 }

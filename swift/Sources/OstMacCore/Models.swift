@@ -1005,6 +1005,40 @@ public struct SharedFileLinkResponse: Decodable, Sendable {
     }
 }
 
+// MARK: - File + people search (om-jb-filesearch lane)
+
+/// One OneDrive search window from core `ostmac_file_search`:
+/// `{"ok","query","files":[...]}`. Rows reuse ``SharedFile`` (the
+/// Shared tab shape), so palette rows render with `iconName`/`sizeLabel`.
+public struct FileSearchResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let query: String?
+    public let files: [SharedFile]
+
+    /// Host-side construction (demo data, mock searchers).
+    public init(ok: Bool, query: String? = nil, files: [SharedFile]) {
+        self.ok = ok
+        self.query = query
+        self.files = files
+    }
+}
+
+/// One directory search window from core `ostmac_people_search`:
+/// `{"ok","query","people":[...]}`. Rows reuse ``TeamMember`` (the
+/// roster shape) with empty roles — directory hits carry no team role.
+public struct PeopleSearchResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let query: String?
+    public let people: [TeamMember]
+
+    /// Host-side construction (demo data, mock searchers).
+    public init(ok: Bool, query: String? = nil, people: [TeamMember]) {
+        self.ok = ok
+        self.query = query
+        self.people = people
+    }
+}
+
 // MARK: - File versions (om-i2-versions lane)
 
 /// One file version from core `ostmac_file_versions` (Graph

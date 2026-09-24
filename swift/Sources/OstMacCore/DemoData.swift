@@ -336,6 +336,44 @@ public enum DemoData {
         drive_id: "demo-drive-2",
         created: "2026-09-22T08:47:33Z", sender: "Ava Lindqvist")
 
+    /// Canned file-search index for `--demo` (om-jb-filesearch lane):
+    /// the Shared-tab fixtures plus one plan row. Substring match on
+    /// name; blank returns every row. Off-main safe (literals only).
+    public static func fileSearchResponse(for query: String) -> FileSearchResponse {
+        let rows = designFiles + [avaFile, planFile]
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let files = q.isEmpty ? rows : rows.filter { $0.name.lowercased().contains(q) }
+        return FileSearchResponse(ok: true, query: query, files: files)
+    }
+
+    private static let planFile = SharedFile(
+        id: "demo-f-plan1", name: "q3-plan.md", size: 4096,
+        mime: "text/markdown",
+        web_url: "https://example.sharepoint.com/q3-plan.md",
+        drive_id: "demo-drive-2",
+        created: "2026-09-22T09:10:44Z", sender: "Tom Becker")
+
+    /// Canned people-search index for `--demo` (om-jb-filesearch lane):
+    /// literal roster rows (roles empty, like directory hits). Substring
+    /// match on display name + email; blank returns every row.
+    public static func peopleSearchResponse(for query: String) -> PeopleSearchResponse {
+        let rows = searchPeople
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let people = q.isEmpty
+            ? rows
+            : rows.filter {
+                $0.displayName.lowercased().contains(q)
+                    || ($0.email ?? "").lowercased().contains(q)
+            }
+        return PeopleSearchResponse(ok: true, query: query, people: people)
+    }
+
+    private static let searchPeople: [TeamMember] = [
+        TeamMember(id: "demo-u-ava", displayName: "Ava Lindqvist", userId: "demo-u-ava", email: "ava@example.com"),
+        TeamMember(id: "demo-u-tom", displayName: "Tom Becker", userId: "demo-u-tom", email: "tom@example.com"),
+        TeamMember(id: "demo-u-priya", displayName: "Priya Nair", userId: "demo-u-priya", email: "priya@example.com"),
+    ]
+
     public static func name(for chatID: String) -> String? {
         if let chat = chats.first(where: { $0.id == chatID }) { return chat.name }
         for team in teams {

@@ -187,6 +187,16 @@ char *ostmac_files_copy(const char *drive_id, const char *item_id, const char *d
 // Delete one driveItem. Returns {ok, id}. Caller frees.
 char *ostmac_files_delete(const char *drive_id, const char *item_id);
 
+// OneDrive file search by name/content (requires sign-in): one $top
+// window (limit<=0 means 25). Returns {ok, query, files:[SharedFile]}.
+// Caller frees.
+char *ostmac_file_search(const char *query, int limit);
+
+// Directory people search by display name (requires sign-in): one $top
+// window (limit<=0 means 25). Returns {ok, query, people:[TeamMember]}
+// (roles empty: directory hits carry no team role). Caller frees.
+char *ostmac_people_search(const char *query, int limit);
+
 // To Do lists JSON (requires sign-in): {ok,lists:[{id,name,wellknown?}]}.
 // Caller frees.
 char *ostmac_reminders(void);
