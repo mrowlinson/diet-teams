@@ -56,4 +56,10 @@ public enum DiagnosticsFormat {
     public static func receiptsLine(sent: Int, threads: Int, peers: Int) -> String {
         "\(sent) sent · \(threads) threads · \(peers) peers"
     }
+
+    /// Recent-call counters (om-call-history): entries + missed. The
+    /// list lives in the Recent Calls window; counts live here only.
+    public static func callsLine(total: Int, missed: Int) -> String {
+        "\(total) recent · \(missed) missed"
+    }
 }
