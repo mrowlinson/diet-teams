@@ -491,6 +491,33 @@ pub fn chats_json(limit: usize) -> String {
     }
 }
 
+/// Create (or re-open) a 1:1 chat with `user` (AAD id or UPN).
+/// Requires sign-in; unsigned yields `{ok:false}`. Empty refs are
+/// rejected before any network.
+/// `{ok:true, chat:{id, name, is_group, ...}}` (name empty: Graph
+/// sends no 1:1 topic — callers name the thread after the peer).
+pub fn chat_create_one_to_one_json(user: &str) -> String {
+    if user.trim().is_empty() {
+        return err_json("arg", "empty user");
+    }
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let chat = ost::api::create_one_to_one_chat_data(&client, user)
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            Ok(json!({"ok": true, "chat": chat_to_json(&chat)}).to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("chat_create", e),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Teams (joined teams + channels; channel ids open via messages/send)
 // ---------------------------------------------------------------------------
@@ -2710,6 +2737,16 @@ pub extern "C" fn ostmac_chats(limit: c_int) -> *mut c_char {
     string_to_c(chats_json(lim))
 }
 
+/// Create a 1:1 chat with one user ref (AAD id or UPN). See
+/// [`chat_create_one_to_one_json`]. Caller frees.
+#[no_mangle]
+pub extern "C" fn ostmac_chat_create_one_to_one(user: *const c_char) -> *mut c_char {
+    match cstr_to_string(user) {
+        Ok(u) => string_to_c(chat_create_one_to_one_json(&u)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
 /// Joined-teams JSON (requires sign-in). See [`teams_json`].
 #[no_mangle]
 pub extern "C" fn ostmac_teams() -> *mut c_char {
@@ -3685,6 +3722,29 @@ mod tests {
         assert_eq!(v["id"], "19:abc@thread");
         assert_eq!(v["is_group"], true);
         assert_eq!(v["last_message_preview"], "p");
+    }
+
+    #[test]
+    fn chat_create_one_to_one_empty_user_is_arg_error() {
+        for bad in ["", "   "] {
+            let v: serde_json::Value =
+                serde_json::from_str(&chat_create_one_to_one_json(bad)).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
+    fn ffi_chat_create_one_to_one_null_is_arg_error() {
+        unsafe {
+            let p = ostmac_chat_create_one_to_one(std::ptr::null());
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
     }
 
     #[test]

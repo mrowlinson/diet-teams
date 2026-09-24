@@ -83,6 +83,15 @@ public enum RustCore {
         }
     }
 
+    /// Create (or re-open) a 1:1 chat with one user ref, AAD id or
+    /// UPN (om-lt5-person11: person-pick opens 1:1). Blocking FFI
+    /// (network): call off the main thread.
+    public static func chatCreateOneToOne(user: String) throws -> ChatCreateResponse {
+        try user.withCString { ptr in
+            try call(ostmac_chat_create_one_to_one(ptr), as: ChatCreateResponse.self)
+        }
+    }
+
     public static func teamMembers(teamID: String) throws -> TeamMembersResponse {
         try teamID.withCString { ptr in
             try call(ostmac_team_members(ptr), as: TeamMembersResponse.self)

@@ -40,9 +40,11 @@ pub use teams::ChannelInfo;
 // Re-export data-returning functions for TUI integration
 pub use chat::{
     build_reply_html, consumptionhorizon_body, consumptionhorizon_url,
-    consumptionhorizon_value, consumptionhorizons_url, delete_message_with_client,
+    consumptionhorizon_value, consumptionhorizons_url, create_one_to_one_chat_data,
+    delete_message_with_client,
     edit_message_body, edit_message_with_client, emoji_for_reaction_type, leave_chat_with_client,
-    leave_member_url, list_chats_data, mark_read_with_client, message_url, own_member_mri,
+    leave_member_url, list_chats_data, mark_read_with_client, message_url, one_to_one_create_body,
+    one_to_one_create_path, own_member_mri, parse_created_chat,
     parse_consumptionhorizons, reaction_add_body, reaction_add_url, reaction_remove_url,
     reaction_type_for_emoji, read_messages_data, read_messages_page, read_receipts_data,
     receipt_message_id, remove_reaction_with_client, reply_message_with_client, reply_snippet,

@@ -3,7 +3,7 @@
 //! Uses the Skype token with `Authentication: skypetoken={token}` header,
 //! bypassing Graph API which requires tenant admin consent for Chat.Read.
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 
 use super::client::TeamsClient;
@@ -1027,6 +1027,80 @@ async fn resolve_mate_name(
         .next()
 }
 
+// ---------------------------------------------------------------------------
+// 1:1 chat create (om-lt5-person11: person-pick opens 1:1)
+// ---------------------------------------------------------------------------
+
+/// `POST /me/chats` path for 1:1 creation. Pure so tests pin it.
+pub fn one_to_one_create_path() -> &'static str {
+    "/me/chats"
+}
+
+/// `POST /me/chats` body for a 1:1 with `user` (AAD id or UPN).
+/// Self is implied (members carries the peer only, owner role).
+/// Pure so tests pin it.
+pub fn one_to_one_create_body(user: &str) -> serde_json::Value {
+    serde_json::json!({
+        "chatType": "oneOnOne",
+        "members": [
+            {
+                "@odata.type": "#microsoft.graph.aadUserConversationMember",
+                "roles": ["owner"],
+                "user@odata.bind": format!(
+                    "https://graph.microsoft.com/v1.0/users('{}')",
+                    user.trim()
+                ),
+            }
+        ],
+    })
+}
+
+#[derive(Debug, Deserialize)]
+struct CreatedChat {
+    id: String,
+    topic: Option<String>,
+}
+
+/// Parse a `POST /me/chats` 1:1 response into a chat row. Graph
+/// returns no topic for 1:1s — the caller names the thread after
+/// the peer. Pure so tests pin it.
+pub fn parse_created_chat(value: &serde_json::Value) -> Result<ChatInfo> {
+    let chat: CreatedChat = serde_json::from_value(value.clone())
+        .context("Failed to parse created chat response")?;
+    Ok(ChatInfo {
+        id: chat.id,
+        name: chat.topic.unwrap_or_default(),
+        is_group: false,
+        last_message_time: None,
+        last_message_sender: None,
+        last_message_preview: None,
+    })
+}
+
+/// Create (or re-open) a 1:1 chat with `user` (AAD id or UPN) via
+/// Graph `POST /me/chats` and return the thread. Empty refs are
+/// rejected before any network. Note: Graph mints a new thread
+/// per call — no existing-1:1 lookup (minimal path).
+pub async fn create_one_to_one_chat_data(
+    client: &TeamsClient,
+    user: &str,
+) -> Result<ChatInfo> {
+    if user.trim().is_empty() {
+        bail!("empty user");
+    }
+    let resp = client
+        .graph_post(
+            one_to_one_create_path(),
+            &one_to_one_create_body(user),
+        )
+        .await?;
+    let value: serde_json::Value = resp
+        .json()
+        .await
+        .context("Failed to parse created chat response")?;
+    parse_created_chat(&value)
+}
+
 /// List recent chats and return structured data.
 ///
 /// 1:1 chats without a topic are named after the mate (roster MRI
@@ -1317,6 +1391,38 @@ fn with_page_size(url: &str, limit: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn one_to_one_create_shape() {
+        assert_eq!(one_to_one_create_path(), "/me/chats");
+        let b = one_to_one_create_body("  aad-1 ");
+        assert_eq!(b["chatType"], "oneOnOne");
+        let m = &b["members"][0];
+        assert_eq!(
+            m["@odata.type"],
+            "#microsoft.graph.aadUserConversationMember"
+        );
+        assert_eq!(m["roles"][0], "owner");
+        assert_eq!(
+            m["user@odata.bind"],
+            "https://graph.microsoft.com/v1.0/users('aad-1')"
+        );
+    }
+
+    #[test]
+    fn created_chat_parse_tolerates_shapes() {
+        let v: serde_json::Value =
+            serde_json::from_str(r#"{"id":"19:one@unq.v1"}"#).unwrap();
+        let c = parse_created_chat(&v).unwrap();
+        assert_eq!(c.id, "19:one@unq.v1");
+        assert_eq!(c.name, "");
+        assert!(!c.is_group);
+        let v: serde_json::Value =
+            serde_json::from_str(r#"{"id":"19:g@t","topic":"T"}"#).unwrap();
+        assert_eq!(parse_created_chat(&v).unwrap().name, "T");
+        let v: serde_json::Value = serde_json::from_str(r#"{"nope":1}"#).unwrap();
+        assert!(parse_created_chat(&v).is_err());
+    }
 
     #[test]
     fn edit_url_and_body_shape() {
