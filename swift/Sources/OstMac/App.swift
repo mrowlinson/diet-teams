@@ -794,12 +794,40 @@ final class AppState: ObservableObject {
         NSWorkspace.shared.open(url)
     }
 
-    /// Person-hit pick (om-jb-filesearch): copy the work email to the
-    /// clipboard (v1: no 1:1-chat create API to open). Hits without an
-    /// email no-op.
-    func copySearchPersonEmail(_ person: TeamMember) {
+    /// Person-hit pick (om-lt5-person11): open the 1:1 chat with the
+    /// picked person. Demo opens a canned thread; live creates (or
+    /// re-opens) via core off-main, then opens. Hits without a user
+    /// ref, and failed creates, fall back to the v1 behavior (copy
+    /// the work email to the clipboard).
+    func openSearchPerson(_ person: TeamMember) {
         showJump = false
-        guard let email = person.email, !email.isEmpty else { return }
+        guard let ref = PersonChat.userRef(for: person) else {
+            copyEmail(person.email)
+            return
+        }
+        if isDemo {
+            jump(
+                chatID: PersonChat.demoChatID(for: person),
+                chatName: person.displayName)
+            return
+        }
+        let name = person.displayName
+        let email = person.email
+        Task { @MainActor [weak self] in
+            let created: ChatCreateResponse? = try? await Task.detached {
+                try RustCore.chatCreateOneToOne(user: ref)
+            }.value
+            guard let self, let chat = created?.chat else {
+                self?.copyEmail(email)
+                return
+            }
+            self.jump(chatID: chat.chatId, chatName: name)
+        }
+    }
+
+    /// v1 fallback: copy one work email (hits without an email no-op).
+    private func copyEmail(_ email: String?) {
+        guard let email, !email.isEmpty else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(email, forType: .string)
     }
@@ -1325,7 +1353,7 @@ struct RootView: View {
                 chatNameFor: { state.chatNameOrNil(for: $0) },
                 onPickMessage: { state.jumpToMessage($0) },
                 onPickFile: { state.openSearchFile($0) },
-                onPickPerson: { state.copySearchPersonEmail($0) }
+                onPickPerson: { state.openSearchPerson($0) }
             ) { id, name in
                 state.showJump = false
                 state.jump(chatID: id, chatName: name)

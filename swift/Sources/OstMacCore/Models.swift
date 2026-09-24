@@ -224,6 +224,20 @@ public struct ChannelCreateResponse: Decodable, Sendable {
     }
 }
 
+/// `{ok,chat}` from `ostmac_chat_create_one_to_one` (om-lt5-person11).
+/// The row reuses the chat-list shape; `name` is empty (Graph sends
+/// no 1:1 topic) — callers name the thread after the peer.
+public struct ChatCreateResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let chat: ChatItem
+
+    /// Host-side construction (mocks, previews). Wire decoding is untouched.
+    public init(ok: Bool, chat: ChatItem) {
+        self.ok = ok
+        self.chat = chat
+    }
+}
+
 /// Join-one-team result from core `ostmac_team_join`: `{"ok","team_id"}`.
 public struct TeamJoinResponse: Decodable, Sendable {
     public let ok: Bool

@@ -48,6 +48,12 @@ char *ostmac_whoami(void);
 // Chat list JSON (requires sign-in). Caller frees.
 char *ostmac_chats(int limit);
 
+// Create (or re-open) a 1:1 chat with one user ref, AAD id or UPN
+// (Graph POST /me/chats, requires sign-in): {ok,chat:{id,name,
+// is_group,...}} (name empty: Graph sends no 1:1 topic — callers
+// name the thread after the peer). Caller frees.
+char *ostmac_chat_create_one_to_one(const char *user);
+
 // Joined teams + channels JSON (requires sign-in). Caller frees.
 char *ostmac_teams(void);
 
