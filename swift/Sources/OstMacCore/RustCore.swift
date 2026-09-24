@@ -500,6 +500,18 @@ public enum RustCore {
         try call(ostmac_trouter_poll_typed(), as: RealtimePoll.self)
     }
 
+    /// Blocking raw drain: waits up to `timeoutMs` for the first event
+    /// (0 = poll without waiting). Blocking FFI: call off the main thread.
+    public static func trouterPollWait(timeoutMs: UInt64 = 0) throws -> TrouterPoll {
+        try call(ostmac_trouter_poll_wait(timeoutMs), as: TrouterPoll.self)
+    }
+
+    /// Blocking typed drain: waits up to `timeoutMs` for the first event
+    /// (0 = poll without waiting). Blocking FFI: call off the main thread.
+    public static func trouterPollTypedWait(timeoutMs: UInt64 = 0) throws -> RealtimePoll {
+        try call(ostmac_trouter_poll_typed_wait(timeoutMs), as: RealtimePoll.self)
+    }
+
     public static func callStatus() throws -> CallStatus {
         try call(ostmac_call_status(), as: CallStatus.self)
     }
