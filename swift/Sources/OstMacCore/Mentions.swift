@@ -117,18 +117,76 @@ public enum Mentions {
     /// Mined inner text often carries the `@` prefix (`<at>@Me</at>`,
     /// the shape core ships) — one leading `@` is stripped before the
     /// name compare, so `@Me` matches owner `Me`.
+    /// Live Mention spans sometimes split one person across adjacent
+    /// parts (`Rowlinson,` + `Michael`): when no single part matches,
+    /// contiguous name-eligible runs are compared token-wise,
+    /// order-insensitive (`Last, First` vs `First Last`) and
+    /// punctuation-tolerant, so the full owner name still hits.
     public static func mentionsOwner(_ mentions: [Mention], ownerMRI: String?, ownerDisplayName: String, matchByName: Bool = true) -> Bool {
         let wantName = ownerDisplayName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        var eligibleRuns: [[String]?] = []
+        eligibleRuns.reserveCapacity(mentions.count)
         for m in mentions {
             if let ownerMRI, !ownerMRI.isEmpty, let mri = m.mri, !mri.isEmpty {
                 if mri.caseInsensitiveCompare(ownerMRI) == .orderedSame { return true }
-                continue // MRI present but different: not owner; do not name-match.
+                // MRI present but different: not owner; do not name-match,
+                // and break any split-name run (nil = run boundary).
+                eligibleRuns.append(nil)
+                continue
             }
             if matchByName, !wantName.isEmpty, bareName(m.displayName).lowercased() == wantName {
                 return true
             }
+            let tokens = matchByName ? nameTokens(m.displayName) : []
+            eligibleRuns.append(tokens.isEmpty ? nil : tokens)
+        }
+        if matchByName {
+            let wantTokens = nameTokens(ownerDisplayName)
+            if !wantTokens.isEmpty, joinedRunMatches(eligibleRuns, wantTokens: wantTokens) {
+                return true
+            }
         }
         return false
+    }
+
+    /// Lowercased, punctuation-tolerant word tokens for split-name
+    /// matching: `@` sigil stripped, commas/periods trimmed per word
+    /// (`Rowlinson,` -> `rowlinson`), empties dropped.
+    static func nameTokens(_ displayName: String) -> [String] {
+        bareName(displayName).lowercased().split(whereSeparator: \.isWhitespace).compactMap { word in
+            let t = word.trimmingCharacters(in: .punctuationCharacters)
+            return t.isEmpty ? nil : t
+        }
+    }
+
+    /// True when some contiguous run of per-part token lists covers
+    /// exactly the owner tokens (order-insensitive multiset compare,
+    /// so `Last, First` spans match a `First Last` owner). Runs are
+    /// maximal nil-delimited segments; windows stop at the owner token
+    /// count, so unrelated neighboring mentions never join the match.
+    static func joinedRunMatches(_ runs: [[String]?], wantTokens: [String]) -> Bool {
+        let want = wantTokens.sorted()
+        var run: [[String]] = []
+        func scan(_ run: [[String]]) -> Bool {
+            for start in run.indices {
+                var acc: [String] = []
+                for parts in run[start...] {
+                    acc.append(contentsOf: parts)
+                    if acc.count > want.count { break }
+                    if acc.count == want.count, acc.sorted() == want { return true }
+                }
+            }
+            return false
+        }
+        for entry in runs {
+            guard let tokens = entry else {
+                if !run.isEmpty, scan(run) { return true }
+                run = []
+                continue
+            }
+            run.append(tokens)
+        }
+        return !run.isEmpty && scan(run)
     }
 
     /// Channel-wide mention? Matches mentionType tag values Teams uses for
