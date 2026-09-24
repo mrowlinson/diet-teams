@@ -1189,28 +1189,32 @@ struct SharedFileRow: View {
 
     var body: some View {
         if drillable {
-            HStack(spacing: 10) {
-                Image(systemName: "folder")
-                    .font(.title2)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 28)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(file.name)
-                        .font(.body)
-                        .lineLimit(1)
-                        .textSelection(.enabled)
-                    Text("Folder")
+            Button(action: onDrill) {
+                HStack(spacing: 10) {
+                    Image(systemName: "folder")
+                        .font(.title2)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 28)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(file.name)
+                            .font(.body)
+                            .lineLimit(1)
+                            .textSelection(.enabled)
+                        Text("Folder")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                .padding(.vertical, 4)
+                .contentShape(Rectangle())
             }
-            .padding(.vertical, 4)
-            .contentShape(Rectangle())
-            .onTapGesture(perform: onDrill)
+            .buttonStyle(.plain)
+            .accessibilityLabel("Open folder \(file.name)")
+            .accessibilityHint("Shows this folder's files")
         } else {
             HStack(spacing: 10) {
                 Image(systemName: file.isFolder ? "folder" : file.iconName)

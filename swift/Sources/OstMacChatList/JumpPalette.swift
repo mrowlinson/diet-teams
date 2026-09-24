@@ -177,6 +177,41 @@ public enum PaletteNav {
         return min(max(current + delta, 0), total - 1)
     }
 
+    /// Stepped index skipping disabled rows (om-a3-keyboard): walks
+    /// from `current` in `delta`'s direction to the next enabled row.
+    /// Stays on `current` when nothing past it is enabled (settling to
+    /// the first enabled row when `current` itself is disabled, or 0
+    /// when nothing is enabled). `delta == 0` just settles.
+    public static func moveSkipping(
+        current: Int, delta: Int, total: Int, isEnabled: (Int) -> Bool
+    ) -> Int {
+        guard total > 0 else { return 0 }
+        let start = min(max(current, 0), total - 1)
+        if delta == 0 {
+            if isEnabled(start) { return start }
+            return firstEnabled(total: total, isEnabled: isEnabled) ?? 0
+        }
+        let dir = delta > 0 ? 1 : -1
+        var i = start + dir
+        while i >= 0, i < total {
+            if isEnabled(i) { return i }
+            i += dir
+        }
+        if isEnabled(start) { return start }
+        return firstEnabled(total: total, isEnabled: isEnabled) ?? 0
+    }
+
+    /// First enabled row, or nil when none is (om-a3-keyboard).
+    public static func firstEnabled(
+        total: Int, isEnabled: (Int) -> Bool
+    ) -> Int? {
+        guard total > 0 else { return nil }
+        for i in 0 ..< total {
+            if isEnabled(i) { return i }
+        }
+        return nil
+    }
+
     /// Section + row for a flat index (nil when out of range).
     public static func resolve(
         _ index: Int, mainCount: Int, fileCount: Int, personCount: Int

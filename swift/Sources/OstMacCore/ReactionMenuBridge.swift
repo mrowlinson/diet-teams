@@ -121,7 +121,12 @@ final class ReactionMenuAnchorView: NSView {
     /// Shot-hook note (--show-picker): object = target message id.
     /// Only the matching bubble's anchor opens its picker.
     static let shotPickerNote = Notification.Name("om.shot.showPicker")
+    /// Keyboard path (om-a3-keyboard): the focused bubble's React item
+    /// posts this (object = message id); the matching anchor opens its
+    /// picker directly — no retry, keyboard use means frontmost app.
+    static let keyboardPickerNote = Notification.Name("om.bubble.showPicker")
     private var shotObserver: NSObjectProtocol?
+    private var keyboardObserver: NSObjectProtocol?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -132,10 +137,20 @@ final class ReactionMenuAnchorView: NSView {
                   id == self.message.id else { return }
             self.showPickerRetrying(tries: 12)
         }
+        keyboardObserver = NotificationCenter.default.addObserver(
+            forName: Self.keyboardPickerNote, object: nil, queue: .main
+        ) { [weak self] note in
+            guard let self, let id = note.object as? String,
+                  id == self.message.id else { return }
+            self.showPicker()
+        }
     }
 
     deinit {
         if let o = shotObserver {
+            NotificationCenter.default.removeObserver(o)
+        }
+        if let o = keyboardObserver {
             NotificationCenter.default.removeObserver(o)
         }
     }

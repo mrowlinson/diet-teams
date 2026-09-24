@@ -12,6 +12,9 @@ struct ReactionPickerView: View {
     /// "" = categories mode; "recents" + catalog ids select the page.
     @State private var query = ""
     @State private var category = "recents"
+    /// Roving arrow-key highlight over `current` (om-a3-keyboard).
+    @State private var highlight = 0
+    @FocusState private var fieldFocused: Bool
     private let recents: [String]
     let onPick: (String) -> Void
 
@@ -37,6 +40,9 @@ struct ReactionPickerView: View {
                     .textFieldStyle(.plain)
                     .font(DietType.body)
                     .foregroundStyle(DietColor.textPrimaryColor)
+                    .focused($fieldFocused)
+                    .onSubmit { pickHighlighted() }
+                    .onAppear { DispatchQueue.main.async { fieldFocused = true } }
             }
             .padding(.horizontal, DietSpace.sm)
             .frame(minHeight: DietSize.controlHeight)
@@ -55,33 +61,71 @@ struct ReactionPickerView: View {
                 .pickerStyle(.segmented)
                 .labelsHidden()
             }
-            ScrollView {
-                if current.isEmpty {
-                    Text(emptyHint)
-                        .font(DietType.caption1)
-                        .foregroundStyle(DietColor.textTertiaryColor)
-                        .padding(.vertical, DietSpace.lg)
-                } else {
-                    LazyVGrid(
-                        columns: [GridItem(.adaptive(minimum: 34), spacing: DietSpace.xxs)],
-                        spacing: DietSpace.xxs
-                    ) {
-                        ForEach(current, id: \.emoji) { e in
-                            Button { onPick(e.emoji) } label: {
-                                Text(e.emoji)
-                                    .font(.system(size: 22))
-                                    .frame(width: 34, height: 34)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    if current.isEmpty {
+                        Text(emptyHint)
+                            .font(DietType.caption1)
+                            .foregroundStyle(DietColor.textTertiaryColor)
+                            .padding(.vertical, DietSpace.lg)
+                    } else {
+                        LazyVGrid(
+                            columns: [GridItem(.adaptive(minimum: 34), spacing: DietSpace.xxs)],
+                            spacing: DietSpace.xxs
+                        ) {
+                            ForEach(Array(current.enumerated()), id: \.offset) { i, e in
+                                Button { onPick(e.emoji) } label: {
+                                    Text(e.emoji)
+                                        .font(.system(size: 22))
+                                        .frame(width: 34, height: 34)
+                                }
+                                .buttonStyle(.plain)
+                                .help(e.help)
+                                .accessibilityLabel(e.help.isEmpty ? e.emoji : e.help)
+                                .background(
+                                    RoundedRectangle(cornerRadius: DietRadius.control)
+                                        .fill(i == highlight
+                                            ? Color(nsColor: DietColor.accent).opacity(0.15)
+                                            : Color.clear))
+                                .id(i)
                             }
-                            .buttonStyle(.plain)
-                            .help(e.help)
                         }
                     }
                 }
+                .onChange(of: highlight) { proxy.scrollTo($0, anchor: .center) }
             }
         }
         .padding(DietSpace.sm)
         .frame(width: 322, height: 330)
         .background(DietColor.windowColor)
+        .onChange(of: query) { highlight = 0 }
+        .onChange(of: category) { highlight = 0 }
+        .onKeyPress(.upArrow) { arrow(dx: 0, dy: -1) }
+        .onKeyPress(.downArrow) { arrow(dx: 0, dy: 1) }
+        .onKeyPress(.leftArrow) { arrow(dx: -1, dy: 0) }
+        .onKeyPress(.rightArrow) { arrow(dx: 1, dy: 0) }
+    }
+
+    /// Adaptive columns rendered for the fixed 322pt width: same
+    /// minimum + spacing the LazyVGrid uses, so arrow steps match.
+    private var columns: Int {
+        let gridWidth = 322 - DietSpace.sm * 2
+        return max(1, Int((gridWidth + DietSpace.xxs) / (34 + DietSpace.xxs)))
+    }
+
+    private func arrow(dx: Int, dy: Int) -> KeyPress.Result {
+        highlight = GridNav.move(
+            current: highlight, dx: dx, dy: dy,
+            columns: columns, count: current.count)
+        return .handled
+    }
+
+    /// Return in the field picks the highlighted cell (JumpPalette
+    /// precedent: submit, not a Return key handler, so field Return
+    /// never double-fires with a focused grid button's activation).
+    private func pickHighlighted() {
+        guard current.indices.contains(highlight) else { return }
+        onPick(current[highlight].emoji)
     }
 
     /// Display rows: search hits while querying, else the category page.

@@ -61,6 +61,9 @@ public struct MentionPickerView: View {
     private let roster: [String]
     private let onPick: (String) -> Void
     @State private var query = ""
+    /// Roving arrow-key highlight over the filtered rows (om-a3-keyboard).
+    @State private var highlight = 0
+    @FocusState private var fieldFocused: Bool
 
     public init(roster: [String], onPick: @escaping (String) -> Void) {
         self.roster = roster
@@ -76,6 +79,9 @@ public struct MentionPickerView: View {
                     .textFieldStyle(.plain)
                     .font(DietType.body)
                     .foregroundStyle(DietColor.textPrimaryColor)
+                    .focused($fieldFocused)
+                    .onSubmit { pickHighlighted() }
+                    .onAppear { DispatchQueue.main.async { fieldFocused = true } }
             }
             .padding(DietSpace.sm)
             DietSeamH()
@@ -91,30 +97,68 @@ public struct MentionPickerView: View {
                     title: "No matches",
                     message: "No one matches \"\(query)\".")
             } else {
-                ScrollView {
-                    LazyVStack(spacing: 0) {
-                        ForEach(rows, id: \.self) { name in
-                            Button { onPick(name) } label: {
-                                HStack(spacing: DietSpace.sm) {
-                                    DietAvatar(name, size: DietSize.avatarSM)
-                                    Text("@\(name)")
-                                        .font(DietType.body)
-                                        .foregroundStyle(DietColor.textPrimaryColor)
-                                        .lineLimit(1)
-                                    Spacer(minLength: DietSpace.sm)
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(spacing: 0) {
+                            ForEach(Array(rows.enumerated()), id: \.element) { i, name in
+                                Button { onPick(name) } label: {
+                                    HStack(spacing: DietSpace.sm) {
+                                        DietAvatar(name, size: DietSize.avatarSM)
+                                        Text("@\(name)")
+                                            .font(DietType.body)
+                                            .foregroundStyle(DietColor.textPrimaryColor)
+                                            .lineLimit(1)
+                                        Spacer(minLength: DietSpace.sm)
+                                    }
+                                    .padding(.horizontal, DietSpace.sm)
+                                    .padding(.vertical, DietSpace.xs)
+                                    .contentShape(Rectangle())
                                 }
-                                .padding(.horizontal, DietSpace.sm)
-                                .padding(.vertical, DietSpace.xs)
-                                .contentShape(Rectangle())
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("Mention \(name)")
+                                .background(
+                                    RoundedRectangle(cornerRadius: DietRadius.control)
+                                        .fill(i == highlight
+                                            ? Color(nsColor: DietColor.accent).opacity(0.15)
+                                            : Color.clear))
+                                .id(i)
                             }
-                            .buttonStyle(.plain)
                         }
+                        .padding(.vertical, DietSpace.xs)
                     }
-                    .padding(.vertical, DietSpace.xs)
+                    .onChange(of: highlight) { proxy.scrollTo($0, anchor: .center) }
                 }
             }
         }
         .frame(width: 280, height: 300)
+        .onChange(of: query) { highlight = 0 }
+        .onKeyPress(.upArrow) {
+            highlight = GridNav.move(
+                current: highlight, dx: 0, dy: -1, columns: 1,
+                count: MentionCompose.filtered(roster, query: query).count)
+            return .handled
+        }
+        .onKeyPress(.downArrow) {
+            highlight = GridNav.move(
+                current: highlight, dx: 0, dy: 1, columns: 1,
+                count: MentionCompose.filtered(roster, query: query).count)
+            return .handled
+        }
+        .onKeyPress(.escape) {
+            // Esc with text clears first (JumpPalette precedent); with
+            // an empty query the transient popover dismisses natively.
+            if !query.isEmpty { query = ""; return .handled }
+            return .ignored
+        }
+    }
+
+    /// Return in the field picks the highlighted row (JumpPalette
+    /// precedent: submit, so field Return never double-fires with a
+    /// focused row button's native activation).
+    private func pickHighlighted() {
+        let rows = MentionCompose.filtered(roster, query: query)
+        guard rows.indices.contains(highlight) else { return }
+        onPick(rows[highlight])
     }
 
     private func emptyState(systemImage: String, title: String, message: String) -> some View {
