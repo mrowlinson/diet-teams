@@ -21,6 +21,8 @@ struct ChatTimelineView: View {
     var sharedFiles: [SharedFile] = []
     /// Doc-row Open tap (om-inline-docs passthrough).
     var onOpenDoc: (InlineDoc) -> Void = { InlineDocs.open($0) }
+    /// Read receipts (om-receipts): viewed-latest sends + own Seen state.
+    @ObservedObject var receipts: ReceiptStore = ReceiptStore()
     @StateObject private var scroll = ChatScrollModel()
 
     var body: some View {
@@ -70,7 +72,12 @@ struct ChatTimelineView: View {
                                     onEdit: { onEdit(msg) },
                                     onDelete: { onDelete(msg) },
                                     sharedFiles: sharedFiles,
-                                    onOpenDoc: onOpenDoc
+                                    onOpenDoc: onOpenDoc,
+                                    isRead: store.chatID.map {
+                                        receipts.isOwnRead(
+                                            chatID: $0, messageID: msg.id,
+                                            messages: store.messages)
+                                    } ?? false
                                 )
                                 .id(msg.id)
                                 .onAppear { scroll.visibleIDs.insert(msg.id) }
@@ -79,11 +86,13 @@ struct ChatTimelineView: View {
                         }
                         // Bottom sentinel: on screen ⇔ viewport hugs the
                         // tail. Dwell marks the read frontier (kills the
-                        // pill); leaving cancels settle (no yank races).
+                        // pill) and sends the read position; leaving
+                        // cancels settle (no yank races).
                         Color.clear
                             .frame(height: 1)
                             .onAppear {
                                 scroll.noteBottomDwell(tailID: store.messages.last?.id)
+                                sendReadPositionIfViewingLatest()
                             }
                             .onDisappear {
                                 scroll.noteLeftBottom()
@@ -237,6 +246,7 @@ struct ChatTimelineView: View {
         {
         case .follow:
             scrollToBottom(proxy)
+            sendReadPositionIfViewingLatest()
         case .pill:
             break // the pill absorbs it (unseen derives from lastReadID)
         case .none:
@@ -255,12 +265,23 @@ struct ChatTimelineView: View {
             scroll.lastSeenID = store.messages.last?.id
             scroll.lastReadID = store.messages.last?.id
             settleToBottom(proxy)
+            sendReadPositionIfViewingLatest()
         }
+    }
+
+    /// Send the read position when the viewport hugs the tail (viewing
+    /// latest). Scrolled-up readers never send; demo records locally.
+    private func sendReadPositionIfViewingLatest() {
+        guard scroll.nearBottom else { return }
+        receipts.sendReadPosition(
+            chatID: store.chatID, latestID: store.messages.last?.id,
+            localOnly: store.isDemo)
     }
 
     private func jumpTap(_ proxy: ScrollViewProxy) {
         scroll.jumpToLatest(tailID: store.messages.last?.id)
         scrollToBottom(proxy)
+        sendReadPositionIfViewingLatest()
     }
 
     private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool = true) {

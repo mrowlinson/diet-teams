@@ -452,6 +452,48 @@ public struct DeleteResponse: Decodable, Sendable {
     }
 }
 
+// MARK: - Read receipts (om-receipts lane)
+
+/// `{ok,chat_id,message_id}` from `ostmac_mark_read`.
+public struct MarkReadResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let chat_id: String?
+    public let message_id: String?
+
+    public init(ok: Bool, chat_id: String? = nil, message_id: String? = nil) {
+        self.ok = ok
+        self.chat_id = chat_id
+        self.message_id = message_id
+    }
+}
+
+/// One peer read position from core `ostmac_receipts`.
+/// `user` is the peer key (MRI/id, "" when unknown); `message_id` is the
+/// last-read frontier; `horizon` is the raw server value.
+public struct ReadReceipt: Decodable, Sendable, Equatable {
+    public let user: String
+    public let message_id: String
+    public let horizon: String?
+
+    public init(user: String, message_id: String, horizon: String? = nil) {
+        self.user = user
+        self.message_id = message_id
+        self.horizon = horizon
+    }
+}
+
+public struct ReceiptsResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let thread_id: String?
+    public let receipts: [ReadReceipt]
+
+    public init(ok: Bool, thread_id: String? = nil, receipts: [ReadReceipt] = []) {
+        self.ok = ok
+        self.thread_id = thread_id
+        self.receipts = receipts
+    }
+}
+
 // MARK: - Rich media (om-richmedia lane)
 
 /// One fetched inline image: base64 bytes + the server's content type.

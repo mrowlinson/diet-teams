@@ -53,6 +53,23 @@ struct DiagnosticsView: View {
                     }
                 }
             }
+            Section("Read receipts") {
+                LabeledContent(
+                    "Positions",
+                    value: DiagnosticsFormat.receiptsLine(
+                        sent: state.receipts.sentCount,
+                        threads: state.receipts.threadCount,
+                        peers: state.receipts.receiptCount))
+                    .textSelection(.enabled)
+                if let err = state.receipts.lastError {
+                    LabeledContent("Last error") {
+                        Text(err)
+                            .font(DietType.caption1)
+                            .foregroundStyle(Color(nsColor: DietColor.danger))
+                            .textSelection(.enabled)
+                    }
+                }
+            }
             Section("Call") {
                 callRow
                 if let err = state.call.error {

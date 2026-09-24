@@ -49,4 +49,11 @@ public enum DiagnosticsFormat {
     public static func typingLine(events: Int, active: Int) -> String {
         "\(events) events · \(active) active"
     }
+
+    /// Read-receipt counters (om-receipts): sent positions, tracked
+    /// threads, peer positions. Timeline shows Seen with no numbers;
+    /// the counts live here only.
+    public static func receiptsLine(sent: Int, threads: Int, peers: Int) -> String {
+        "\(sent) sent · \(threads) threads · \(peers) peers"
+    }
 }

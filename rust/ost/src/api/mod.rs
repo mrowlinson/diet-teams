@@ -14,7 +14,9 @@ mod todo;
 use anyhow::Result;
 
 // Re-export data types for TUI integration
-pub use chat::{ChatInfo, MessageInfo, MessagesPage, ReactionCount, REACTION_EMOJI};
+pub use chat::{
+    ChatInfo, MessageInfo, MessagesPage, ReactionCount, ReadReceipt, REACTION_EMOJI,
+};
 pub use files::SharedFile;
 pub use me::UserInfo;
 pub use notes::{NotePage, NotebookInfo, PageInfo, SectionInfo};
@@ -29,11 +31,14 @@ pub use teams::ChannelInfo;
 
 // Re-export data-returning functions for TUI integration
 pub use chat::{
-    build_reply_html, delete_message_with_client, edit_message_body, edit_message_with_client,
-    emoji_for_reaction_type, list_chats_data, message_url, reaction_add_body, reaction_add_url,
-    reaction_remove_url, reaction_type_for_emoji, read_messages_data, read_messages_page,
-    remove_reaction_with_client, reply_message_with_client, reply_snippet, send_message_with_client,
-    send_reaction_with_client, split_reply_quote, REPLY_SNIPPET_MAX,
+    build_reply_html, consumptionhorizon_body, consumptionhorizon_url,
+    consumptionhorizon_value, consumptionhorizons_url, delete_message_with_client,
+    edit_message_body, edit_message_with_client, emoji_for_reaction_type, list_chats_data,
+    mark_read_with_client, message_url, parse_consumptionhorizons, reaction_add_body,
+    reaction_add_url, reaction_remove_url, reaction_type_for_emoji, read_messages_data,
+    read_messages_page, read_receipts_data, receipt_message_id, remove_reaction_with_client,
+    reply_message_with_client, reply_snippet, send_message_with_client, send_reaction_with_client,
+    split_reply_quote, REPLY_SNIPPET_MAX,
 };
 pub use files::{download_file_data, list_chat_files_data, upload_file_data};
 pub use media::{fetch_media_data, MediaBytes, MAX_BYTES};
