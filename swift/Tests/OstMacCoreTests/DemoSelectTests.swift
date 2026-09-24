@@ -24,7 +24,7 @@ final class DemoSelectTests: XCTestCase {
             DemoData.demoID, DemoData.avaID, DemoData.standupID,
             DemoData.richID, DemoData.mediaID, DemoData.reactionsID,
             DemoData.repliesID, DemoData.historyID, DemoData.botpostsID,
-            "demo-chan-general",
+            "demo-chan-general", DemoData.longChannelID,
             DemoData.churnMeetingID, DemoData.churnSyncID,
             DemoData.churnPollyID, DemoData.churnStandupID,
         ] {

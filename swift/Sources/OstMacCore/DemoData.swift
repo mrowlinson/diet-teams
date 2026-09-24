@@ -17,6 +17,7 @@ public enum DemoData {
     public static let botpostsID = "demo-botposts"
     public static let docsID = "demo-docs"
     public static let showcaseID = "demo-showcase"
+    public static let longChannelID = "demo-chan-long"
 
     /// Sidebar rows. [0] is "demo" (matches ConversationStore.demo()).
     /// The rich row derives from the rich thread's last message, so its
@@ -155,6 +156,7 @@ public enum DemoData {
         TeamItem(teamId: "demo-team-eng", name: "Engineering", channels: [
             TeamChannel(channelId: "demo-chan-general", name: "General"),
             TeamChannel(channelId: "demo-chan-shipping", name: "Shipping"),
+            TeamChannel(channelId: "demo-chan-long", name: "Release Review"),
         ]),
         TeamItem(teamId: "demo-team-design", name: "Design", channels: [
             TeamChannel(channelId: "demo-chan-crit", name: "Crit"),
@@ -261,6 +263,7 @@ public enum DemoData {
         case botpostsID: return botPostsMessages()
         case docsID: return docsMessages()
         case showcaseID: return showcaseMessages()
+        case longChannelID: return longChannelMessages()
         default: break
         }
         if chatID.hasPrefix("demo-chan-") { return channelMessages }
@@ -717,6 +720,51 @@ public enum DemoData {
                 content: "Framed it. Merging the showcase lane — ship it 🚀",
                 isOwn: true),
         ]
+    }
+
+    /// Long-channel thread (om-hu-fixture): 300 bubbles over 10 days
+    /// (30/day) for scroll/cap shots. Deterministic: rotating fictional
+    /// crew, ascending stamps floating off now, own tail, sequence
+    /// numbers in the text so shots show their position. Fully offline.
+    /// Bigger than every initial-load cap (open 3×50, day-load 4×50,
+    /// 72h window), so window math always has older pages waiting.
+    public static func longChannelMessages(now: Date = Date()) -> [ChatMessage] {
+        func iso(_ d: Date) -> String {
+            let f = ISO8601DateFormatter()
+            f.formatOptions = [.withInternetDateTime]
+            return f.string(from: d)
+        }
+        func at(dayOffset: Int, minutes: Int) -> Date {
+            var cal = Calendar.current
+            cal.timeZone = TimeZone.current
+            let base = cal.date(byAdding: .day, value: dayOffset, to: now) ?? now
+            let morning = cal.date(
+                bySettingHour: 9, minute: 0, second: 0, of: base) ?? base
+            return cal.date(byAdding: .minute, value: minutes, to: morning) ?? morning
+        }
+        let crew = ["Priya Nair", "Tom Becker", "Ava Lindqvist", "Me"]
+        let lines = [
+            "Release review notes — paging through the long channel.",
+            "Window load first: newest slice lands, older pages wait.",
+            "Day separators should split every scroll state cleanly.",
+            "Top of thread: oldest day plus the load-more button.",
+            "Middle: keep the anchor row pinned on prepend.",
+            "Bottom: tail of the last 24 hours, jump control hidden.",
+            "Failed page keeps partial progress with a retry.",
+            "Empty page chains on — blank never covers the window.",
+            "Garbage stamps stop the window after the current page.",
+            "Switching channels mid-load drops the stale chain.",
+            "Cap check: open slice plus day-loads stay under the total.",
+            "Screenshots at top, middle, and tail — all viewed.",
+        ]
+        return (0 ..< 300).map { i in
+            let sender = crew[i % crew.count]
+            return ChatMessage(
+                id: "lchan-\(i + 1)", sender: sender,
+                timestamp: iso(at(dayOffset: i / 30 - 9, minutes: (i % 30) * 19)),
+                content: "\(lines[i % lines.count]) (#\(i + 1)/300)",
+                isOwn: sender == "Me")
+        }
     }
 
     /// Shared offline thread shown when a demo channel opens.
