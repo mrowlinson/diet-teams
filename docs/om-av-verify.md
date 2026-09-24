@@ -101,3 +101,55 @@ All verdicts above reproduced live; timed ostmac-core probe
   (`stream configuration not supported`) — root cause holds.
 - Suite: ost exit 0 (145 passed), ostmac-core exit 0
   (123 passed), `swift test` exit 0 (755 tests, 0 failures).
+
+## Re-verified post-F32 2026-09-24 (main=9621501, lane lanes/om-av-verify2)
+
+F32 fix 104ebea on main. Same box, lid closed, single Dell
+5K, default out BoomAudio pinned (see blockers). ostmac-core
+probe (`cargo run --example avverify9*`, scratch, uncommitted):
+
+- `mic_probe`: `input:true output:true` in 0.31 s (was
+  false/false, 20.21 s = 2 timeouts) — FIXED.
+- `mic_test` default 6 s: `ok:true frames:300
+  played_back:true` in 13.79 s (6 cap + 6 play); named
+  `MacBook Pro Microphone` 2 s: `ok:true frames:100
+  played_back:true` — FIXED (was `no_input` /
+  `unknown_device`).
+- `mic_test_on` BoomAudio-in during `say` speech:
+  `ok:true peak_db:-35.2` (frames 99, 1.98 s) — speech
+  peak > -50 dB through the same AudioCapture path.
+- `mic_level` BoomAudio-in: -4.9 dB during tone,
+  -35.9 dB during `say`, silent control `has_input:false
+  peak_db:-60.0`. Metering live.
+- `tone_play` 500 ms: `ok:true frames:25` in 0.85 s
+  default, 1.03 s named `BoomAudio` — < 2 s, FIXED
+  (was `no_output` after 10.01 s).
+- `tone_check`: `detected:true delay_ms:50.0` —
+  WORKING. `dry_run`: `25/25 echo:true 5pkts/5nals` —
+  WORKING.
+- Bogus `ostmac-no-such-device`: `unknown_device` in
+  0.26–1.70 s (resolve-fail, fast, correctly labeled).
+  No `open_failed` occurs live — every resolved device
+  opens. Split covered by unit test
+  `av_audio_error_code_splits_open_from_resolve`
+  (15/15 `av::` tests pass).
+- Mic hw: ffmpeg 1 s capture `max_volume: -91.0 dB`
+  (43008 samples) — room silent, HW WORKING.
+- `audio_devices`: same 5 inputs + 1 output, same
+  defaults — picker WORKING.
+- Note: `mic_level_sample` clamps to 50–1000 ms; longer
+  requests sample 1 s.
+- Suite: `scripts/test.sh` exit 0 — ost 215 passed,
+  ostmac-core 183 passed, `swift test` 1350 tests,
+  0 failures.
+
+Blockers (environmental, not code):
+
+1. MacBook-mic speech peak: room silent (-91 dB). Boom
+   daemon re-pins default-out to BoomAudio < 2 s after
+   a CoreAudio switch (verified via system_profiler);
+   `say -a <device>` crashes (exit 134, NSException).
+   No audible-speaker route this session.
+2. FaceTime HD: lid closed (`AppleClamshellState =
+   Yes`), single external display. Prior 0-frames
+   verdict stands; retest lid-open.
