@@ -510,6 +510,9 @@ public struct ConversationView: View {
             boxFocused = true
             // Shot hook: --show-gif opens the picker at launch.
             if CommandLine.arguments.contains("--show-gif") { showGIFs = true }
+            // Shot hook (om-a3-keyboard): --show-mention opens the @
+            // picker at launch (before/after proof for keyboard nav).
+            if CommandLine.arguments.contains("--show-mention") { showMentions = true }
         }
         // File drops stage like picker output (same cap gate); the
         // attachment strip above shows the staged rows.
@@ -835,6 +838,13 @@ struct MessageBubble: View {
                     onSave: { saveBody() }, onRetry: onRetry,
                     onReply: onReply, onEdit: onEdit, onDelete: onDelete,
                     isPinned: isPinned, onTogglePin: onTogglePin))
+            // Keyboard/VO path (om-a3-keyboard): the bubble takes focus
+            // and exposes the same actions as a native context menu.
+            // Right-clicks still land on the AppKit menu (its monitor
+            // swallows them first); this menu only surfaces through
+            // keyboard / VoiceOver menu invocation on a focused bubble.
+            .focusable()
+            .contextMenu { keyboardMenu }
             if !message.reactions.isEmpty {
                 ReactionTapbacks(reactions: message.reactions, onTap: onReact)
                     .offset(x: message.isOwn ? DietSpace.sm : -DietSpace.sm, y: -DietSpace.md)
@@ -846,6 +856,33 @@ struct MessageBubble: View {
         // above (same constant the menu hit rect uses), so tapbacks never
         // collide with the message above.
         .padding(.top, message.reactions.isEmpty ? 0 : ReactionMenuAnchorView.badgeOverhang)
+    }
+
+    /// Native context menu for the keyboard/VO path (om-a3-keyboard):
+    /// same actions, same titles as the AppKit right-click menu. React
+    /// opens the more-picker through the bubble's anchor (keyboard use
+    /// means frontmost, so no retry). Kept beside the bridge call so
+    /// the two menus can't drift silently.
+    @ViewBuilder
+    private var keyboardMenu: some View {
+        Button("React…") {
+            NotificationCenter.default.post(
+                name: ReactionMenuAnchorView.keyboardPickerNote,
+                object: message.id)
+        }
+        Divider()
+        Button("Reply", action: onReply)
+        Button("Copy") { copyBody() }
+        Button("Forward…", action: onForward)
+        Button("Save…") { saveBody() }
+        Button(PinnedMessages.menuTitle(isPinned: isPinned), action: onTogglePin)
+        if message.isOwn {
+            Button("Edit…", action: onEdit)
+            Button("Delete…", action: onDelete)
+        }
+        if failed {
+            Button("Retry send", action: onRetry)
+        }
     }
 
     /// "Remove 👍" when the bubble already shows it, else "React 👍".

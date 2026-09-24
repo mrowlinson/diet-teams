@@ -140,6 +140,40 @@ final class JumpPaletteTests: XCTestCase {
         XCTAssertEqual(PaletteNav.move(current: 0, delta: 1, total: 0), 0)
     }
 
+    // MARK: - PaletteNav skipping disabled rows (om-a3-keyboard)
+
+    func testMoveSkippingJumpsDisabled() {
+        let enabled = [true, false, false, true, true]
+        XCTAssertEqual(
+            PaletteNav.moveSkipping(current: 0, delta: 1, total: 5) { enabled[$0] }, 3)
+        XCTAssertEqual(
+            PaletteNav.moveSkipping(current: 3, delta: -1, total: 5) { enabled[$0] }, 0)
+        XCTAssertEqual(
+            PaletteNav.moveSkipping(current: 3, delta: 1, total: 5) { enabled[$0] }, 4)
+    }
+
+    func testMoveSkippingStaysAtEdge() {
+        let enabled = [true, false, false]
+        XCTAssertEqual(
+            PaletteNav.moveSkipping(current: 0, delta: 1, total: 3) { enabled[$0] }, 0)
+        XCTAssertEqual(
+            PaletteNav.moveSkipping(current: 0, delta: -1, total: 3) { enabled[$0] }, 0)
+    }
+
+    func testMoveSkippingSettlesDisabledCurrent() {
+        let enabled = [false, false, true]
+        XCTAssertEqual(
+            PaletteNav.moveSkipping(current: 0, delta: 0, total: 3) { enabled[$0] }, 2)
+        XCTAssertEqual(
+            PaletteNav.moveSkipping(current: 1, delta: -1, total: 3) { enabled[$0] }, 2)
+    }
+
+    func testFirstEnabled() {
+        XCTAssertEqual(PaletteNav.firstEnabled(total: 3) { $0 == 2 }, 2)
+        XCTAssertNil(PaletteNav.firstEnabled(total: 3) { _ in false })
+        XCTAssertNil(PaletteNav.firstEnabled(total: 0) { _ in true })
+    }
+
     private func sampleTargets() -> [JumpTarget] {
         JumpTargets.build(chats: DemoData.chats, teams: DemoData.teams)
     }

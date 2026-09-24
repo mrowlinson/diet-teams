@@ -7,7 +7,7 @@ in `--demo` with canned data; sign in via device code or browser to go live.
 
 ![Diet Teams main window (demo mode)](docs/shots/om-reskin-chrome-demo.png)
 ![Teams channel (demo mode)](docs/shots/om-reskin-teams-channel.png)
-![Device-code sign-in (demo placeholder)](docs/shots/om-reskin-chrome-auth-code.png)
+<img src="docs/shots/om-reskin-chrome-auth-code.png" alt="Device-code sign-in (demo placeholder)" width="440">
 
 ## Features
 

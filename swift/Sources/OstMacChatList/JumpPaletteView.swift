@@ -152,7 +152,7 @@ public struct JumpPaletteView: View {
                     .focused($fieldFocused)
                     .onSubmit { submit() }
                     .onChange(of: query) {
-                        highlight = 0
+                        settleHighlight()
                         if trimmedQuery.isEmpty {
                             // Blank clears immediately (no debounce):
                             // stale hits never linger under an empty field.
@@ -173,7 +173,7 @@ public struct JumpPaletteView: View {
                 .pickerStyle(.segmented)
                 .padding(.horizontal, DietSpace.md)
                 .padding(.bottom, DietSpace.sm)
-                .onChange(of: scope) { highlight = 0 }
+                .onChange(of: scope) { settleHighlight() }
             }
             DietDividerH()
             if inMessages, let store = searchStore {
@@ -190,42 +190,56 @@ public struct JumpPaletteView: View {
                     message: emptyMessage)
                     .frame(minHeight: 160)
             } else {
-                List(0 ..< matches.count, id: \.self) { i in
-                    let t = matches[i]
-                    Button {
-                        pick(i)
-                    } label: {
-                        HStack(spacing: DietSpace.sm) {
-                            Image(systemName: icon(for: t.kind))
-                                .font(.system(size: DietSize.iconMD))
-                                .foregroundStyle(DietColor.textSecondaryColor)
-                                .frame(width: DietSize.iconLG)
-                            VStack(alignment: .leading, spacing: DietSpace.xxs) {
-                                Text(t.title)
-                                    .font(DietType.body)
-                                    .foregroundStyle(DietColor.textPrimaryColor)
-                                    .lineLimit(1)
-                                Text(t.subtitle)
-                                    .font(DietType.caption1)
+                ScrollViewReader { proxy in
+                    List(0 ..< matches.count, id: \.self) { i in
+                        let t = matches[i]
+                        Button {
+                            pick(i)
+                        } label: {
+                            HStack(spacing: DietSpace.sm) {
+                                Image(systemName: icon(for: t.kind))
+                                    .font(.system(size: DietSize.iconMD))
                                     .foregroundStyle(DietColor.textSecondaryColor)
-                                    .lineLimit(1)
+                                    .frame(width: DietSize.iconLG)
+                                VStack(alignment: .leading, spacing: DietSpace.xxs) {
+                                    Text(t.title)
+                                        .font(DietType.body)
+                                        .foregroundStyle(DietColor.textPrimaryColor)
+                                        .lineLimit(1)
+                                    Text(t.subtitle)
+                                        .font(DietType.caption1)
+                                        .foregroundStyle(DietColor.textSecondaryColor)
+                                        .lineLimit(1)
+                                }
+                                Spacer(minLength: DietSpace.sm)
                             }
-                            Spacer(minLength: DietSpace.sm)
+                            .padding(.vertical, DietSpace.xs)
+                            .contentShape(Rectangle())
                         }
-                        .padding(.vertical, DietSpace.xs)
-                        .contentShape(Rectangle())
+                        .buttonStyle(.plain)
+                        .disabled(t.openID == nil)
+                        .id(i)
+                        .listRowBackground(
+                            i == highlight
+                                ? Color(nsColor: DietColor.accent).opacity(0.15)
+                                : Color.clear)
                     }
-                    .buttonStyle(.plain)
-                    .disabled(t.openID == nil)
-                    .listRowBackground(
-                        i == highlight
-                            ? Color(nsColor: DietColor.accent).opacity(0.15)
-                            : Color.clear)
+                    .listStyle(.plain)
+                    // Explicit height: a bare min/max leaves List at its
+                    // small ideal size (~3 rows); grow with the matches.
+                    .frame(height: Self.listHeight(for: matches.count))
+                    // Scroll-to-highlight (om-a3-keyboard): flat highlight
+                    // resolves to a main row; section rows live below in
+                    // the static stack, never inside this List.
+                    .onChange(of: highlight) { _, new in
+                        guard case .main(let m)? = PaletteNav.resolve(
+                            new, mainCount: mainCount,
+                            fileCount: fileVisibleCount,
+                            personCount: personVisibleCount)
+                        else { return }
+                        proxy.scrollTo(m, anchor: .center)
+                    }
                 }
-                .listStyle(.plain)
-                // Explicit height: a bare min/max leaves List at its
-                // small ideal size (~3 rows); grow with the matches.
-                .frame(height: Self.listHeight(for: matches.count))
             }
             if sectionsVisible, let store = filePeople {
                 DietDividerH()
@@ -244,6 +258,8 @@ public struct JumpPaletteView: View {
         }
         .frame(width: 460)
         .background(DietColor.windowColor)
+        .onAppear { settleHighlight() }
+        .onChange(of: highlight) { _, new in announce(new) }
         .onKeyPress(.upArrow) { move(-1); return .handled }
         .onKeyPress(.downArrow) { move(1); return .handled }
         .onKeyPress(.escape) {
@@ -281,7 +297,66 @@ public struct JumpPaletteView: View {
     }
 
     private func move(_ delta: Int) {
-        highlight = PaletteNav.move(current: highlight, delta: delta, total: navTotal)
+        highlight = PaletteNav.moveSkipping(
+            current: highlight, delta: delta, total: navTotal,
+            isEnabled: isRowEnabled)
+    }
+
+    /// Settles the highlight onto the first pickable row (om-a3-keyboard):
+    /// channel-less team rows render disabled, so a blind 0 can strand
+    /// Return on a no-op row with no feedback.
+    private func settleHighlight() {
+        highlight = PaletteNav.firstEnabled(total: navTotal, isEnabled: isRowEnabled) ?? 0
+    }
+
+    /// Flat-nav row enabled state (om-a3-keyboard): main chat rows only
+    /// when openable; message hits and Files/People rows always pick.
+    private func isRowEnabled(_ i: Int) -> Bool {
+        guard let row = PaletteNav.resolve(
+            i, mainCount: mainCount,
+            fileCount: fileVisibleCount, personCount: personVisibleCount)
+        else { return false }
+        switch row {
+        case .main(let m):
+            if inMessages { return true }
+            return matches.indices.contains(m) && matches[m].openID != nil
+        case .file, .person:
+            return true
+        }
+    }
+
+    /// VoiceOver announcement for the roved row (om-a3-keyboard): focus
+    /// stays in the field while the highlight moves, so without this
+    /// VO users never learn which row is hot.
+    private func announce(_ i: Int) {
+        guard let label = labelForRow(i) else { return }
+        AccessibilityNotification.Announcement(label).post()
+    }
+
+    private func labelForRow(_ i: Int) -> String? {
+        guard let row = PaletteNav.resolve(
+            i, mainCount: mainCount,
+            fileCount: fileVisibleCount, personCount: personVisibleCount)
+        else { return nil }
+        switch row {
+        case .main(let m):
+            if inMessages {
+                guard let store = searchStore, store.hits.indices.contains(m)
+                else { return nil }
+                let preview = store.hits[m].preview
+                return preview.isEmpty ? "(attachment)" : preview
+            }
+            guard matches.indices.contains(m) else { return nil }
+            return "\(matches[m].title), \(matches[m].subtitle)"
+        case .file(let f):
+            guard let store = filePeople, store.files.indices.contains(f)
+            else { return nil }
+            return store.files[f].name
+        case .person(let p):
+            guard let store = filePeople, store.people.indices.contains(p)
+            else { return nil }
+            return store.people[p].displayName
+        }
     }
 
     /// Return: resolves the flat highlight across main + Files + People.
@@ -387,11 +462,12 @@ private struct MessageResultsView: View {
                 .frame(minHeight: 160)
         } else {
             VStack(spacing: 0) {
-                List(0 ..< search.hits.count, id: \.self) { i in
-                    let hit = search.hits[i]
-                    Button {
-                        onPickMessage(i)
-                    } label: {
+                ScrollViewReader { proxy in
+                    List(0 ..< search.hits.count, id: \.self) { i in
+                        let hit = search.hits[i]
+                        Button {
+                            onPickMessage(i)
+                        } label: {
                         HStack(spacing: DietSpace.sm) {
                             Image(systemName: "text.bubble")
                                 .font(.system(size: DietSize.iconMD))
@@ -412,14 +488,21 @@ private struct MessageResultsView: View {
                         .padding(.vertical, DietSpace.xs)
                         .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
-                    .listRowBackground(
-                        i == highlight
-                            ? Color(nsColor: DietColor.accent).opacity(0.15)
-                            : Color.clear)
+                        .buttonStyle(.plain)
+                        .id(i)
+                        .listRowBackground(
+                            i == highlight
+                                ? Color(nsColor: DietColor.accent).opacity(0.15)
+                                : Color.clear)
+                    }
+                    .listStyle(.plain)
+                    .frame(height: JumpPaletteView.listHeight(for: search.hits.count))
+                    // Scroll-to-highlight (om-a3-keyboard).
+                    .onChange(of: highlight) { _, new in
+                        guard search.hits.indices.contains(new) else { return }
+                        proxy.scrollTo(new, anchor: .center)
+                    }
                 }
-                .listStyle(.plain)
-                .frame(height: JumpPaletteView.listHeight(for: search.hits.count))
                 if search.total != nil || search.more || search.loadingMore {
                     HStack(spacing: DietSpace.sm) {
                         if let total = search.total {
