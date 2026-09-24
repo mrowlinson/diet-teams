@@ -82,4 +82,12 @@ public enum DiagnosticsFormat {
     public static func meetingThreadLine(messages: Int, live: Bool) -> String {
         "\(messages) messages · \(live ? "live" : "ended")"
     }
+
+    /// Screen-share counters (om-screenshare): source label + captured/
+    /// sent frames. The tile shows status words only; the numbers live
+    /// here. Nil/blank source (idle) reads "off".
+    public static func shareLine(source: String?, frames: Int, sent: Int) -> String {
+        guard let source, !source.isEmpty else { return "off" }
+        return "\(source) · \(frames) frames · \(sent) sent"
+    }
 }

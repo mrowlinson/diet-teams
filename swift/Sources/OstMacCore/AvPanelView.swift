@@ -585,10 +585,15 @@ public struct AvPanelView: View {
     @StateObject private var model = AvPanelModel()
     @StateObject private var camera = CameraCapture()
     @StateObject private var call = CallStore()
+    @StateObject private var share: ScreenShareModel
     @State private var cameras = CameraCapture.videoDevices()
     @Environment(\.openURL) private var openURL
 
-    public init() {}
+    /// The app injects its shared model (Diagnostics reads the same
+    /// counters); standalone use falls back to a private one.
+    public init(screenShare: ScreenShareModel? = nil) {
+        _share = StateObject(wrappedValue: screenShare ?? ScreenShareModel())
+    }
 
     public var body: some View {
         ScrollView {
@@ -740,6 +745,15 @@ public struct AvPanelView: View {
                             .padding(.top, DietSpace.xxs)
                         }
                     }
+                }
+
+                DietSectionCard(
+                    "Screen share", systemImage: "rectangle.on.rectangle"
+                ) {
+                    ScreenShareTile(
+                        model: share,
+                        liveCall: call.call?.liveMedia == true
+                            && (call.call?.isActive ?? false))
                 }
 
                 DietSectionCard(
@@ -912,6 +926,7 @@ public struct AvPanelView: View {
             model.refreshDevices()
             model.refreshCaps()
             call.refresh()
+            share.refreshPermission()
             // Shot hook: --auto-loop runs the live loopback at launch.
             if CommandLine.arguments.contains("--auto-loop") {
                 model.runLiveLoopback()
@@ -920,6 +935,7 @@ public struct AvPanelView: View {
         .onDisappear {
             model.stopLevelPolling()
             camera.stop()
+            share.stop()
         }
     }
 
