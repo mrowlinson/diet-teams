@@ -101,6 +101,11 @@ public struct RulesConfig: Codable, Sendable, Equatable {
     /// rule-owned (like `muted`): persisted as-is, resolved into every
     /// EffectiveRules, skipped by the filter with reason "chat-muted".
     public var mutedChatIDs: Set<String>
+    /// OstMac hidden chats (chat ids), edited in the sidebar context
+    /// menu. List-visibility ONLY: persisted as-is, never resolved into
+    /// EffectiveRules, never read by ChatFilter — hidden threads keep
+    /// their banners and unread until restored via Show hidden.
+    public var hiddenChatIDs: Set<String>
     /// Notify/skip rules (the extensible store behind the gates above).
     /// Blank = notify everything. Edited in the GUI and persisted here.
     public var notifyRules: [NotifyRule]
@@ -117,6 +122,7 @@ public struct RulesConfig: Codable, Sendable, Equatable {
         blockKeywords: [String] = [],
         muted: Bool = false,
         mutedChatIDs: Set<String> = [],
+        hiddenChatIDs: Set<String> = [],
         notifyRules: [NotifyRule] = []
     ) {
         self.owner = owner
@@ -130,6 +136,7 @@ public struct RulesConfig: Codable, Sendable, Equatable {
         self.blockKeywords = blockKeywords
         self.muted = muted
         self.mutedChatIDs = mutedChatIDs
+        self.hiddenChatIDs = hiddenChatIDs
         self.notifyRules = notifyRules
     }
 
@@ -138,6 +145,7 @@ public struct RulesConfig: Codable, Sendable, Equatable {
         case noisyChannelMentions, matchByDisplayName
         case allowKeywords, blockKeywords
         case mutedChatIDs
+        case hiddenChatIDs
         case notifyRules
     }
 
@@ -158,6 +166,7 @@ public struct RulesConfig: Codable, Sendable, Equatable {
         blockKeywords = (try? c.decodeIfPresent([String].self, forKey: .blockKeywords)) ?? d.blockKeywords
         muted = (try? c.decodeIfPresent(Bool.self, forKey: .muted)) ?? d.muted
         mutedChatIDs = (try? c.decodeIfPresent(Set<String>.self, forKey: .mutedChatIDs)) ?? d.mutedChatIDs
+        hiddenChatIDs = (try? c.decodeIfPresent(Set<String>.self, forKey: .hiddenChatIDs)) ?? d.hiddenChatIDs
         notifyRules = (try? c.decodeIfPresent([NotifyRule].self, forKey: .notifyRules)) ?? []
         applyRules()
     }
@@ -169,7 +178,8 @@ public struct RulesConfig: Codable, Sendable, Equatable {
     /// (message-types then allows every type via the "*" marker) —
     /// EXCEPT noisy-chats-channel-mentions and my-name-as-backup, whose
     /// ABSENT default is ON: only a present disabled rule turns them off.
-    /// `muted`, `mutedChatIDs` and `owner` are NOT touched (not rule-owned).
+    /// `muted`, `mutedChatIDs`, `hiddenChatIDs` and `owner` are NOT
+    /// touched (not rule-owned).
     public mutating func applyRules() {
         let eff = Self.resolve(
             notifyRules, ownerDisplayName: owner.displayName, muted: muted,

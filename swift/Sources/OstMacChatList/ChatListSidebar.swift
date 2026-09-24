@@ -10,19 +10,23 @@ public struct ChatListSidebar: View {
     @ObservedObject private var presence: PresenceStore
     @ObservedObject private var unread: UnreadStore
     @ObservedObject private var mentions: MentionStore
+    @ObservedObject private var rules: RulesStore
     @State private var searchText = ""
     @State private var mentionsOnly = false
+    @State private var showHidden = false
 
     public init(
         model: ChatListViewModel, presence: PresenceStore = PresenceStore(),
         unread: UnreadStore = UnreadStore(),
         mentions: MentionStore = MentionStore(),
+        rules: RulesStore = RulesStore(),
         initialFilter: String = ""
     ) {
         self.model = model
         self.presence = presence
         self.unread = unread
         self.mentions = mentions
+        self.rules = rules
         _searchText = State(initialValue: initialFilter)
     }
 
@@ -63,10 +67,13 @@ public struct ChatListSidebar: View {
     }
 
     private var loadedList: some View {
-        // Text filter first, mentions filter second: both preserve
+        // Hidden filter first, text second, mentions third: all preserve
         // order (filtering never re-sorts — pin-top owns the comparator
-        // via displayChats).
-        var visible = ChatListFormat.filter(model.displayChats, query: searchText)
+        // via displayChats). Client-side only — never refetches the list.
+        var visible = ChatListFormat.filterHidden(
+            model.displayChats, hiddenIDs: rules.config.hiddenChatIDs,
+            showHidden: showHidden)
+        visible = ChatListFormat.filter(visible, query: searchText)
         if mentionsOnly {
             visible = ChatListFormat.filterMentions(visible, mentionedIDs: mentions.mentionedIDs)
         }
@@ -77,6 +84,8 @@ public struct ChatListSidebar: View {
                 .padding(.vertical, DietSpace.sm)
             DietSeamH()
             mentionsRow
+            DietSeamH()
+            hiddenRow
             DietSeamH()
             if visible.isEmpty, mentionsOnly, queryBlank {
                 DietEmptyState(
@@ -103,6 +112,22 @@ public struct ChatListSidebar: View {
                         )
                         .tag(chat.id)
                         .unreadBadge(unread.count(for: chat.id))
+                        .contextMenu {
+                            // Top-level items only (never a submenu).
+                            // Synthetic pinned rows carry no menu (they
+                            // are app UI, not threads — never muted or
+                            // hidden). Mute is absolute (no banners, no
+                            // unread, mentions included); hide drops the
+                            // row until Show hidden restores it.
+                            if !PinnedChats.isSynthetic(chat.id) {
+                                Button(rules.isMuted(chatID: chat.id) ? "Unmute" : "Mute") {
+                                    rules.setMuted(chatID: chat.id, muted: !rules.isMuted(chatID: chat.id))
+                                }
+                                Button(rules.isHidden(chatID: chat.id) ? "Unhide" : "Hide") {
+                                    rules.setHidden(chatID: chat.id, hidden: !rules.isHidden(chatID: chat.id))
+                                }
+                            }
+                        }
                     }
                 }
                 .listStyle(.sidebar)
@@ -146,6 +171,36 @@ public struct ChatListSidebar: View {
         .id("mentions")
         .accessibilityIdentifier("mentions")
         .help("Show only threads that mention you")
+    }
+
+    /// Show-hidden row (om-mute-hide): stable id `show-hidden`. Tapping
+    /// reveals hidden threads (hidden filter bypassed); tapping again
+    /// re-hides them. Restore path: reveal, then Unhide from the row's
+    /// context menu. Always present (stable for shots/tests), muted when
+    /// off. Client-side only — never refetches the list. No count shown
+    /// (counters live in Diagnostics only).
+    private var hiddenRow: some View {
+        Button {
+            showHidden.toggle()
+        } label: {
+            HStack(spacing: DietSpace.sm) {
+                Image(systemName: showHidden ? "eye.fill" : "eye")
+                    .font(.system(size: DietSize.iconMD))
+                    .foregroundStyle(showHidden ? Color.accentColor : DietColor.textSecondaryColor)
+                Text(showHidden ? "Showing hidden" : "Show hidden")
+                    .font(DietType.headline)
+                    .foregroundStyle(showHidden ? DietColor.textPrimaryColor : DietColor.textSecondaryColor)
+                Spacer()
+            }
+            .padding(.horizontal, DietSpace.sm)
+            .padding(.vertical, DietSpace.xs)
+            .contentShape(Rectangle())
+            .background(showHidden ? Color.accentColor.opacity(0.12) : .clear)
+        }
+        .buttonStyle(.plain)
+        .id("show-hidden")
+        .accessibilityIdentifier("show-hidden")
+        .help("Show hidden threads to restore them")
     }
 }
 

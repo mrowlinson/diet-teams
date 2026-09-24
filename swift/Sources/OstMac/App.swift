@@ -1128,6 +1128,7 @@ struct RootView: View {
                         presence: state.presence,
                         unread: state.unread,
                         mentions: state.mentions,
+                        rules: state.rules,
                         openChatID: state.openChatID,
                         initialSection: RootView.initialSection,
                         initialFilter: OstMacAppMain.filterQuery(args: CommandLine.arguments),
