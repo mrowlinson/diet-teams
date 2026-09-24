@@ -141,26 +141,98 @@ public struct RemoteImage: View {
     }
 }
 
-/// Tap-to-expand sheet: the same bytes, bigger cap.
+/// Tap-to-expand viewer: resizable window (remembers its size for the
+/// session), magnification slider pinned at the bottom (25%…400%, fit-width
+/// default), live zoom with trackpad-scroll and drag panning via an
+/// NSScrollView host. Open/close behavior is unchanged: it opens as a sheet
+/// from the bubble image and closes via Close or Esc.
 struct ZoomedImage: View {
     let image: NSImage
     let alt: String
     @Environment(\.dismiss) private var dismiss
+    @State private var scale: Double
+    @State private var viewportWidth: CGFloat = 0
+    @State private var didFit = false
+    @State private var fixedSize: CGSize? = ImageViewerSession.lastSize
+
+    init(image: NSImage, alt: String) {
+        self.image = image
+        self.alt = alt
+        // First guess before layout runs; fitOnce refines it to the real
+        // viewport on appear.
+        _scale = State(wrappedValue: ImageZoom.fitWidthScale(
+            imageWidth: image.size.width,
+            viewportWidth: ImageViewerSession.initialSize().width))
+    }
 
     var body: some View {
-        VStack {
-            Image(nsImage: image)
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .frame(maxWidth: 640, maxHeight: 480)
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-            Button("Close") { dismiss() }
-                .keyboardShortcut(.cancelAction)
-                .padding(.top, 4)
+        VStack(spacing: 0) {
+            GeometryReader { geo in
+                ZoomScrollView(image: image, scale: scale)
+                    .onAppear {
+                        viewportWidth = geo.size.width
+                        fitOnce(viewportWidth: geo.size.width)
+                    }
+                    .onChange(of: geo.size) { _, newSize in
+                        viewportWidth = newSize.width
+                        fitOnce(viewportWidth: newSize.width)
+                    }
+            }
+            Divider()
+            HStack(spacing: 8) {
+                Slider(
+                    value: $scale,
+                    in: ImageZoom.minScale ... ImageZoom.maxScale,
+                    label: { Text("Magnification") },
+                    minimumValueLabel: { Text("25%") },
+                    maximumValueLabel: { Text("400%") }
+                )
+                .frame(maxWidth: 280)
+                .accessibilityLabel("Magnification")
+                Text("\(Int(ImageZoom.sliderPercent(forScale: scale).rounded()))%")
+                    .monospacedDigit()
+                    .frame(minWidth: 48, alignment: .trailing)
+                Button("Fit width") {
+                    scale = ImageZoom.fitWidthScale(
+                        imageWidth: image.size.width, viewportWidth: viewportWidth)
+                }
+                .disabled(viewportWidth <= 0)
+                Spacer()
+                Button("Close") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+            }
+            .padding(8)
         }
-        .padding()
-        .frame(minWidth: 320, minHeight: 240)
+        .background(
+            GeometryReader { outer in
+                Color.clear
+                    .onChange(of: outer.size) { _, newSize in
+                        ImageViewerSession.remember(newSize)
+                    }
+            }
+        )
+        .frame(width: fixedSize?.width, height: fixedSize?.height)
+        .frame(
+            minWidth: ImageViewerSession.minSize.width,
+            minHeight: ImageViewerSession.minSize.height
+        )
+        .onAppear {
+            // Release the restored size after first layout so the window is
+            // freely resizable; the size reader above keeps remembering it.
+            if fixedSize != nil {
+                DispatchQueue.main.async { fixedSize = nil }
+            }
+        }
         .accessibilityLabel(alt.isEmpty ? "Expanded image" : "Expanded \(alt)")
+    }
+
+    /// Fit-width default: applied once to the first real viewport; later
+    /// resizes must not fight the user's chosen zoom.
+    private func fitOnce(viewportWidth: CGFloat) {
+        guard !didFit, viewportWidth > 0 else { return }
+        scale = ImageZoom.fitWidthScale(
+            imageWidth: image.size.width, viewportWidth: viewportWidth)
+        didFit = true
     }
 }
 
