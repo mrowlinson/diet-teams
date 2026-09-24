@@ -190,6 +190,8 @@ public struct TeamRosterView: View {
     @State private var newUser = ""
     @State private var newOwner = false
     @State private var working = false
+    /// Reduce Motion (om-a1-motion): state changes land instantly.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     public init(model: TeamRosterViewModel) {
         self.model = model
@@ -238,7 +240,7 @@ public struct TeamRosterView: View {
                     .transition(.opacity)
             }
         }
-        .animation(.default, value: model.state)
+        .animation(DietMotion.gated(reduceMotion: reduceMotion), value: model.state)
     }
 
     private var loadedList: some View {
