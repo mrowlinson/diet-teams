@@ -3,8 +3,9 @@
 //! Uses the Skype token with `Authentication: skypetoken={token}` header,
 //! bypassing Graph API which requires tenant admin consent for Chat.Read.
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use serde::Deserialize;
+use std::collections::HashMap;
 
 use super::client::TeamsClient;
 use super::me::whoami_data;
@@ -51,11 +52,20 @@ struct NativeMessage {
     reactions: Option<Vec<NativeReaction>>,
     /// Alternate nesting some payloads use (`properties.reactions`).
     properties: Option<MessageProperties>,
+    /// Unknown top-level wire fields (om-lt2-quotelink): channel thread
+    /// parents (`rootMessageId` / `replyToId`) land here; mined
+    /// case-insensitively, never fatal.
+    #[serde(default, flatten)]
+    extra: HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
 struct MessageProperties {
     reactions: Option<Vec<NativeReaction>>,
+    /// Unknown `properties.*` fields (om-lt2-quotelink): same parent
+    /// mining as top-level, for nested channel shapes.
+    #[serde(default, flatten)]
+    extra: HashMap<String, serde_json::Value>,
 }
 
 /// One raw reaction entry. Only the type is aggregated; user/count
@@ -403,6 +413,143 @@ fn parse_guid(tag: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// Channel thread parent from wire fields (om-lt2-quotelink).
+/// Top-level wins, then `properties.*`, then content-embedded forms.
+/// Missing/odd shapes → None, never fatal.
+fn message_parent_id(msg: &NativeMessage) -> Option<String> {
+    if let Some(s) = wire_parent_from_map(&msg.extra) {
+        return Some(s);
+    }
+    if let Some(props) = msg.properties.as_ref() {
+        if let Some(s) = wire_parent_from_map(&props.extra) {
+            return Some(s);
+        }
+    }
+    if let Some(content) = msg.content.as_deref() {
+        if let Some(s) = parent_id_from_content(content) {
+            return Some(s);
+        }
+    }
+    None
+}
+
+/// One wire value as a parent id: trimmed non-empty strings pass,
+/// numbers stringify, everything else drops.
+fn wire_parent_value(v: &serde_json::Value) -> Option<String> {
+    match v {
+        serde_json::Value::String(s) => {
+            let t = s.trim();
+            if t.is_empty() {
+                None
+            } else {
+                Some(t.to_string())
+            }
+        }
+        serde_json::Value::Number(n) => Some(n.to_string()),
+        _ => None,
+    }
+}
+
+/// Case-insensitive parent-key lookup over one flattened map.
+/// Graph sends `replyToId`; native channel cards send `rootMessageId`
+/// (H0 live probe, om-channel-history). Both mean "replies to <id>".
+fn wire_parent_from_map(map: &HashMap<String, serde_json::Value>) -> Option<String> {
+    for (k, v) in map {
+        let lk = k.to_lowercase();
+        if lk == "rootmessageid"
+            || lk == "replytoid"
+            || lk == "parentmessageid"
+            || lk == "parentid"
+        {
+            if let Some(s) = wire_parent_value(v) {
+                return Some(s);
+            }
+        }
+    }
+    None
+}
+
+/// Scan raw content for embedded `rootMessageId` / `replyToId` forms:
+/// `"key":"val"`, `key="val"`, `key:123` (any quote/sep mix).
+/// Case-insensitive key, first non-empty wins. Byte-wise so Unicode
+/// text never misaligns indices; unterminated values drop.
+fn parent_id_from_content(html: &str) -> Option<String> {
+    const KEYS: &[&[u8]] = &[b"rootmessageid", b"replytoid"];
+    let bytes = html.as_bytes();
+    for key in KEYS {
+        let mut i = 0;
+        while i + key.len() <= bytes.len() {
+            if bytes[i..i + key.len()].eq_ignore_ascii_case(key) {
+                let boundary = i == 0 || !bytes[i - 1].is_ascii_alphanumeric();
+                if boundary {
+                    if let Some(v) = parent_value_after(bytes, i + key.len()) {
+                        return Some(v);
+                    }
+                }
+                i += key.len();
+            } else {
+                i += 1;
+            }
+        }
+    }
+    None
+}
+
+/// Value after a matched parent key: skips an optional closing quote,
+/// requires `:` or `=`, then reads a quoted or bare token. None when
+/// the key is not a key/value pair or the value is empty/unterminated.
+fn parent_value_after(bytes: &[u8], mut j: usize) -> Option<String> {
+    while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+        j += 1;
+    }
+    if j < bytes.len() && (bytes[j] == b'"' || bytes[j] == b'\'') {
+        j += 1;
+    }
+    while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+        j += 1;
+    }
+    if j >= bytes.len() || (bytes[j] != b':' && bytes[j] != b'=') {
+        return None;
+    }
+    j += 1;
+    while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+        j += 1;
+    }
+    if j >= bytes.len() {
+        return None;
+    }
+    let val: String;
+    if bytes[j] == b'"' || bytes[j] == b'\'' {
+        let q = bytes[j];
+        j += 1;
+        let start = j;
+        while j < bytes.len() && bytes[j] != q {
+            j += 1;
+        }
+        if j >= bytes.len() {
+            return None;
+        }
+        val = String::from_utf8_lossy(&bytes[start..j]).trim().to_string();
+    } else {
+        let start = j;
+        while j < bytes.len()
+            && !matches!(
+                bytes[j],
+                b'"' | b'\'' | b',' | b';' | b'<' | b'>' | b'}' | b']' | b')' | b' '
+                | b'\t' | b'\n' | b'\r'
+            )
+        {
+            j += 1;
+        }
+        val = String::from_utf8_lossy(&bytes[start..j]).trim().to_string();
+    }
+    if val.is_empty() {
+        None
+    } else {
+        Some(val)
+    }
 }
 
 /// Reply using an existing client (shared helper). The parent attribution
@@ -1027,6 +1174,80 @@ async fn resolve_mate_name(
         .next()
 }
 
+// ---------------------------------------------------------------------------
+// 1:1 chat create (om-lt5-person11: person-pick opens 1:1)
+// ---------------------------------------------------------------------------
+
+/// `POST /me/chats` path for 1:1 creation. Pure so tests pin it.
+pub fn one_to_one_create_path() -> &'static str {
+    "/me/chats"
+}
+
+/// `POST /me/chats` body for a 1:1 with `user` (AAD id or UPN).
+/// Self is implied (members carries the peer only, owner role).
+/// Pure so tests pin it.
+pub fn one_to_one_create_body(user: &str) -> serde_json::Value {
+    serde_json::json!({
+        "chatType": "oneOnOne",
+        "members": [
+            {
+                "@odata.type": "#microsoft.graph.aadUserConversationMember",
+                "roles": ["owner"],
+                "user@odata.bind": format!(
+                    "https://graph.microsoft.com/v1.0/users('{}')",
+                    user.trim()
+                ),
+            }
+        ],
+    })
+}
+
+#[derive(Debug, Deserialize)]
+struct CreatedChat {
+    id: String,
+    topic: Option<String>,
+}
+
+/// Parse a `POST /me/chats` 1:1 response into a chat row. Graph
+/// returns no topic for 1:1s — the caller names the thread after
+/// the peer. Pure so tests pin it.
+pub fn parse_created_chat(value: &serde_json::Value) -> Result<ChatInfo> {
+    let chat: CreatedChat = serde_json::from_value(value.clone())
+        .context("Failed to parse created chat response")?;
+    Ok(ChatInfo {
+        id: chat.id,
+        name: chat.topic.unwrap_or_default(),
+        is_group: false,
+        last_message_time: None,
+        last_message_sender: None,
+        last_message_preview: None,
+    })
+}
+
+/// Create (or re-open) a 1:1 chat with `user` (AAD id or UPN) via
+/// Graph `POST /me/chats` and return the thread. Empty refs are
+/// rejected before any network. Note: Graph mints a new thread
+/// per call — no existing-1:1 lookup (minimal path).
+pub async fn create_one_to_one_chat_data(
+    client: &TeamsClient,
+    user: &str,
+) -> Result<ChatInfo> {
+    if user.trim().is_empty() {
+        bail!("empty user");
+    }
+    let resp = client
+        .graph_post(
+            one_to_one_create_path(),
+            &one_to_one_create_body(user),
+        )
+        .await?;
+    let value: serde_json::Value = resp
+        .json()
+        .await
+        .context("Failed to parse created chat response")?;
+    parse_created_chat(&value)
+}
+
 /// List recent chats and return structured data.
 ///
 /// 1:1 chats without a topic are named after the mate (roster MRI
@@ -1223,7 +1444,11 @@ pub async fn read_messages_page(
         let content = msg.content.as_deref().unwrap_or("");
         // OstMac om-replies: split the quote block first so `content` is
         // the reply body only; the parent id rides `reply_to`.
-        let (reply_to, body_html) = split_reply_quote(content);
+        // OstMac om-lt2-quotelink: channel threads carry no quote block —
+        // fall back to the wire parent (`rootMessageId` / `replyToId`).
+        let (quote_parent, body_html) = split_reply_quote(content);
+        let wire_parent = message_parent_id(msg);
+        let mut reply_to = quote_parent.or(wire_parent);
         let text = strip_html(&body_html);
 
         // OstMac om-richmedia: image-only bubbles strip to "" but are
@@ -1238,6 +1463,14 @@ pub async fn read_messages_page(
         // OstMac: keep the server id so embedders can match realtime edits.
         let id = msg.id.as_deref().filter(|s| !s.is_empty()).map(String::from);
         let id = id.unwrap_or_else(|| format!("{}@{}", time, sender));
+        // Self/blank parents never link (corrupt wire id guard).
+        if reply_to
+            .as_deref()
+            .map(|p| p.trim().is_empty() || p == id)
+            .unwrap_or(false)
+        {
+            reply_to = None;
+        }
         let reactions = message_reactions(msg);
         result.push(MessageInfo {
             id,
@@ -1317,6 +1550,38 @@ fn with_page_size(url: &str, limit: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn one_to_one_create_shape() {
+        assert_eq!(one_to_one_create_path(), "/me/chats");
+        let b = one_to_one_create_body("  aad-1 ");
+        assert_eq!(b["chatType"], "oneOnOne");
+        let m = &b["members"][0];
+        assert_eq!(
+            m["@odata.type"],
+            "#microsoft.graph.aadUserConversationMember"
+        );
+        assert_eq!(m["roles"][0], "owner");
+        assert_eq!(
+            m["user@odata.bind"],
+            "https://graph.microsoft.com/v1.0/users('aad-1')"
+        );
+    }
+
+    #[test]
+    fn created_chat_parse_tolerates_shapes() {
+        let v: serde_json::Value =
+            serde_json::from_str(r#"{"id":"19:one@unq.v1"}"#).unwrap();
+        let c = parse_created_chat(&v).unwrap();
+        assert_eq!(c.id, "19:one@unq.v1");
+        assert_eq!(c.name, "");
+        assert!(!c.is_group);
+        let v: serde_json::Value =
+            serde_json::from_str(r#"{"id":"19:g@t","topic":"T"}"#).unwrap();
+        assert_eq!(parse_created_chat(&v).unwrap().name, "T");
+        let v: serde_json::Value = serde_json::from_str(r#"{"nope":1}"#).unwrap();
+        assert!(parse_created_chat(&v).is_err());
+    }
 
     #[test]
     fn edit_url_and_body_shape() {
@@ -1729,5 +1994,62 @@ src="x">"#));
         let empty: serde_json::Value =
             serde_json::from_str(r#"{"consumptionhorizons":[]}"#).unwrap();
         assert!(parse_consumptionhorizons(&empty).is_empty());
+    }
+
+    fn native(json: &str) -> NativeMessage {
+        serde_json::from_str(json).unwrap()
+    }
+
+    #[test]
+    fn channel_parent_top_level_root_message_id() {
+        let m = native(
+            r#"{"id":"r1","messagetype":"RichText/Html","content":"<p>reply</p>","rootMessageId":"m1"}"#,
+        );
+        assert_eq!(message_parent_id(&m).as_deref(), Some("m1"));
+        // Graph casing variant.
+        let m = native(
+            r#"{"id":"r1","messagetype":"RichText/Html","content":"<p>reply</p>","replyToId":"m2"}"#,
+        );
+        assert_eq!(message_parent_id(&m).as_deref(), Some("m2"));
+        // Lowercase wire variant.
+        let m = native(
+            r#"{"id":"r1","messagetype":"RichText/Html","content":"<p>reply</p>","rootmessageid":"m3"}"#,
+        );
+        assert_eq!(message_parent_id(&m).as_deref(), Some("m3"));
+    }
+
+    #[test]
+    fn channel_parent_nested_properties_and_content() {
+        // properties.replyToId nesting.
+        let m = native(
+            r#"{"id":"r1","messagetype":"RichText/Media_Card","content":"<p>reply</p>","properties":{"replyToId":"m9"}}"#,
+        );
+        assert_eq!(message_parent_id(&m).as_deref(), Some("m9"));
+        // Content-embedded JSON form (Media_Card payloads).
+        let m = native(
+            r#"{"id":"r2","messagetype":"RichText/Media_Card","content":"{\"rootMessageId\":\"m7\",\"body\":\"hi\"}"}"#,
+        );
+        assert_eq!(message_parent_id(&m).as_deref(), Some("m7"));
+        // Content-embedded attr form.
+        assert_eq!(
+            parent_id_from_content(r#"<msg rootMessageId="m5">hi</msg>"#).as_deref(),
+            Some("m5")
+        );
+    }
+
+    #[test]
+    fn channel_parent_missing_is_none_never_crash() {
+        let m = native(r#"{"id":"m1","content":"<p>plain</p>"}"#);
+        assert_eq!(message_parent_id(&m), None);
+        // Empty / null / numeric-adjacent shapes.
+        let m = native(
+            r#"{"id":"m1","content":"<p>x</p>","rootMessageId":"  "}"#,
+        );
+        assert_eq!(message_parent_id(&m), None);
+        let m = native(r#"{"id":"m1","content":"<p>x</p>","rootMessageId":null}"#);
+        assert_eq!(message_parent_id(&m), None);
+        assert_eq!(parent_id_from_content(""), None);
+        assert_eq!(parent_id_from_content("<p>no keys here</p>"), None);
+        assert_eq!(parent_id_from_content(r#"rootMessageId="m1"#), None);
     }
 }

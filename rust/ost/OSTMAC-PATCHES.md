@@ -481,6 +481,41 @@ needing maintainer buy-in. Minor PRs stand alone; majors are separate PRs.
     a real team; wire shape per Graph create-team docs). TUI untouched
     (still builds).
 
+44. [minor] `src/api/chat.rs` — **channel reply parent mining
+    (om-lt2-quotelink lane)**. `NativeMessage` / `MessageProperties` gain
+    flattened `extra` maps (unknown wire fields survive deserialize);
+    `message_parent_id` mines the thread parent case-insensitively from
+    top-level → `properties.*` → content-embedded forms. Keys:
+    `rootMessageId` (native channel cards, H0 live probe in
+    om-channel-history) + `replyToId` (Graph channel shape) +
+    `parentMessageId` / `parentId` fallbacks; string values trim,
+    numbers stringify, null/empty drop. `parent_id_from_content` scans
+    Media_Card payloads byte-wise (`"key":"val"`, `key="val"`, `key:123`,
+    any quote/sep mix; unterminated drops, Unicode-safe). In
+    `read_messages_page` the quote `<guid>` parent still wins; the wire
+    parent is the fallback so channel threads (no quote block) ride
+    `reply_to` into the existing Swift quoteBlock. Self/blank parents
+    drop (corrupt-wire guard). Unit tests: top-level root/reply ids +
+    lowercase variant, properties nesting, content JSON + attr forms,
+    missing/empty/null/unterminated → None. Wire field confirmed during
+    lane: `rootMessageId` on channel cards (H0 probe note); `replyToId`
+    accepted per Graph chatMessage docs (channel-only, read-only parent
+    id). `backwardLink` confirmed NOT a parent signal (page cursor in
+    `_metadata`, unchanged). Swift surface (quote-link tap) is
+    Swift-only, no ledger item.
+
+45. [minor] `src/api/chat.rs` + `src/api/mod.rs` — **Graph 1:1 chat
+    create (om-lt5-person11 lane)**. New `one_to_one_create_path`
+    (`POST /me/chats`), `one_to_one_create_body` (oneOnOne + peer as
+    owner member), `parse_created_chat`, `create_one_to_one_chat_data`;
+    re-exported in `src/api/mod.rs`. Unit tests: create path/body +
+    created-chat parse. No existing-1:1 lookup (Graph mints a thread
+    per call — minimal path, dupes possible). Unverified live (no
+    signed-in runs in lane scope). Consumer: `ostmac-core`
+    `chat_create_one_to_one_json` + `ostmac_chat_create_one_to_one` FFI
+    (empty-user/null guards, unit-tested); Swift person-pick wiring is
+    Swift-only, no ledger item.
+
 ## Upstream PRs (2026-09-22, base 0892144; main red on sdp E0308 until #5)
 
 Minor (standalone modulo #5-first; merge in any order after):

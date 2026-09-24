@@ -773,7 +773,23 @@ public enum MessageRender {
         guard !posts.isEmpty, message.reply_to == nil, let raw = message.raw else {
             return renderText(for: message)
         }
-        return expandShortcodes(outsideText(fromRaw: raw))
+        let outside = expandShortcodes(outsideText(fromRaw: raw))
+        // Title-dup (om-lt3-titlededupe): Media_Card digests repeat the
+        // card title as the outside prose ("Digest" body + "Digest" row).
+        // Rows carry titles, so a dup outside line renders nothing (once).
+        if isTitleDup(outside, posts: posts) { return "" }
+        return outside
+    }
+
+    /// True when trimmed `text` equals a row title (case-insensitive):
+    /// the bubble would show the same string twice (text + row).
+    /// Equality only — prose merely containing a title still shows.
+    static func isTitleDup(_ text: String, posts: [BotPost]) -> Bool {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !t.isEmpty else { return false }
+        return posts.contains {
+            $0.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == t
+        }
     }
 
     /// Stripped text with `<attachment>…</attachment>` spans removed.

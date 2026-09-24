@@ -107,7 +107,8 @@ struct ChatTimelineView: View {
                                     onTogglePin: {
                                         pins.toggle(chatID: store.chatID, message: msg)
                                     },
-                                    chatID: store.chatID
+                                    chatID: store.chatID,
+                                    onQuoteJump: { jumpToQuote(proxy, id: $0) }
                                 )
                                 .id(msg.id)
                                 .onAppear {
@@ -388,6 +389,20 @@ struct ChatTimelineView: View {
         guard PinnedMessages.jumpTarget(pinID: id, messages: store.messages) != nil else { return }
         DispatchQueue.main.async {
             withAnimation { proxy.scrollTo(id, anchor: .center) }
+        }
+    }
+
+    /// Quote-strip tap (om-lt2-quotelink): jump to the quoted parent
+    /// when it is in the loaded window; evicted ids stay put (the
+    /// fallback line never calls this, but the guard keeps live
+    /// races safe — eviction between render and tap is a no-op).
+    private func jumpToQuote(_ proxy: ScrollViewProxy, id: String) {
+        let target = id.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !target.isEmpty,
+              store.messages.contains(where: { $0.id == target })
+        else { return }
+        DispatchQueue.main.async {
+            withAnimation { proxy.scrollTo(target, anchor: .center) }
         }
     }
 
