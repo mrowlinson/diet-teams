@@ -283,5 +283,9 @@ Skipped: ledger 17 reactions (wire shape NOT live-verified — confirm with
 ## Upstream PRs, wave 3 (2026-09-24, base 0892144)
 
 Minor (stacked: merge after the noted base; only the PR's top commit is new):
-- (p) read receipts (ledger 24, after #19 — needs `chat_put`;
+- (p) read receipts (ledger 25, after #19 — needs `chat_put`;
   #19 after #6): https://github.com/eisbaw/ost/pull/20
+- (r) F32 audio path + error split (ledger 26, after #7):
+  https://github.com/eisbaw/ost/pull/22
+Major (need maintainer buy-in):
+- (q) [major] calendar (ledger 24): https://github.com/eisbaw/ost/pull/21
