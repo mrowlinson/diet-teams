@@ -18,11 +18,11 @@
 //!
 //! Dropped for now: TUI, audio/video, call media.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use ost::auth::{AuthConfig, TokenStore};
@@ -72,8 +72,23 @@ pub(crate) fn string_to_c(s: String) -> *mut c_char {
     CString::new(s).map(|c| c.into_raw()).unwrap_or(std::ptr::null_mut())
 }
 
-pub(crate) fn rt() -> Result<tokio::runtime::Runtime, String> {
-    tokio::runtime::Runtime::new().map_err(|e| format!("runtime: {}", e))
+/// Process-wide shared tokio runtime. Callers keep per-call `block_on`;
+/// only the `Runtime::new` per-call cost is eliminated.
+pub(crate) fn rt() -> Result<&'static tokio::runtime::Runtime, String> {
+    static RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+    if let Some(r) = RT.get() {
+        return Ok(r);
+    }
+    // Rare race: two builders, one `set` wins, loser drops an idle runtime.
+    let r = tokio::runtime::Runtime::new().map_err(|e| format!("runtime: {}", e))?;
+    let _ = RT.set(r);
+    RT.get().ok_or_else(|| "runtime: init lost".to_string())
+}
+
+/// Shared HTTP client: one connection pool process-wide (owned by `ost`).
+/// `Client::clone` is cheap — clones share the pool.
+pub(crate) fn http() -> reqwest::Client {
+    ost::api::client::shared_http()
 }
 
 pub(crate) fn token_summary(cfg: &Config) -> serde_json::Value {
@@ -97,9 +112,9 @@ pub(crate) fn token_summary(cfg: &Config) -> serde_json::Value {
 // Status
 // ---------------------------------------------------------------------------
 
-/// JSON auth status. Pure read of the on-disk config, no network.
+/// JSON auth status. Pure read of the cached config, no network.
 pub fn status_json() -> String {
-    match Config::load() {
+    match Config::load_cached() {
         Ok(cfg) => {
             let summary = token_summary(&cfg);
             let signed_in = summary["aad"]["expired"] == false
@@ -155,7 +170,7 @@ pub fn device_start_json() -> String {
     let run = || -> Result<String, String> {
         let rt = rt()?;
         rt.block_on(async {
-            let http = reqwest::Client::new();
+            let http = http();
             let resp = http
                 .post(&device_url)
                 .form(&[("client_id", auth.client_id), ("scope", auth.scope)])
@@ -247,7 +262,7 @@ pub fn device_poll_json(session: &str) -> String {
         // Ok(value) = complete; Err((retryable, detail))
         let rt = rt().map_err(|e| (false, e))?;
         rt.block_on(async {
-            let http = reqwest::Client::new();
+            let http = http();
             let resp = http
                 .post(&token_url)
                 .form(&[
@@ -294,7 +309,7 @@ pub fn device_poll_json(session: &str) -> String {
             let save = (|| -> Result<(), String> {
                 let rt = rt()?;
                 rt.block_on(async {
-                    let mut cfg = Config::load().map_err(|e| e.to_string())?;
+                    let mut cfg = Config::load_cached().map_err(|e| e.to_string())?;
                     cfg.set_access_token(
                         t["access_token"].as_str().unwrap_or("").to_string(),
                         t["expires_in"].as_u64(),
@@ -314,7 +329,7 @@ pub fn device_poll_json(session: &str) -> String {
             }
             lock_sessions().remove(session);
             whoami_cache_clear(); // new sign-in may be a different user
-            let tokens = Config::load()
+            let tokens = Config::load_cached()
                 .map(|c| token_summary(&c))
                 .unwrap_or(json!({}));
             json!({"ok": true, "status": "complete", "tokens": tokens}).to_string()
@@ -346,7 +361,7 @@ pub fn refresh_json() -> String {
     };
     match run() {
         Ok(true) => {
-            let tokens = Config::load()
+            let tokens = Config::load_cached()
                 .map(|c| token_summary(&c))
                 .unwrap_or(json!({}));
             json!({"ok": true, "refreshed": true, "tokens": tokens}).to_string()
@@ -363,7 +378,7 @@ pub fn sign_out_json() -> String {
     browser_auth::clear_browser_sessions();
     whoami_cache_clear();
     let run = || -> Result<(), String> {
-        let mut cfg = Config::load().map_err(|e| e.to_string())?;
+        let mut cfg = Config::load_cached().map_err(|e| e.to_string())?;
         cfg.clear_tokens();
         cfg.save().map_err(|e| e.to_string())
     };
@@ -1116,11 +1131,88 @@ fn media_envelope(data: &[u8], content_type: &Option<String>) -> String {
     .to_string()
 }
 
+/// Media LRU caps: 64 URLs, 32 MB of envelopes. Chat media URLs are
+/// content-addressed object views (immutable per URL), so a session
+/// cache keyed by exact URL is behavior-preserving.
+pub const MEDIA_CACHE_MAX_ENTRIES: usize = 64;
+pub const MEDIA_CACHE_MAX_BYTES: usize = 32 * 1024 * 1024;
+
+struct MediaCache {
+    map: HashMap<String, String>,
+    order: VecDeque<String>,
+    bytes: usize,
+}
+
+impl MediaCache {
+    fn new() -> Self {
+        Self {
+            map: HashMap::new(),
+            order: VecDeque::new(),
+            bytes: 0,
+        }
+    }
+
+    fn get(&mut self, url: &str) -> Option<String> {
+        let hit = self.map.get(url)?.clone();
+        self.touch(url);
+        Some(hit)
+    }
+
+    fn put(&mut self, url: String, envelope: String) {
+        if self.map.contains_key(&url) {
+            self.touch(&url);
+            return;
+        }
+        let size = url.len() + envelope.len();
+        if size > MEDIA_CACHE_MAX_BYTES {
+            return; // single item over cap: never cache
+        }
+        while self.map.len() >= MEDIA_CACHE_MAX_ENTRIES
+            || self.bytes + size > MEDIA_CACHE_MAX_BYTES
+        {
+            match self.order.pop_front() {
+                Some(oldest) => {
+                    if let Some(ev) = self.map.remove(&oldest) {
+                        self.bytes -= oldest.len() + ev.len();
+                    }
+                }
+                None => break,
+            }
+        }
+        self.order.push_back(url.clone());
+        self.bytes += size;
+        self.map.insert(url, envelope);
+    }
+
+    fn touch(&mut self, url: &str) {
+        if let Some(pos) = self.order.iter().position(|u| u == url) {
+            self.order.remove(pos);
+            self.order.push_back(url.to_string());
+        }
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.map.len()
+    }
+
+    #[cfg(test)]
+    fn contains(&self, url: &str) -> bool {
+        self.map.contains_key(url)
+    }
+}
+
+fn media_cache() -> &'static Mutex<MediaCache> {
+    static M: OnceLock<Mutex<MediaCache>> = OnceLock::new();
+    M.get_or_init(|| Mutex::new(MediaCache::new()))
+}
+
 /// Fetch one inline-image URL as `{ok:true, data_base64, content_type?}`.
 /// Microsoft media hosts attach the Skype token; public hosts fetch without
 /// auth (see `ost::api::media`). Empty/non-https URLs are rejected before
 /// any network. Requires sign-in for auth'd hosts; unsigned yields
-/// `{ok:false}`. Caller frees.
+/// `{ok:false}`. Successes are LRU-cached by URL (64 URLs / 32 MB).
+/// Caller frees.
 pub fn media_fetch_json(url: &str) -> String {
     let u = url.trim();
     if u.is_empty() {
@@ -1128,6 +1220,13 @@ pub fn media_fetch_json(url: &str) -> String {
     }
     if !u.starts_with("https://") {
         return err_json("arg", "media URL must be https");
+    }
+    if let Some(hit) = media_cache()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(u)
+    {
+        return hit;
     }
     let run = || -> Result<String, String> {
         let rt = rt()?;
@@ -1142,7 +1241,14 @@ pub fn media_fetch_json(url: &str) -> String {
         })
     };
     match run() {
-        Ok(s) => s,
+        Ok(s) => {
+            // Cache only successes (same bytes the fetch returned).
+            media_cache()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .put(u.to_string(), s.clone());
+            s
+        }
         Err(e) => err_json("media", e),
     }
 }
@@ -2214,7 +2320,7 @@ pub fn note_append_json(page_id: &str, text: &str, group_id: Option<&str>) -> St
 // ---------------------------------------------------------------------------
 
 struct TrouterState {
-    rt: Arc<tokio::runtime::Runtime>,
+    rt: &'static tokio::runtime::Runtime,
     shutdown: Option<tokio::sync::oneshot::Sender<()>>,
     task: tokio::task::JoinHandle<()>,
     driver: Option<std::thread::JoinHandle<()>>,
@@ -2232,7 +2338,7 @@ pub fn trouter_start() -> c_int {
         return -1;
     }
     // Fail fast without usable tokens (else the loop retries forever).
-    match Config::load() {
+    match Config::load_cached() {
         Ok(cfg) => match cfg.get_skype_token() {
             Some(t) if !t.is_expired() => {}
             _ => return -2,
@@ -2242,7 +2348,7 @@ pub fn trouter_start() -> c_int {
     // UI-driven signaling: the bg loop must not auto-answer incoming
     // calls (ost honors this; invitations still reach event_hub).
     std::env::set_var("TEAMS_MANUAL_CALLS", "1");
-    let rt = match rt().map(Arc::new) {
+    let rt = match rt() {
         Ok(r) => r,
         Err(_) => return -3,
     };
@@ -2250,11 +2356,10 @@ pub fn trouter_start() -> c_int {
     let task = rt.spawn(async move {
         let _ = ost::trouter::connect_and_run().await;
     });
-    let rt2 = Arc::clone(&rt);
     let driver = std::thread::Builder::new()
         .name("ostmac-trouter".to_string())
         .spawn(move || {
-            let _ = rt2.block_on(async move {
+            let _ = rt.block_on(async move {
                 let _ = shutdown_rx.await;
             });
         })
@@ -2270,14 +2375,34 @@ pub fn trouter_start() -> c_int {
     0
 }
 
-/// Drain queued Trouter events as `{ok:true, events:[...]}` (raw JSON strings).
+/// Max events drained per poll. 256 of the 1024 hub cap: a full burst
+/// clears in 4 ticks instead of 16; `backlog` tells the host more waits.
+pub const TROUTER_DRAIN_MAX: usize = 256;
+
+/// Drain queued Trouter events as `{ok:true, events:[...], backlog:n}`
+/// (raw JSON strings; `backlog` = still queued after this drain).
 pub fn trouter_poll_json() -> String {
-    let events = ost::event_hub::drain(64);
+    let events = ost::event_hub::drain(TROUTER_DRAIN_MAX);
+    let backlog = ost::event_hub::len();
     let parsed: Vec<serde_json::Value> = events
         .iter()
         .map(|e| serde_json::from_str(e).unwrap_or(json!({"raw": e})))
         .collect();
-    json!({"ok": true, "events": parsed}).to_string()
+    json!({"ok": true, "events": parsed, "backlog": backlog}).to_string()
+}
+
+/// Blocking variant of [`trouter_poll_json`]: waits up to `timeout_ms`
+/// for the first event instead of returning empty immediately, so the
+/// host can sleep instead of waking on a fixed timer. Same envelope.
+/// `timeout_ms == 0` polls without waiting.
+pub fn trouter_poll_wait_json(timeout_ms: u64) -> String {
+    let events = ost::event_hub::drain_wait(TROUTER_DRAIN_MAX, timeout_ms);
+    let backlog = ost::event_hub::len();
+    let parsed: Vec<serde_json::Value> = events
+        .iter()
+        .map(|e| serde_json::from_str(e).unwrap_or(json!({"raw": e})))
+        .collect();
+    json!({"ok": true, "events": parsed, "backlog": backlog}).to_string()
 }
 
 /// Drain queued Trouter events as typed realtime messages.
@@ -2293,10 +2418,12 @@ pub fn trouter_poll_json() -> String {
 /// invitations / remote ends (also recorded in the call slot). `typing`
 /// carries typing indicators (held per thread with a timeout, never bubbles).
 /// `roster` carries meeting-roster snapshots (upserted in place by id,
-/// never a list refresh).
+/// never a list refresh). `backlog` counts events still queued after
+/// this drain (256/tick of the 1024 hub cap).
 /// NOTE: drains the same queue as [`trouter_poll_json`] — use one consumer.
 pub fn trouter_poll_typed_json() -> String {
-    let events = ost::event_hub::drain(64);
+    let events = ost::event_hub::drain(TROUTER_DRAIN_MAX);
+    let backlog = ost::event_hub::len();
     let mut values = Vec::with_capacity(events.len());
     let mut unparseable = 0usize;
     for e in &events {
@@ -2307,7 +2434,7 @@ pub fn trouter_poll_typed_json() -> String {
     }
     let mut batch = realtime::parse_batch(&values);
     batch.skipped += unparseable;
-    let call_events = calls::scan_events(&events);
+    let call_events = calls::scan_values(&values);
     json!({
         "ok": true,
         "messages": batch.messages,
@@ -2316,6 +2443,7 @@ pub fn trouter_poll_typed_json() -> String {
         "calls": call_events,
         "typing": batch.typing,
         "roster": batch.roster,
+        "backlog": backlog,
     })
     .to_string()
 }
@@ -3048,6 +3176,13 @@ pub extern "C" fn ostmac_trouter_poll() -> *mut c_char {
     string_to_c(trouter_poll_json())
 }
 
+/// Blocking poll: waits up to `timeout_ms` for events. Same envelope
+/// as [`trouter_poll_json`]. Call off the main thread. Caller frees.
+#[no_mangle]
+pub extern "C" fn ostmac_trouter_poll_wait(timeout_ms: u64) -> *mut c_char {
+    string_to_c(trouter_poll_wait_json(timeout_ms))
+}
+
 /// Drain queued Trouter events as typed realtime messages.
 /// See [`trouter_poll_typed_json`]. Caller frees with [`ostmac_free`].
 #[no_mangle]
@@ -3260,6 +3395,20 @@ pub extern "C" fn ostmac_free(s: *mut c_char) {
     }
 }
 
+/// Free a byte payload from any `*_bytes` poll call. Null-safe; `len`
+/// must be the length the poll reported.
+#[no_mangle]
+pub extern "C" fn ostmac_bytes_free(ptr: *mut u8, len: usize) {
+    if ptr.is_null() {
+        return;
+    }
+    unsafe {
+        drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(
+            ptr, len,
+        )));
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests (deterministic: no network, no sign-in dependency)
 // ---------------------------------------------------------------------------
@@ -3267,6 +3416,24 @@ pub extern "C" fn ostmac_free(s: *mut c_char) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Serializes hub-touching tests: the hub is process-global, so
+    /// parallel publish/drain across tests races. Hold the guard for
+    /// the whole test body.
+    fn hub_test_guard() -> std::sync::MutexGuard<'static, ()> {
+        static H: OnceLock<Mutex<()>> = OnceLock::new();
+        H.get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+    }
+
+    #[test]
+    fn shared_runtime_reused_across_calls() {
+        // Perf guard (no timings): rt() must hand out one shared runtime.
+        let a = rt().unwrap() as *const tokio::runtime::Runtime;
+        let b = rt().unwrap() as *const tokio::runtime::Runtime;
+        assert_eq!(a, b, "rt() must return the process-wide shared runtime");
+    }
 
     #[test]
     fn status_envelope_has_expected_keys() {
@@ -3599,6 +3766,53 @@ mod tests {
         let untyped: serde_json::Value =
             serde_json::from_str(&media_envelope(&[], &None)).unwrap();
         assert!(untyped["content_type"].is_null());
+    }
+
+    #[test]
+    fn media_cache_lru_evicts_oldest_over_entry_cap() {
+        let mut c = MediaCache::new();
+        for i in 0..MEDIA_CACHE_MAX_ENTRIES {
+            c.put(format!("https://h/{i}"), "e".to_string());
+        }
+        assert_eq!(c.len(), MEDIA_CACHE_MAX_ENTRIES);
+        c.put("https://h/new".to_string(), "e".to_string());
+        assert_eq!(c.len(), MEDIA_CACHE_MAX_ENTRIES);
+        assert!(!c.contains("https://h/0"));
+        assert!(c.contains("https://h/new"));
+    }
+
+    #[test]
+    fn media_cache_touch_keeps_hot_entry() {
+        let mut c = MediaCache::new();
+        for i in 0..MEDIA_CACHE_MAX_ENTRIES {
+            c.put(format!("https://h/{i}"), "e".to_string());
+        }
+        assert!(c.get("https://h/0").is_some()); // touch oldest
+        c.put("https://h/new".to_string(), "e".to_string());
+        assert!(c.contains("https://h/0")); // survived
+        assert!(!c.contains("https://h/1")); // evicted instead
+    }
+
+    #[test]
+    fn media_cache_rejects_single_item_over_byte_cap() {
+        let mut c = MediaCache::new();
+        c.put(
+            "https://h/big".to_string(),
+            "x".repeat(MEDIA_CACHE_MAX_BYTES + 1),
+        );
+        assert_eq!(c.len(), 0);
+    }
+
+    #[test]
+    fn media_fetch_serves_cached_url_without_network() {
+        // .invalid never resolves: a pass proves the hit path (no runtime).
+        let url = "https://cache-probe.invalid/s5-hit.png";
+        let envelope = media_envelope(&[1, 2, 3], &Some("image/png".to_string()));
+        media_cache()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .put(url.to_string(), envelope.clone());
+        assert_eq!(media_fetch_json(url), envelope);
     }
 
     #[test]
@@ -4015,6 +4229,7 @@ mod tests {
 
     #[test]
     fn trouter_poll_empty_envelope() {
+        let _hub = hub_test_guard();
         let _ = ost::event_hub::drain(1024); // isolate from other tests
         let v: serde_json::Value = serde_json::from_str(&trouter_poll_json()).unwrap();
         assert_eq!(v["ok"], true);
@@ -4023,6 +4238,7 @@ mod tests {
 
     #[test]
     fn trouter_event_roundtrip() {
+        let _hub = hub_test_guard();
         let _ = ost::event_hub::drain(1024);
         ost::event_hub::publish(r#"{"kind":"ping","n":1}"#.to_string());
         let v: serde_json::Value = serde_json::from_str(&trouter_poll_json()).unwrap();
@@ -4038,7 +4254,30 @@ mod tests {
     }
 
     #[test]
+    fn trouter_poll_backlog_and_wait_zero_timeout() {
+        let _hub = hub_test_guard();
+        // Single test: hub is global, parallel hub tests would race.
+        let _ = ost::event_hub::drain(1024); // isolate from other tests
+        for i in 0..300 {
+            ost::event_hub::publish(format!("{{\"i\":{i}}}"));
+        }
+        let v: serde_json::Value = serde_json::from_str(&trouter_poll_json()).unwrap();
+        assert_eq!(v["events"].as_array().unwrap().len(), TROUTER_DRAIN_MAX);
+        assert_eq!(
+            v["backlog"].as_u64().unwrap(),
+            300 - TROUTER_DRAIN_MAX as u64
+        );
+        let _ = ost::event_hub::drain(1024); // don't leak into neighbors
+
+        ost::event_hub::publish(r#"{"kind":"w"}"#.to_string());
+        let v: serde_json::Value = serde_json::from_str(&trouter_poll_wait_json(0)).unwrap();
+        assert_eq!(v["events"].as_array().unwrap().len(), 1);
+        assert_eq!(v["backlog"].as_u64().unwrap(), 0);
+    }
+
+    #[test]
     fn typed_poll_message_and_loss_and_skip() {
+        let _hub = hub_test_guard();
         let _ = ost::event_hub::drain(1024);
         // Captured wire shape: socket.io v1 envelope, name + args.
         ost::event_hub::publish(
@@ -4083,6 +4322,7 @@ mod tests {
 
     #[test]
     fn typed_poll_carries_typing_events() {
+        let _hub = hub_test_guard();
         let _ = ost::event_hub::drain(1024);
         ost::event_hub::publish(
             r#"{"name":"notify","args":[{
@@ -4106,6 +4346,7 @@ mod tests {
 
     #[test]
     fn typed_poll_carries_roster_events() {
+        let _hub = hub_test_guard();
         let _ = ost::event_hub::drain(1024);
         ost::event_hub::publish(
             r#"{"name":"conversation/rosterUpdate","args":[{
@@ -4133,6 +4374,7 @@ mod tests {
 
     #[test]
     fn typed_poll_edit_detection() {
+        let _hub = hub_test_guard();
         let _ = ost::event_hub::drain(1024);
         ost::event_hub::publish(
             r#"{"content":"fixed","messagetype":"RichText/Edit",
@@ -4283,6 +4525,7 @@ mod tests {
 
     #[test]
     fn typed_poll_carries_calls() {
+        let _hub = hub_test_guard();
         let _t = calls::test_lock();
         let _ = ost::event_hub::drain(1024);
         ost::event_hub::publish(
@@ -4599,6 +4842,7 @@ mod tests {
 
     #[test]
     fn typed_poll_id_fallback_is_stable() {
+        let _hub = hub_test_guard();
         let _ = ost::event_hub::drain(1024);
         let raw = r#"{"content":"x","messagetype":"Text","from":"8:x","threadId":"19:t@thread.v2"}"#;
         ost::event_hub::publish(raw.to_string());
@@ -4613,6 +4857,7 @@ mod tests {
 
     #[test]
     fn typed_poll_carries_sender_mri() {
+        let _hub = hub_test_guard();
         let _ = ost::event_hub::drain(1024);
         // Display name wins for `sender`; raw `from` MRI lands in sender_id.
         ost::event_hub::publish(
@@ -4726,6 +4971,7 @@ mod tests {
             modified: None,
             sender: None,
             is_folder: true,
+            share_url: None,
             attachment_id: None,
         };
         let v = shared_file_to_json(&f);

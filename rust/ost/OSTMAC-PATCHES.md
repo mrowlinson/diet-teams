@@ -387,6 +387,27 @@ needing maintainer buy-in. Minor PRs stand alone; majors are separate PRs.
     chat; session wire shape per Graph resumable-upload docs). TUI
     untouched (still builds).
 
+38. [minor] `src/api/client.rs` + `src/auth/skype.rs` + `src/trouter/mod.rs` —
+    **shared reqwest pool (om-s1-rtshare lane)**. New
+    `api::client::shared_http()` (`OnceLock` process-wide `Client`;
+    `Client::clone` shares the pool); `TeamsClient::new`, skype token
+    exchange, and the trouter registrar use it (was: `Client::new()` per
+    call, no TLS connection reuse). Same requests, same results. TUI
+    untouched.
+
+39. [minor] `src/config/mod.rs` + `src/event_hub.rs` + `src/api/client.rs` +
+    `src/auth/oauth.rs` + `src/trouter/mod.rs` + `src/calling/call_test.rs` —
+    **in-memory config cache + blocking event wait (om-s5-cachepoll
+    lane)**. `Config::load_cached` reuses an in-memory copy while the
+    file's (size, mtime) is unchanged; `save()` writes through the cache,
+    so in-process updates stay coherent and external writers are picked
+    up on mtime change. Same results as `load`, no disk read + TOML parse
+    on hits. Call sites (`TeamsClient::new`, oauth, trouter registrar,
+    call test) use `load_cached`. `event_hub` gains
+    `drain_wait(max, timeout_ms)` (condvar; wakes on `publish`, timeout
+    yields whatever is queued) and `len()` for backlog reporting. TUI
+    untouched.
+
 ## Upstream PRs (2026-09-22, base 0892144; main red on sdp E0308 until #5)
 
 Minor (standalone modulo #5-first; merge in any order after):

@@ -78,7 +78,7 @@ pub async fn connect_and_run() -> Result<()> {
 /// `DisconnectReason::Error` when the connection should be retried.
 async fn connect_and_run_inner() -> Result<DisconnectReason> {
     // Reload config each attempt so we pick up refreshed tokens.
-    let config = Config::load().context("Failed to load config")?;
+    let config = Config::load_cached().context("Failed to load config")?;
 
     let skype_token = config
         .get_skype_token()
@@ -89,7 +89,7 @@ async fn connect_and_run_inner() -> Result<DisconnectReason> {
     );
 
     let skype_token_str = &skype_token.token;
-    let http = reqwest::Client::new();
+    let http = crate::api::client::shared_http();
 
     // 1. Negotiate session (returns session info + epid)
     let (session, epid) = session::negotiate(&http, skype_token_str).await?;

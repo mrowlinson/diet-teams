@@ -31,15 +31,14 @@ final class AvTests: XCTestCase {
         XCTAssertEqual(v.fps_actual, 14.5)
     }
 
-    func testRemotePollNullAndFrame() throws {
-        let n = try JSONDecoder().decode(
-            RemotePoll.self, from: Data(#"{"ok":true,"frame":null}"#.utf8))
+    func testRemotePollNullAndFrame() {
+        let n = RemotePoll(ok: true, frame: nil)
         XCTAssertNil(n.frame)
-        let f = try JSONDecoder().decode(
-            RemotePoll.self,
-            from: Data(#"{"ok":true,"frame":{"width":2,"height":2,"data":"QUJD"}}"#.utf8))
+        let f = RemotePoll(
+            ok: true,
+            frame: RemoteFrame(width: 2, height: 2, data: Data([0x41, 0x42, 0x43])))
         XCTAssertEqual(f.frame?.width, 2)
-        XCTAssertEqual(f.frame?.data, "QUJD")
+        XCTAssertEqual(f.frame?.data, Data([0x41, 0x42, 0x43]))
     }
 
     func testDryRunDecode() throws {
@@ -90,7 +89,7 @@ final class AvTests: XCTestCase {
         let p = try RustCore.videoPollRemote()
         XCTAssertEqual(p.frame?.width, 64)
         XCTAssertEqual(p.frame?.height, 64)
-        XCTAssertEqual(p.frame?.data, i420.base64EncodedString())
+        XCTAssertEqual(p.frame?.data, i420)
         XCTAssertNil(try RustCore.videoPollRemote().frame) // drains
     }
 

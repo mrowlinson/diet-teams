@@ -370,11 +370,11 @@ public final class ScreenShareModel: NSObject, ObservableObject {
         session.didFail("stream ended")
     }
 
-    /// One captured frame: publish the preview + Diagnostics counters.
-    fileprivate func noteFrame(image: CGImage, sent: Bool) {
+    /// One publish tick: the latest preview + exact coalesced counters.
+    fileprivate func noteFrame(image: CGImage, captured: Int, sent: Int) {
         preview = image
-        framesCaptured += 1
-        if sent { framesSent += 1 }
+        framesCaptured += captured
+        framesSent += sent
     }
 
     /// Filter -> pure source descriptor (style + content-rect size; SCK
@@ -423,12 +423,32 @@ extension ScreenShareModel: SCStreamDelegate {
 
 // MARK: - Frame sink (sample queue)
 
+/// Preview-publish gate: the first frame publishes immediately, then at
+/// most every 250ms (4Hz). Counters stay exact — the sink coalesces the
+/// frames between ticks. Pure (unit-tested).
+public enum SharePreviewGate {
+    public static let minIntervalMs: UInt64 = 250
+
+    public static func shouldPublish(nowMs: UInt64, lastMs: UInt64?) -> Bool {
+        guard let lastMs else { return true }
+        return nowMs &- lastMs >= minIntervalMs
+    }
+
+    static func nowMs() -> UInt64 {
+        DispatchTime.now().uptimeNanoseconds / 1_000_000
+    }
+}
+
 /// Queue-side SCK output: complete frames -> preview CGImage + optional
 /// VT-encode + send-queue push. Publish hops to main via the weak owner.
 private final class ShareFrameSink: NSObject, SCStreamOutput, @unchecked Sendable {
     private weak var owner: ScreenShareModel?
     private let box: ShareEncoderBox
     private let flag: ShareLiveFlag
+    /// Publish coalescing (sample queue only — the queue is serial).
+    private var lastPublishMs: UInt64?
+    private var pendingCaptured = 0
+    private var pendingSent = 0
 
     init(owner: ScreenShareModel, box: ShareEncoderBox, flag: ShareLiveFlag) {
         self.owner = owner
@@ -458,7 +478,7 @@ private final class ShareFrameSink: NSObject, SCStreamOutput, @unchecked Sendabl
             CVPixelBufferLockBaseAddress(pixels, .readOnly)
             defer { CVPixelBufferUnlockBaseAddress(pixels, .readOnly) }
             guard let base = CVPixelBufferGetBaseAddress(pixels) else {
-                publish(image: image, sent: false)
+                note(image: image, sent: false)
                 return
             }
             let stride = CVPixelBufferGetBytesPerRow(pixels)
@@ -478,12 +498,28 @@ private final class ShareFrameSink: NSObject, SCStreamOutput, @unchecked Sendabl
                 // (the engine falls back to black IDR when idle).
             }
         }
-        publish(image: image, sent: sent)
+        note(image: image, sent: sent)
     }
 
-    private func publish(image: CGImage, sent: Bool) {
+    /// Count every frame; publish the latest preview at most 4Hz.
+    private func note(image: CGImage, sent: Bool) {
+        pendingCaptured += 1
+        if sent { pendingSent += 1 }
+        let now = SharePreviewGate.nowMs()
+        guard SharePreviewGate.shouldPublish(nowMs: now, lastMs: lastPublishMs) else {
+            return
+        }
+        lastPublishMs = now
+        let captured = pendingCaptured
+        let sentCount = pendingSent
+        pendingCaptured = 0
+        pendingSent = 0
+        publish(image: image, captured: captured, sent: sentCount)
+    }
+
+    private func publish(image: CGImage, captured: Int, sent: Int) {
         Task { @MainActor [weak owner = self.owner] in
-            owner?.noteFrame(image: image, sent: sent)
+            owner?.noteFrame(image: image, captured: captured, sent: sent)
         }
     }
 }

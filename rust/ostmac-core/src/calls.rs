@@ -32,7 +32,7 @@ use ost::calling::{
 use ost::config::Config;
 use ost::trouter::{registrar, session, websocket};
 
-use crate::{err_json, now_secs, rt, whoami_json};
+use crate::{err_json, http, now_secs, rt, whoami_json};
 
 // ---------------------------------------------------------------------------
 // State
@@ -406,10 +406,22 @@ fn note_failed(detail: String) -> Option<String> {
 /// Scan drained Trouter event strings for call frames. Called from the
 /// typed poll (same drain, no stealing): invitations update the call slot
 /// and surface as `{kind:"incoming"}`; callEnd/rejection frames close it.
+/// Parses each string once, then delegates to [`scan_values`].
 pub fn scan_events(raw: &[String]) -> Vec<CallEvent> {
+    let values: Vec<serde_json::Value> = raw
+        .iter()
+        .filter_map(|e| serde_json::from_str(e).ok())
+        .collect();
+    scan_values(&values)
+}
+
+/// Scan already-parsed Trouter event values for call frames. Same output
+/// as [`scan_events`] with zero re-parses: object nests are matched in
+/// place; only genuinely stringified nests are parsed (once each).
+pub fn scan_values(values: &[serde_json::Value]) -> Vec<CallEvent> {
     let mut out = Vec::new();
-    for e in raw {
-        if let Some(n) = find_invitation(e) {
+    for v in values {
+        if let Some(n) = find_invitation_value(v) {
             let (call_id, peer, peer_name, _) = invitation_summary(&n);
             let (info, fresh) = note_incoming(n);
             if fresh {
@@ -423,15 +435,14 @@ pub fn scan_events(raw: &[String]) -> Vec<CallEvent> {
             }
             continue;
         }
-        // Non-invitation call frames: top level or inside args[].
-        let mut vals = Vec::new();
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(e) {
-            if let Some(args) = v.get("args").and_then(|a| a.as_array()) {
-                vals.extend(args.iter().cloned());
-            }
-            vals.push(v);
+        // Non-invitation call frames: args[] first, then top level.
+        // Borrows only: no clones, no re-parse.
+        let mut cands: Vec<&serde_json::Value> = Vec::new();
+        if let Some(args) = v.get("args").and_then(|a| a.as_array()) {
+            cands.extend(args.iter());
         }
-        for v in &vals {
+        cands.push(v);
+        for v in cands {
             if let Some(t) = end_text(v) {
                 if let Some(id) = note_end(Some(t.clone())) {
                     out.push(CallEvent {
@@ -461,35 +472,52 @@ pub fn scan_events(raw: &[String]) -> Vec<CallEvent> {
     out
 }
 
-/// Invitation hunt: whole frame, then args[]/body/data/resource nests
-/// (5::: event JSON wraps the payload in several observed shapes).
-fn find_invitation(raw: &str) -> Option<CallNotification> {
-    if let Some(n) = parse_call_notification(raw) {
+/// Invitation hunt on a parsed frame: whole value, then
+/// args[]/body/data/resource nests (5::: event JSON wraps the payload in
+/// several observed shapes). Object nests match in place; string nests
+/// parse once. Same hits as the old string form, minus re-serializes.
+fn find_invitation_value(v: &serde_json::Value) -> Option<CallNotification> {
+    if let Some(n) = notification_from_value(v) {
         return Some(n);
     }
-    let v: serde_json::Value = serde_json::from_str(raw).ok()?;
     if let Some(args) = v.get("args").and_then(|a| a.as_array()) {
         for a in args {
-            let s = if let Some(s) = a.as_str() {
-                s.to_string()
-            } else {
-                a.to_string()
+            let hit = match a.as_str() {
+                Some(s) => parse_call_notification(s),
+                None => notification_from_value(a),
             };
-            if let Some(n) = parse_call_notification(&s) {
-                return Some(n);
+            if hit.is_some() {
+                return hit;
             }
         }
     }
     for key in ["body", "data", "resource"] {
         if let Some(inner) = v.get(key) {
-            let s = if let Some(s) = inner.as_str() {
-                s.to_string()
-            } else {
-                inner.to_string()
+            let hit = match inner.as_str() {
+                Some(s) => parse_call_notification(s),
+                None => notification_from_value(inner),
             };
-            if let Some(n) = parse_call_notification(&s) {
-                return Some(n);
+            if hit.is_some() {
+                return hit;
             }
+        }
+    }
+    None
+}
+
+/// Value form of `ost::calling::parse_call_notification` (kept local so
+/// `ost` stays untouched): top-level `callInvitation`, or a stringified
+/// (`parse` once) or object `body` nest carrying one.
+fn notification_from_value(v: &serde_json::Value) -> Option<CallNotification> {
+    if v.get("callInvitation").is_some() {
+        return serde_json::from_value(v.clone()).ok();
+    }
+    if let Some(body) = v.get("body") {
+        if let Some(s) = body.as_str() {
+            return parse_call_notification(s);
+        }
+        if body.get("callInvitation").is_some() {
+            return serde_json::from_value(body.clone()).ok();
         }
     }
     None
@@ -500,7 +528,7 @@ fn find_invitation(raw: &str) -> Option<CallNotification> {
 // ---------------------------------------------------------------------------
 
 fn skype_token_string() -> Result<String, String> {
-    let cfg = Config::load().map_err(|e| e.to_string())?;
+    let cfg = Config::load_cached().map_err(|e| e.to_string())?;
     cfg.get_skype_token()
         .filter(|t| !t.is_expired())
         .map(|t| t.token)
@@ -564,7 +592,7 @@ fn accept_inner(live: bool) -> String {
     let run = || -> Result<(bool, String, Option<crate::live::EngineParams>), String> {
         let rt = rt()?;
         rt.block_on(async {
-            let http = reqwest::Client::new();
+            let http = http();
             // Live: bind real media ports (+ bounded srflx) before answering.
             let live_socks = if live {
                 let audio_sock = tokio::net::UdpSocket::bind("0.0.0.0:0")
@@ -746,7 +774,7 @@ pub fn call_end_json() -> String {
     let run = || -> Result<(), String> {
         let rt = rt()?;
         rt.block_on(async {
-            let http = reqwest::Client::new();
+            let http = http();
             post_empty(&http, &skype, &url).await
         })
     };
@@ -798,7 +826,7 @@ pub fn call_record_inject_json() -> String {
     };
     let (id, controller, caller_mri, participant_id, endpoint_id, thread_id, display_name, surl) =
         stored;
-    let cfg = Config::load().map_err(|e| e.to_string());
+    let cfg = Config::load_cached().map_err(|e| e.to_string());
     let cfg = match cfg {
         Ok(c) => c,
         Err(e) => return err_json("auth", e),
@@ -820,7 +848,7 @@ pub fn call_record_inject_json() -> String {
     let run = || -> Result<usize, String> {
         let rt = rt()?;
         rt.block_on(async {
-            let http = reqwest::Client::new();
+            let http = http();
             let params = recording::RecordingParams {
                 caller_mri: &caller_mri,
                 participant_id: &participant_id,
@@ -990,7 +1018,7 @@ fn place_inner(
             );
         }
     }
-    let cfg = match Config::load() {
+    let cfg = match Config::load_cached() {
         Ok(c) => c,
         Err(e) => return err_json("auth", format!("config: {}", e)),
     };
@@ -1092,7 +1120,7 @@ fn place_inner(
     > {
         let r = rt()?;
         r.block_on(async {
-            let http = reqwest::Client::new();
+            let http = http();
             // Trouter leg for the answer wait.
             let (sess, epid) = session::negotiate(&http, &skype)
                 .await
@@ -1447,6 +1475,45 @@ mod tests {
             "not json".to_string(),
         ]);
         assert!(ev.is_empty());
+        clear_current();
+    }
+
+    #[test]
+    fn scan_values_matches_scan_events() {
+        // Parse-once guard: the Values path must emit exactly what the
+        // string path emits across every nest shape (counts, no timings).
+        let _t = test_lock();
+        let invite_obj: serde_json::Value = serde_json::from_str(INVITE).unwrap();
+        let seq = vec![
+            INVITE.to_string(),
+            format!(
+                r#"{{"name":"notify","args":[{}]}}"#,
+                INVITE.replace('\n', " ")
+            ),
+            serde_json::json!({"name": "notify", "args": [INVITE]}).to_string(),
+            serde_json::json!({"body": invite_obj.clone()}).to_string(),
+            serde_json::json!({"body": INVITE}).to_string(),
+            serde_json::json!({"data": invite_obj}).to_string(),
+            r#"{"callEnd":{"code":200,"subCode":0,"phrase":"OK"}}"#.to_string(),
+            r#"{"name":"trouter.connected","args":[]}"#.to_string(),
+            "not json".to_string(),
+        ];
+        clear_current();
+        let a = scan_events(&seq);
+        let va: Vec<serde_json::Value> =
+            a.iter().map(|e| serde_json::to_value(e).unwrap()).collect();
+        clear_current();
+        let values: Vec<serde_json::Value> = seq
+            .iter()
+            .filter_map(|s| serde_json::from_str(s).ok())
+            .collect();
+        let b = scan_values(&values);
+        let vb: Vec<serde_json::Value> =
+            b.iter().map(|e| serde_json::to_value(e).unwrap()).collect();
+        assert_eq!(va, vb);
+        assert_eq!(va.len(), 2); // incoming + end; dups parked, noise silent
+        assert_eq!(va[0]["kind"], "incoming");
+        assert_eq!(va[1]["kind"], "end");
         clear_current();
     }
 

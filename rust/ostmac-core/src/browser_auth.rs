@@ -297,7 +297,7 @@ pub fn authcode_complete_json(session: &str, callback: &str) -> String {
     let run = || -> Result<(String, String, Option<u64>), String> {
         let r = crate::rt()?;
         r.block_on(async {
-            let http = reqwest::Client::new();
+            let http = crate::http();
             let resp = http
                 .post(&token_url)
                 .form(&[
@@ -349,7 +349,7 @@ pub fn authcode_complete_json(session: &str, callback: &str) -> String {
         let r = crate::rt()?;
         r.block_on(async {
             let mut cfg =
-                ost::config::Config::load().map_err(|e| e.to_string())?;
+                ost::config::Config::load_cached().map_err(|e| e.to_string())?;
             cfg.set_access_token(access, expires_in);
             if !refresh.is_empty() {
                 cfg.set_refresh_token(refresh);
@@ -358,7 +358,7 @@ pub fn authcode_complete_json(session: &str, callback: &str) -> String {
             let _ = ost::auth::oauth::refresh().await;
             Ok::<(), String>(())
         })?;
-        ost::config::Config::load()
+        ost::config::Config::load_cached()
             .map(|c| crate::token_summary(&c))
             .map_err(|e| e.to_string())
     })();

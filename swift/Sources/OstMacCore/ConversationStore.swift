@@ -65,24 +65,39 @@ public final class ConversationStore: ObservableObject {
     public nonisolated static let openMaxPages = 3
     public nonisolated static let dayLoadMaxPages = 4
 
+    /// Shared stamp parsers (om-s6-renderparse): one static set replaces
+    /// the per-call allocs (same options, same results).
+    private static let isoFrac: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+
+    private static let isoPlain: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
+
+    private static let isoFallback: DateFormatter = {
+        let g = DateFormatter()
+        g.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+        g.timeZone = TimeZone(secondsFromGMT: 0)
+        g.locale = Locale(identifier: "en_US_POSIX")
+        return g
+    }()
+
     /// Tolerant ISO8601 parse for server stamps (fractional
     /// "…T12:53:06.9690000Z" and plain "…T12:53:06Z"). Nil for
     /// garbage/empty (callers stop paging — never spin on it).
     public static func messageDate(_ iso: String) -> Date? {
         let t = iso.trimmingCharacters(in: .whitespaces)
         guard !t.isEmpty else { return nil }
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let d = f.date(from: t) { return d }
-        f.formatOptions = [.withInternetDateTime]
-        if let d = f.date(from: t) { return d }
+        if let d = isoFrac.date(from: t) { return d }
+        if let d = isoPlain.date(from: t) { return d }
         // Last resort: "yyyy-MM-dd'T'HH:mm:ss" prefix in UTC.
         guard t.count >= 19 else { return nil }
-        let g = DateFormatter()
-        g.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
-        g.timeZone = TimeZone(secondsFromGMT: 0)
-        g.locale = Locale(identifier: "en_US_POSIX")
-        return g.date(from: String(t.prefix(19)))
+        return isoFallback.date(from: String(t.prefix(19)))
     }
 
     /// True once the loaded slice reaches past the window: oldest
@@ -357,6 +372,13 @@ public final class ConversationStore: ObservableObject {
     public func quotedParent(for message: ChatMessage) -> ChatMessage? {
         guard let parentID = message.reply_to else { return nil }
         return messages.first(where: { $0.id == parentID })
+    }
+
+    /// Indexed quote lookup (om-s6-renderparse): same answer as the
+    /// linear scan, O(1) against a body-eval `MessageIndex`.
+    public func quotedParent(for message: ChatMessage, in index: MessageIndex) -> ChatMessage? {
+        guard let parentID = message.reply_to else { return nil }
+        return index.byID[parentID]
     }
 
     /// One-line quote preview: collapsed whitespace, 120 chars + `…`.
@@ -676,9 +698,7 @@ public final class ConversationStore: ObservableObject {
     }
 
     static func nowISO() -> String {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime]
-        return f.string(from: Date())
+        isoPlain.string(from: Date())
     }
 
     // MARK: - Demo mode (canned messages for offline shots)
@@ -743,9 +763,7 @@ public final class ConversationStore: ObservableObject {
 
     public nonisolated static func richDemoMessages(now: Date = Date()) -> [ChatMessage] {
         func iso(_ d: Date) -> String {
-            let f = ISO8601DateFormatter()
-            f.formatOptions = [.withInternetDateTime]
-            return f.string(from: d)
+            isoPlain.string(from: d)
         }
         func at(dayOffset: Int, h: Int, m: Int) -> Date {
             var cal = Calendar.current

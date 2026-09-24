@@ -72,25 +72,56 @@ public enum ChatListFormat {
         }
     }
 
+    // Shared parsers (om-s6-renderparse): one static pair replaces the
+    // per-row allocs (same options, same results).
+    private static let isoFrac: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+
+    private static let isoPlain: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
+
     // Core emits Teams ISO-8601 (`original_arrival_time`/`compose_time`),
     // with or without fractional seconds.
     static func parse(_ s: String) -> Date? {
-        for options: ISO8601DateFormatter.Options in [
-            [.withInternetDateTime, .withFractionalSeconds],
-            [.withInternetDateTime],
-        ] {
-            let f = ISO8601DateFormatter()
-            f.formatOptions = options
-            if let d = f.date(from: s) { return d }
-        }
+        if let d = isoFrac.date(from: s) { return d }
+        if let d = isoPlain.date(from: s) { return d }
         return nil
     }
 
+    /// Shared row stylers (om-s6-renderparse): one locked formatter per
+    /// row format, timezone set per call (same strings, no allocs).
+    private static let styler = ChatRowStyler()
+
     private static func styled(_ date: Date, _ format: String, _ calendar: Calendar) -> String {
-        let f = DateFormatter()
-        f.dateFormat = format
-        f.locale = Locale(identifier: "en_US_POSIX")
-        f.timeZone = calendar.timeZone
+        styler.string(from: date, format: format, timeZone: calendar.timeZone)
+    }
+}
+
+/// Locked per-format row stylers (DateFormatter is not thread-safe).
+private final class ChatRowStyler {
+    private let lock = NSLock()
+    private var byFormat: [String: DateFormatter] = [:]
+
+    func string(from date: Date, format: String, timeZone: TimeZone) -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        let f: DateFormatter
+        if let hit = byFormat[format] {
+            f = hit
+        } else {
+            let fresh = DateFormatter()
+            fresh.dateFormat = format
+            fresh.locale = Locale(identifier: "en_US_POSIX")
+            byFormat[format] = fresh
+            f = fresh
+        }
+        f.timeZone = timeZone
         return f.string(from: date)
     }
 }

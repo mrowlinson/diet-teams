@@ -4,6 +4,8 @@
 
 use anyhow::{bail, Context, Result};
 
+use std::sync::OnceLock;
+
 use crate::auth::TokenStore;
 use crate::config::Config;
 
@@ -17,10 +19,17 @@ pub struct TeamsClient {
     config: Config,
 }
 
+/// Process-wide shared HTTP client: one connection pool for all calls.
+/// `Client::clone` is cheap — clones share the pool.
+pub fn shared_http() -> reqwest::Client {
+    static HTTP: OnceLock<reqwest::Client> = OnceLock::new();
+    HTTP.get_or_init(reqwest::Client::new).clone()
+}
+
 impl TeamsClient {
     /// Load config and build client. Attempts token refresh if AAD token is expired.
     pub async fn new() -> Result<Self> {
-        let mut config = Config::load()?;
+        let mut config = Config::load_cached()?;
 
         // Auto-refresh if any token is expired but refresh token exists
         let needs_refresh = config.get_access_token().map_or(true, |t| t.is_expired())
@@ -30,7 +39,7 @@ impl TeamsClient {
                 tracing::info!("Tokens missing or expired, refreshing...");
                 match crate::auth::oauth::refresh().await {
                     Ok(true) => {
-                        config = Config::load()?;
+                        config = Config::load_cached()?;
                         tracing::info!("Token refreshed");
                     }
                     Ok(false) => {
@@ -46,7 +55,7 @@ impl TeamsClient {
         }
 
         Ok(Self {
-            http: reqwest::Client::new(),
+            http: shared_http(),
             config,
         })
     }

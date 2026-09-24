@@ -69,6 +69,7 @@
 // ingests every event (preview refresh + reorder), while bubbles are
 // filtered to the open chat (`isFor(chatID:)`). A resync gap
 // re-fetches the open chat plus the list.
+import AppKit
 import Combine
 import DietDesign
 import Foundation
@@ -186,7 +187,7 @@ struct OstMacAppMain: App {
         Settings {
             SettingsView(
                 auth: state.auth, catchUp: state.catchUp, notifs: state.notifs,
-                rules: state.rules, chats: state.chats.chats,
+                rules: state.rules, chats: state.chats,
                 quiet: state.quietHours, blocked: state.blocked)
         }
         .commands { OstMacCommands() }
@@ -455,36 +456,11 @@ final class AppState: ObservableObject {
                 Task { @MainActor [weak self] in self?.authChanged(s) }
             }
             .store(in: &cancellables)
-        // om-receipts: forward receipt changes so Diagnostics counts update.
-        receipts.objectWillChange
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in self?.objectWillChange.send() }
-            .store(in: &cancellables)
-        // om-call-ux: forward call changes (Diagnostics phase/counters
-        // rows, in-call window auto-open trigger).
-        call.objectWillChange
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in self?.objectWillChange.send() }
-            .store(in: &cancellables)
-        // om-call-history: recents record from the slot (connect flips,
-        // local end) + the feed (rings, remote end); redial re-places.
-        // Forward history changes so the Diagnostics counts tick live.
-        history.objectWillChange
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in self?.objectWillChange.send() }
-            .store(in: &cancellables)
-        // om-quiet-hours: forward quiet changes so the Diagnostics
-        // rows tick live (schedule flips, DND expiry, suppressions).
-        quietHours.objectWillChange
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in self?.objectWillChange.send() }
-            .store(in: &cancellables)
-        // om-userpins: forward chat-list changes so the Diagnostics
-        // pin count ticks live (the model already forwards its store).
-        chats.objectWillChange
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in self?.objectWillChange.send() }
-            .store(in: &cancellables)
+        // om-s7-tickstorm: NO objectWillChange forwards — every surface
+        // observes its store directly (Diagnostics sub-rows, CallBanner
+        // incl. the auto-open trigger, sidebar, sheets, Settings), so a
+        // store tick re-renders that surface only, never the root.
+        // (Was: receipts/call/history/quietHours/chats forwards.)
         history.onRedial = { [weak self] record in
             Task { @MainActor [weak self] in self?.redial(record) }
         }
@@ -502,7 +478,7 @@ final class AppState: ObservableObject {
         ) { [weak self] note in
             guard let id = note.userInfo?["chatID"] as? String else { return }
             Task { @MainActor [weak self] in
-                let name = self?.chats.chats.first(where: { $0.id == id })?.name
+                let name = self?.chats.chat(id: id)?.name
                 self?.jump(chatID: id, chatName: name ?? "Conversation")
             }
         }
@@ -599,7 +575,7 @@ final class AppState: ObservableObject {
             feed.start()
             refreshFeedStatus()
             stateTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
-                Task { @MainActor [weak self] in self?.refreshFeedStatus() }
+                Task { @MainActor [weak self] in self?.tick() }
             }
         }
         if let say = autoSay {
@@ -698,8 +674,14 @@ final class AppState: ObservableObject {
             conv.close() // never show a dead thread behind the empty detail
             return
         }
-        guard id != openChatID else { return } // already open (direct --chat path)
-        let name = chats.chats.first(where: { $0.id == id })?.name ?? preselectName
+        guard id != openChatID else {
+            // Already open (direct --chat path): still republish so
+            // selection-driven body reads (isGroup) refresh — there is
+            // no chats forward anymore. Redundant sets only.
+            objectWillChange.send()
+            return
+        }
+        let name = chats.chat(id: id)?.name ?? preselectName
         open(chatID: id, chatName: name)
     }
 
@@ -886,7 +868,7 @@ final class AppState: ObservableObject {
         // unread, mentions, banners) — counted as a skip in Diagnostics.
         // Unknown threads default to 1:1, so a new thread from a blocked
         // mate still matches by name.
-        let threadGroup = chats.chats.first(where: { $0.id == msg.chatID })?.is_group ?? false
+        let threadGroup = chats.chat(id: msg.chatID)?.is_group ?? false
         if blocked.isBlocked(chatID: msg.chatID, senderName: msg.sender, isGroup: threadGroup) {
             notifSkipped += 1
             notifLastReason = "blocked-user"
@@ -903,7 +885,7 @@ final class AppState: ObservableObject {
         let quiet = quietHours.isQuietNow
         if let mri = msg.senderID,
            msg.sender != conv.ownDisplayName,
-           chats.chats.first(where: { $0.id == msg.chatID })?.is_group == false
+           chats.chat(id: msg.chatID)?.is_group == false
         {
             Task { await presence.refreshChatPeerMri(chatID: msg.chatID, mri: mri) }
         }
@@ -913,7 +895,7 @@ final class AppState: ObservableObject {
         // — TN parity), the unread counts (skips and the open chat never
         // accrue), and the alert stats. Quiet ALSO gates the banner path
         // below (defense in depth + suppressed counting).
-        let chatName = chats.chats.first(where: { $0.id == msg.chatID })?.name ?? ""
+        let chatName = chats.chat(id: msg.chatID)?.name ?? ""
         let decision = rulesDecision(for: msg, chatName: chatName)
         noteAlertStats(decision: decision)
         switch decision {
@@ -1067,7 +1049,7 @@ final class AppState: ObservableObject {
         Notifier.shared.onOpenChat = { [weak self] chatID in
             guard let strongSelf = self else { return }
             await MainActor.run {
-                let name = strongSelf.chats.chats.first(where: { $0.id == chatID })?.name ?? "Conversation"
+                let name = strongSelf.chats.chat(id: chatID)?.name ?? "Conversation"
                 strongSelf.jump(chatID: chatID, chatName: name)
             }
         }
@@ -1116,10 +1098,28 @@ final class AppState: ObservableObject {
         chats.refresh()
     }
 
+    /// 2s status tick, gated on visible surfaces: hidden/miniaturized
+    /// windows read nothing, so skip the whole poll (feed reads, quiet
+    /// sweep, slot re-read). The next visible tick refreshes (≤2s stale,
+    /// invisible anyway). Event paths still call refreshFeedStatus
+    /// directly (never gated).
+    private func tick() {
+        guard Self.surfacesVisible() else { return }
+        refreshFeedStatus()
+    }
+
+    /// Any app window on screen (not hidden or miniaturized).
+    static func surfacesVisible() -> Bool {
+        NSApp.windows.contains { $0.isVisible && !$0.isMiniaturized }
+    }
+
     private func refreshFeedStatus() {
-        feedState = feed.currentState
-        feedPolls = feed.pollCount
-        feedError = feed.lastError
+        // Assign-on-change only: @Published emits per set, so an idle
+        // tick must not publish (else the root re-evals every 2s).
+        let freshState = feed.currentState
+        if freshState != feedState { feedState = freshState }
+        if feed.pollCount != feedPolls { feedPolls = feed.pollCount }
+        if feed.lastError != feedError { feedError = feed.lastError }
         quietHours.refresh() // om-quiet-hours: sweep expired DND (2s tick)
         if !isDemo { call.refresh() } // re-read slot (place/accept landed?)
     }
@@ -1181,13 +1181,6 @@ struct RootView: View {
             CallBanner(store: state.call) {
                 openWindow(id: AppIdentity.callWindowID)
             }
-            .onChange(of: state.call.phase) { _, next in
-                // A connected call pops the in-call window (mute,
-                // camera, speaker); rings never auto-open.
-                if next == .active {
-                    openWindow(id: AppIdentity.callWindowID)
-                }
-            }
             if state.isDemo || state.auth.state.allowsContent {
                 NavigationSplitView {
                     SidebarColumn(
@@ -1236,8 +1229,8 @@ struct RootView: View {
             state.showJump = true
         }
         .sheet(isPresented: $state.showJump) {
-            JumpPaletteView(
-                targets: JumpTargets.build(chats: state.chats.chats, teams: state.teams.teams),
+            JumpPaletteSheet(
+                chats: state.chats, teams: state.teams,
                 initialQuery: OstMacAppMain.jumpQuery(args: CommandLine.arguments)
             ) { id, name in
                 state.showJump = false
@@ -1245,9 +1238,8 @@ struct RootView: View {
             }
         }
         .sheet(item: $state.forwardMessage) { msg in
-            ForwardSheet(
-                message: msg,
-                targets: ForwardPicker.targets(chats: state.chats.chats, teams: state.teams.teams),
+            ForwardSheetLive(
+                message: msg, chats: state.chats, teams: state.teams,
                 initialQuery: OstMacAppMain.jumpQuery(args: CommandLine.arguments)
             ) { id, name in
                 state.forwardPicked(destID: id, destName: name)
@@ -1300,6 +1292,42 @@ struct RootView: View {
                 title: "Select a chat",
                 message: "Pick a conversation in the sidebar, or press ⌘K to jump.")
         }
+    }
+}
+
+/// Jump sheet, live on the list stores: targets rebuild when
+/// chats/teams change mid-palette (was RootView's re-render via the
+/// chats forward).
+struct JumpPaletteSheet: View {
+    @ObservedObject var chats: ChatListViewModel
+    @ObservedObject var teams: TeamsViewModel
+    let initialQuery: String
+    let onPick: (String, String) -> Void
+
+    var body: some View {
+        JumpPaletteView(
+            targets: JumpTargets.build(
+                chats: chats.chats, teams: teams.teams),
+            initialQuery: initialQuery,
+            onPick: onPick)
+    }
+}
+
+/// Forward sheet, live on the list stores (same as above).
+struct ForwardSheetLive: View {
+    let message: ChatMessage
+    @ObservedObject var chats: ChatListViewModel
+    @ObservedObject var teams: TeamsViewModel
+    let initialQuery: String
+    let onPick: (String, String) -> Void
+
+    var body: some View {
+        ForwardSheet(
+            message: message,
+            targets: ForwardPicker.targets(
+                chats: chats.chats, teams: teams.teams),
+            initialQuery: initialQuery,
+            onPick: onPick)
     }
 }
 

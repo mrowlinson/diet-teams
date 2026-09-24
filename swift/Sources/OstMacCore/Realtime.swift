@@ -185,7 +185,7 @@ public enum RealtimeBackoff {
 }
 
 public final class RealtimeFeed: @unchecked Sendable {
-    public enum State: Sendable { case stopped, live, retryWait }
+    public enum State: Sendable, Equatable { case stopped, live, retryWait }
 
     /// Max seen ids kept for dedupe; oldest evicted first.
     public static let dedupeCap = 2048

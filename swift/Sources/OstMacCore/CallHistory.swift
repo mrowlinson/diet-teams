@@ -88,17 +88,15 @@ public struct CallRecord: Codable, Sendable, Identifiable, Equatable {
             for: Date(timeIntervalSince1970: TimeInterval(startedAt)))
     }
 
+    /// Shared clock/day formatters (om-s6-renderparse): locked pair,
+    /// timezone refreshed per call (same strings, no per-call allocs).
+    private static let clockFormats = CallClockFormats()
+
     public static func displayTime(for date: Date, now: Date = Date()) -> String {
         let cal = Calendar.current
-        let clock: String = {
-            let f = DateFormatter()
-            f.dateFormat = "HH:mm"
-            return f.string(from: date)
-        }()
+        let clock = clockFormats.clock(from: date)
         if cal.isDate(date, inSameDayAs: now) { return clock }
-        let f = DateFormatter()
-        f.dateFormat = "d MMM"
-        return "\(clock) \(f.string(from: date))"
+        return "\(clock) \(clockFormats.day(from: date))"
     }
 
     /// "0:43", "12:05", "1:02:03" (hours only when non-zero).
@@ -420,5 +418,37 @@ public struct CallHistoryView: View {
         store.canRedial(record)
             ? "Call \(record.displayName) back"
             : "No thread to call back on"
+    }
+}
+
+/// Shared call-clock formatters (om-s6-renderparse). DateFormatter is not
+/// thread-safe, so every use runs under the lock with a refreshed
+/// timezone (same strings as a fresh formatter, none of the allocs).
+private final class CallClockFormats {
+    private let lock = NSLock()
+    private let clock: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm"
+        return f
+    }()
+
+    private let day: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "d MMM"
+        return f
+    }()
+
+    func clock(from date: Date) -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        clock.timeZone = TimeZone.current
+        return clock.string(from: date)
+    }
+
+    func day(from date: Date) -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        day.timeZone = TimeZone.current
+        return day.string(from: date)
     }
 }

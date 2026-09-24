@@ -509,11 +509,7 @@ public final class AvPanelModel: ObservableObject {
             guard let au = poll.au else {
                 throw CoreCallError.failed("incoming queue empty")
             }
-            let raw = au.nals.compactMap { Data(base64Encoded: $0) }
-            guard raw.count == au.nals.count else {
-                throw CoreCallError.failed("incoming NAL base64")
-            }
-            guard let img = try H264StreamDecoder().decode(nals: raw) else {
+            guard let img = try H264StreamDecoder().decode(nals: au.nals) else {
                 throw CoreCallError.failed("no slice NALs in AU")
             }
             return img
@@ -544,8 +540,7 @@ public final class AvPanelModel: ObservableObject {
             try RustCore.videoPushRemote(i420: i420, width: w, height: h)
             let poll = try RustCore.videoPollRemote()
             guard let f = poll.frame,
-                  let raw = Data(base64Encoded: f.data),
-                  let img = YUVConvert.cgImage(i420: raw, width: f.width, height: f.height)
+                  let img = YUVConvert.cgImage(i420: f.data, width: f.width, height: f.height)
             else {
                 throw CoreCallError.failed("remote loopback empty")
             }
@@ -936,7 +931,11 @@ public struct AvPanelView: View {
                 model.runLiveLoopback()
             }
         }
+        .onAppear {
+            call.callWindowOpen = true // media surface up (1s stats loop)
+        }
         .onDisappear {
+            call.callWindowOpen = false // media surface down
             model.stopLevelPolling()
             camera.stop()
             share.stop()
