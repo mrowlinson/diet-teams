@@ -267,8 +267,10 @@ struct NotificationsDiagRow: View {
             .textSelection(.enabled)
         LabeledContent(
             "Unread",
+            // om-markunread: totals include horizon overrides (the only
+            // place override counts appear — rows badge, never number).
             value: DiagnosticsFormat.unreadLine(
-                total: unread.total, chats: unread.counts.count))
+                total: unread.total, chats: unread.chatCount))
             .textSelection(.enabled)
         LabeledContent(
             "Alerts",
