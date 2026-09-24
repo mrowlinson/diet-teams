@@ -60,6 +60,11 @@ char *ostmac_channel_create(
 // Join one team by id (self-enroll): {ok, team_id}. Caller frees.
 char *ostmac_team_join(const char *team_id);
 
+// Create one standard team (async Graph POST, requires sign-in):
+// {ok,team:{id,name,channels},polls,elapsed_ms}. description may be
+// NULL (no description). Caller frees.
+char *ostmac_team_create(const char *name, const char *description);
+
 // One channel's pinned tabs JSON, read-only: {ok, channel_id, tabs}. Caller frees.
 char *ostmac_tabs(const char *channel_id);
 
@@ -81,6 +86,14 @@ char *ostmac_messages(const char *chat_id, int limit);
 // Older history page: page_token is the previous response's opaque cursor.
 // Caller frees.
 char *ostmac_messages_page(const char *chat_id, const char *page_token, int limit);
+
+// Teams message search (Graph /search/query, one from/size window):
+// {ok,query,from,size,total?,more,next_from?,hits:[{message_id,chat_id,
+// team_id?,channel_id?,sender,timestamp,preview,subject?}]}. chat_id is
+// the conversation to open (channel id for channel hits). Empty query
+// is rejected pre-network; size clamps to 1..=25 (<=0 means 25).
+// Requires sign-in. Caller frees.
+char *ostmac_search(const char *query, int from, int size);
 
 // Post one message to a chat. Caller frees.
 char *ostmac_send(const char *chat_id, const char *text);
@@ -187,6 +200,16 @@ char *ostmac_files_copy(const char *drive_id, const char *item_id, const char *d
 // Delete one driveItem. Returns {ok, id}. Caller frees.
 char *ostmac_files_delete(const char *drive_id, const char *item_id);
 
+// OneDrive file search by name/content (requires sign-in): one $top
+// window (limit<=0 means 25). Returns {ok, query, files:[SharedFile]}.
+// Caller frees.
+char *ostmac_file_search(const char *query, int limit);
+
+// Directory people search by display name (requires sign-in): one $top
+// window (limit<=0 means 25). Returns {ok, query, people:[TeamMember]}
+// (roles empty: directory hits carry no team role). Caller frees.
+char *ostmac_people_search(const char *query, int limit);
+
 // To Do lists JSON (requires sign-in): {ok,lists:[{id,name,wellknown?}]}.
 // Caller frees.
 char *ostmac_reminders(void);
@@ -217,6 +240,11 @@ int ostmac_trouter_start(void);
 // Drain queued Trouter events as JSON. Caller frees.
 char *ostmac_trouter_poll(void);
 
+// Blocking drain: waits up to timeout_ms for the first event instead
+// of returning empty immediately (0 = poll without waiting). Same
+// envelope as ostmac_trouter_poll. Call off the main thread. Caller frees.
+char *ostmac_trouter_poll_wait(uint64_t timeout_ms);
+
 // Drain queued Trouter events as typed realtime messages:
 // {ok, messages:[{chat_id,id,sender,text,time,is_edit,edited_id?}],
 // resync, skipped}. resync=true means a trouter.message_loss frame arrived:
@@ -224,6 +252,11 @@ char *ostmac_trouter_poll(void);
 // fine, no reconnect needed). Drains the same queue as ostmac_trouter_poll —
 // use one consumer. Caller frees.
 char *ostmac_trouter_poll_typed(void);
+
+// Blocking typed drain: waits up to timeout_ms for the first event
+// (0 = poll without waiting). Same envelope as
+// ostmac_trouter_poll_typed. Call off the main thread. Caller frees.
+char *ostmac_trouter_poll_typed_wait(uint64_t timeout_ms);
 
 // Stop background Trouter: 0 stopped, -1 idle.
 int ostmac_trouter_stop(void);

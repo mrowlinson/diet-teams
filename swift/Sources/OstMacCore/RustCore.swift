@@ -104,6 +104,21 @@ public enum RustCore {
         }
     }
 
+    /// Create one standard team (async Graph POST + poll, blocking FFI:
+    /// call off the main thread; waits up to ~120s for the operation).
+    /// Nil/blank description is dropped by core.
+    public static func teamCreate(
+        name: String, description: String? = nil
+    ) throws -> TeamCreateResponse {
+        try name.withCString { namePtr in
+            try withOptionalCString(description) { descPtr in
+                try call(
+                    ostmac_team_create(namePtr, descPtr),
+                    as: TeamCreateResponse.self)
+            }
+        }
+    }
+
     /// One channel's pinned tabs, read-only (blocking FFI + network:
     /// call off the main thread).
     public static func tabs(channelID: String) throws -> TabsResponse {
@@ -131,6 +146,15 @@ public enum RustCore {
             try pageToken.withCString { tokPtr in
                 try call(ostmac_messages_page(idPtr, tokPtr, limit), as: MessagesResponse.self)
             }
+        }
+    }
+
+    /// Teams message search, one from/size window (blocking FFI + network:
+    /// call off the main thread). `next_from` (nil when exhausted)
+    /// chains the next window via `from`.
+    public static func search(query: String, from: Int32 = 0, size: Int32 = 25) throws -> SearchResponse {
+        try query.withCString { ptr in
+            try call(ostmac_search(ptr, from, size), as: SearchResponse.self)
         }
     }
 
@@ -242,6 +266,22 @@ public enum RustCore {
             throw CoreCallError.failed("media: bad base64 from core")
         }
         return (data, resp.content_type)
+    }
+
+    /// OneDrive file search, one $top window (blocking FFI + network:
+    /// call off the main thread). Rows reuse the Shared tab shape.
+    public static func fileSearch(query: String, limit: Int32 = 25) throws -> FileSearchResponse {
+        try query.withCString { ptr in
+            try call(ostmac_file_search(ptr, limit), as: FileSearchResponse.self)
+        }
+    }
+
+    /// Directory people search, one $top window (blocking FFI + network:
+    /// call off the main thread). Rows reuse the roster shape.
+    public static func peopleSearch(query: String, limit: Int32 = 25) throws -> PeopleSearchResponse {
+        try query.withCString { ptr in
+            try call(ostmac_people_search(ptr, limit), as: PeopleSearchResponse.self)
+        }
     }
 
     public static func sharedFiles(chatID: String, limit: Int32 = 20, includeFolders: Bool = false) throws -> SharedFilesResponse {
@@ -498,6 +538,18 @@ public enum RustCore {
 
     public static func trouterPollTyped() throws -> RealtimePoll {
         try call(ostmac_trouter_poll_typed(), as: RealtimePoll.self)
+    }
+
+    /// Blocking raw drain: waits up to `timeoutMs` for the first event
+    /// (0 = poll without waiting). Blocking FFI: call off the main thread.
+    public static func trouterPollWait(timeoutMs: UInt64 = 0) throws -> TrouterPoll {
+        try call(ostmac_trouter_poll_wait(timeoutMs), as: TrouterPoll.self)
+    }
+
+    /// Blocking typed drain: waits up to `timeoutMs` for the first event
+    /// (0 = poll without waiting). Blocking FFI: call off the main thread.
+    public static func trouterPollTypedWait(timeoutMs: UInt64 = 0) throws -> RealtimePoll {
+        try call(ostmac_trouter_poll_typed_wait(timeoutMs), as: RealtimePoll.self)
     }
 
     public static func callStatus() throws -> CallStatus {

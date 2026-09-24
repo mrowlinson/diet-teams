@@ -282,6 +282,46 @@ public enum DemoData {
         chatID == richID ? ["rich-fail"] : []
     }
 
+    /// Canned message-search index for `--demo` (om-ja-search lane):
+    /// literal rows (no date formatting, safe to run off-main) over the
+    /// static threads. Substring match on sender + preview; blank
+    /// returns every row. Ids mirror the real demo bubbles, so
+    /// jump-to-message lands in-memory (no paging) in demo.
+    public static func messageSearchResponse(for query: String) -> SearchResponse {
+        let rows: [SearchHit] = [
+            SearchHit(
+                messageID: "ava-1", chatID: avaID, sender: "Ava Lindqvist",
+                timestamp: "2026-09-22T08:41:02Z",
+                preview: "Morning! Can you review the empty-states mock when you get a chance?"),
+            SearchHit(
+                messageID: "ava-3", chatID: avaID, sender: "Ava Lindqvist",
+                timestamp: "2026-09-22T08:47:33Z",
+                preview: "Standup moved to 10 — see you there."),
+            SearchHit(
+                messageID: "standup-2", chatID: standupID, sender: "Tom Becker",
+                timestamp: "2026-09-21T16:20:11Z",
+                preview: "Build is green, packaging lane is next."),
+            SearchHit(
+                messageID: "rep-2", chatID: repliesID, sender: "Tom Becker",
+                timestamp: "2026-09-22T09:05:00Z",
+                preview: "First one: is the empty-state illustration final, or still placeholder?"),
+            SearchHit(
+                messageID: "chan-m2", chatID: "demo-chan-general",
+                teamID: "demo-team-eng", channelID: "demo-chan-general",
+                sender: "Tom Becker", timestamp: "2026-09-22T09:10:44Z",
+                preview: "Build is green, packaging lane is next."),
+        ]
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let hits = q.isEmpty
+            ? rows
+            : rows.filter {
+                $0.preview.lowercased().contains(q) || $0.sender.lowercased().contains(q)
+            }
+        return SearchResponse(
+            ok: true, query: query, from: 0, size: hits.count,
+            total: hits.count, more: false, next_from: nil, hits: hits)
+    }
+
     /// Demo threads flagging an owner mention (om-mentions): the rich
     /// thread's edited bubble mines `@Me` from its `<at>` tag, and the
     /// showcase kickoff does the same. Adopted by the app's MentionStore
@@ -335,6 +375,44 @@ public enum DemoData {
         download_url: "https://example.sharepoint.com/download/standup-notes.md",
         drive_id: "demo-drive-2",
         created: "2026-09-22T08:47:33Z", sender: "Ava Lindqvist")
+
+    /// Canned file-search index for `--demo` (om-jb-filesearch lane):
+    /// the Shared-tab fixtures plus one plan row. Substring match on
+    /// name; blank returns every row. Off-main safe (literals only).
+    public static func fileSearchResponse(for query: String) -> FileSearchResponse {
+        let rows = designFiles + [avaFile, planFile]
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let files = q.isEmpty ? rows : rows.filter { $0.name.lowercased().contains(q) }
+        return FileSearchResponse(ok: true, query: query, files: files)
+    }
+
+    private static let planFile = SharedFile(
+        id: "demo-f-plan1", name: "q3-plan.md", size: 4096,
+        mime: "text/markdown",
+        web_url: "https://example.sharepoint.com/q3-plan.md",
+        drive_id: "demo-drive-2",
+        created: "2026-09-22T09:10:44Z", sender: "Tom Becker")
+
+    /// Canned people-search index for `--demo` (om-jb-filesearch lane):
+    /// literal roster rows (roles empty, like directory hits). Substring
+    /// match on display name + email; blank returns every row.
+    public static func peopleSearchResponse(for query: String) -> PeopleSearchResponse {
+        let rows = searchPeople
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let people = q.isEmpty
+            ? rows
+            : rows.filter {
+                $0.displayName.lowercased().contains(q)
+                    || ($0.email ?? "").lowercased().contains(q)
+            }
+        return PeopleSearchResponse(ok: true, query: query, people: people)
+    }
+
+    private static let searchPeople: [TeamMember] = [
+        TeamMember(id: "demo-u-ava", displayName: "Ava Lindqvist", userId: "demo-u-ava", email: "ava@example.com"),
+        TeamMember(id: "demo-u-tom", displayName: "Tom Becker", userId: "demo-u-tom", email: "tom@example.com"),
+        TeamMember(id: "demo-u-priya", displayName: "Priya Nair", userId: "demo-u-priya", email: "priya@example.com"),
+    ]
 
     public static func name(for chatID: String) -> String? {
         if let chat = chats.first(where: { $0.id == chatID }) { return chat.name }

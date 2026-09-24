@@ -4,11 +4,13 @@ mod calendar;
 mod chat;
 pub mod client;
 mod files;
+mod filesearch;
 mod graph;
 mod me;
 pub mod media;
 mod notes;
 mod presence;
+mod search;
 mod tabs;
 mod teams;
 mod todo;
@@ -24,6 +26,7 @@ pub use files::{FileVersion, SharedFile};
 pub use me::UserInfo;
 pub use notes::{NotePage, NotebookInfo, PageInfo, SectionInfo};
 pub use presence::PresenceInfo;
+pub use search::{clamp_size, next_from, parse_search_response, search_body, search_messages_data, SearchHitInfo, SearchPage, SEARCH_MAX_SIZE};
 pub use tabs::TabInfo;
 pub use teams::TeamInfo;
 pub use teams::TeamMemberInfo;
@@ -49,6 +52,11 @@ pub use calendar::{
     calendar_view_path, list_upcoming_meetings_data, lobby_next, parse_calendar_view,
     parse_join_url,
 };
+pub use filesearch::{
+    clamp_limit, drive_search_path, parse_drive_search_response,
+    parse_people_search_response, people_search_path, search_files_data,
+    search_people_data, FIND_MAX_LIMIT,
+};
 pub use files::{
     content_range_value, copy_body, copy_file_data, create_link_data, delete_file_data,
     download_file_data, download_file_version_data, drive_item_path, folder_children_path,
@@ -66,9 +74,16 @@ pub use notes::{
 pub use presence::get_presence_data;
 pub use tabs::list_tabs_data;
 pub use teams::{
-    add_member_body, add_team_member_data, create_channel_body, create_channel_data,
-    create_channel_path, join_team_data, list_team_members_data, list_teams_data,
-    member_path, members_path, remove_team_member_data,
+    add_member_body, add_team_member_data, channel_react_body,
+    channel_reply_set_reaction_path, channel_reply_unset_reaction_path,
+    channel_set_reaction_path, channel_unset_reaction_path, create_channel_body,
+    create_channel_data, create_channel_path, create_team_body, create_team_data,
+    create_team_path, join_team_data, list_team_members_data, list_teams_data,
+    member_path, members_path, operation_failed, operation_succeeded,
+    operation_team_id, operation_url, remove_team_member_data,
+    set_channel_reaction_data, standard_team_template, TeamCreateResult,
+    TeamsAsyncOperation, TEAM_CREATE_POLL_SECS, TEAM_CREATE_TIMEOUT_SECS,
+    unset_channel_reaction_data,
 };
 pub use todo::{
     complete_todo_task_data, create_todo_task_data, list_todo_lists_data,
@@ -180,6 +195,16 @@ pub async fn create_link(drive_id: &str, item_id: &str, scope: &str) -> Result<(
     files::create_link(drive_id, item_id, scope).await
 }
 
+/// Search OneDrive files by name/content (om-jb-filesearch)
+pub async fn search_files(query: &str, limit: usize) -> Result<()> {
+    filesearch::search_files(query, limit).await
+}
+
+/// Search the directory for people (om-jb-filesearch)
+pub async fn search_people(query: &str, limit: usize) -> Result<()> {
+    filesearch::search_people(query, limit).await
+}
+
 /// List Microsoft To Do lists
 pub async fn list_todo_lists() -> Result<()> {
     todo::list_todo_lists().await
@@ -208,4 +233,9 @@ pub async fn notes(
     append: Option<&str>,
 ) -> Result<()> {
     notes::notes(group_id, notebook, page, append).await
+}
+
+/// Search Teams messages (Graph `/search/query`, first window)
+pub async fn search_messages(query: &str, limit: usize) -> Result<()> {
+    search::search_messages(query, limit).await
 }

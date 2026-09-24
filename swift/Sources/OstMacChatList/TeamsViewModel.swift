@@ -28,6 +28,8 @@ public final class TeamsViewModel: ObservableObject {
     public typealias Creator = @Sendable (String, String, String?) throws -> ChannelCreateResponse
     /// Sync join-by-id (runs off-main). Throws `CoreCallError` on core failure.
     public typealias Joiner = @Sendable (String) throws -> TeamJoinResponse
+    /// Sync team create (runs off-main): name, description.
+    public typealias TeamCreator = @Sendable (String, String?) throws -> TeamCreateResponse
 
     /// Latest rows (only meaningful in `.loaded`; stale otherwise).
     @Published public private(set) var teams: [TeamItem] = []
@@ -43,19 +45,28 @@ public final class TeamsViewModel: ObservableObject {
     @Published public private(set) var joinFailures: Int = 0
     /// Last join failure message, nil after a success or blank noop.
     @Published public private(set) var joinError: String?
+    /// Team create in flight (drives the sheet spinner).
+    @Published public private(set) var teamCreating = false
+    /// Last team-create failure (user-facing); nil when clear.
+    @Published public private(set) var teamCreateError: String?
+    /// Successful team creates this session (test/UX counter).
+    @Published public private(set) var teamsCreated = 0
 
     private let fetcher: Fetcher
     private let creator: Creator
     private let joiner: Joiner
+    private let teamCreator: TeamCreator
 
     public init(
         fetcher: @escaping Fetcher = { try RustCore.teams() },
         creator: @escaping Creator = { try RustCore.channelCreate(teamID: $0, name: $1, description: $2) },
-        joiner: @escaping Joiner = { try RustCore.teamJoin(teamID: $0) }
+        joiner: @escaping Joiner = { try RustCore.teamJoin(teamID: $0) },
+        teamCreator: @escaping TeamCreator = { try RustCore.teamCreate(name: $0, description: $1) }
     ) {
         self.fetcher = fetcher
         self.creator = creator
         self.joiner = joiner
+        self.teamCreator = teamCreator
     }
 
     /// Fetch the list.
@@ -120,6 +131,30 @@ public final class TeamsViewModel: ObservableObject {
             joiningIDs.remove(id)
             joinFailures += 1
             joinError = Self.message(for: error)
+        }
+    }
+
+    /// Create one standard team, appending the returned row. Blank
+    /// names never reach core. Runs the blocking create (POST + poll,
+    /// up to ~120s) off-main on a detached task; `teamCreating`
+    /// tracks flight. Failures surface in `teamCreateError`.
+    public func createTeam(name: String, description: String?) async {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        teamCreateError = nil
+        teamCreating = true
+        let teamCreator = teamCreator
+        do {
+            let created = try await Task.detached {
+                try teamCreator(trimmed, description)
+            }.value
+            teamCreating = false
+            teamsCreated += 1
+            teams.append(created.team)
+            if state == .empty { state = .loaded }
+        } catch {
+            teamCreating = false
+            teamCreateError = Self.message(for: error)
         }
     }
 

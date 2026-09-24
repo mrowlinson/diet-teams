@@ -106,7 +106,8 @@ struct ChatTimelineView: View {
                                         chatID: store.chatID, messageID: msg.id),
                                     onTogglePin: {
                                         pins.toggle(chatID: store.chatID, message: msg)
-                                    }
+                                    },
+                                    chatID: store.chatID
                                 )
                                 .id(msg.id)
                                 .onAppear {
@@ -119,12 +120,26 @@ struct ChatTimelineView: View {
                                 }
                             }
                         }
+                        // Typing row (om-typing): who is typing in the
+                        // open thread, only while indicators are live.
+                        // Above the sentinel (om-fix-scroll): the
+                        // sentinel is the true content end.
+                        if let line = typing.line(chatID: store.chatID) {
+                            TypingIndicatorView(line: line)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.top, DietSpace.xs)
+                        }
                         // Bottom sentinel: on screen ⇔ viewport hugs the
                         // tail. Dwell marks the read frontier (kills the
                         // pill) and sends the read position; leaving
-                        // cancels settle (no yank races).
+                        // cancels settle (no yank races). Laid out LAST
+                        // with the trailing inset as part of it
+                        // (om-fix-scroll), so scrollToBottom lands on the
+                        // exact content end with zero gap.
                         Color.clear
                             .frame(height: 1)
+                            .padding(.bottom, DietSpace.md)
+                            .id(ScrollPolicy.bottomSentinelID)
                             .onAppear {
                                 scroll.noteBottomDwell(tailID: store.messages.last?.id)
                                 sendReadPositionIfViewingLatest()
@@ -132,19 +147,20 @@ struct ChatTimelineView: View {
                             .onDisappear {
                                 scroll.noteLeftBottom()
                             }
-                        // Typing row (om-typing): who is typing in the
-                        // open thread, only while indicators are live.
-                        if let line = typing.line(chatID: store.chatID) {
-                            TypingIndicatorView(line: line)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.top, DietSpace.xs)
-                        }
                     }
-                    .padding(DietSpace.md)
+                    .padding([.top, .leading, .trailing], DietSpace.md)
                 }
                 .defaultScrollAnchor(.bottom)
                 .onChange(of: store.messages.count) { handleMessagesChanged(proxy) }
                 .onChange(of: store.loading) { handleLoadingChanged(proxy) }
+                // Jump-to-message (om-ja-search): the armed bubble id lands
+                // the scroll, then consumes so later mail never yanks.
+                .onChange(of: store.jumpTargetID) {
+                    guard let target = store.jumpTargetID else { return }
+                    scroll.cancelSettle()
+                    withAnimation { proxy.scrollTo(target, anchor: .center) }
+                    store.clearJumpTarget()
+                }
                 .onAppear {
                     store.openIfNeeded()
                     scroll.lastSeenID = store.messages.last?.id
@@ -341,6 +357,10 @@ struct ChatTimelineView: View {
     private func handleLoadingChanged(_ proxy: ScrollViewProxy) {
         if !store.loading {
             scroll.lastSeenID = store.messages.last?.id
+            // Jump-to-message (om-ja-search): an armed target owns the
+            // land — the jumpTargetID onChange scrolls to it; the tail
+            // land below would yank right back to latest.
+            guard store.jumpTargetID == nil else { return }
             scroll.jumpToLatest(tailID: store.messages.last?.id)
             settleToBottom(proxy)
             sendReadPositionIfViewingLatest()
@@ -371,13 +391,17 @@ struct ChatTimelineView: View {
         }
     }
 
+    /// Exact-bottom landing (om-fix-scroll): targets the bottom
+    /// sentinel (true content end), never the tail bubble — targeting
+    /// the bubble parks ~1 wheel-click short (sentinel + trailing inset
+    /// below the fold). Empty thread → no-op.
     private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool = true) {
-        guard let last = store.messages.last else { return }
+        guard let target = ScrollPolicy.bottomTargetID(tailID: store.messages.last?.id) else { return }
         DispatchQueue.main.async {
             if animated {
-                withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
+                withAnimation { proxy.scrollTo(target, anchor: .bottom) }
             } else {
-                proxy.scrollTo(last.id, anchor: .bottom)
+                proxy.scrollTo(target, anchor: .bottom)
             }
         }
     }

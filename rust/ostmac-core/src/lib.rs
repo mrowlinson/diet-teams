@@ -598,6 +598,40 @@ pub fn team_join_json(team_id: &str) -> String {
     }
 }
 
+/// Create one standard team and wait for the async operation
+/// (`POST /teams` -> 202 + `Content-Location` poll, 3s x 120s cap).
+/// Returns `{ok:true, team:{id,name,channels}, polls, elapsed_ms}` or
+/// `{ok:false}`. Blank `name` is rejected before any network; a blank
+/// description is dropped (never sent).
+pub fn team_create_json(name: &str, description: Option<&str>) -> String {
+    if name.trim().is_empty() {
+        return err_json("arg", "empty name");
+    }
+    let desc = description.filter(|d| !d.trim().is_empty());
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let created = ost::api::create_team_data(&client, name.trim(), desc)
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            Ok(json!({
+                "ok": true,
+                "team": team_to_json(&created.team),
+                "polls": created.polls,
+                "elapsed_ms": created.elapsed_ms,
+            })
+            .to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("team_create", e),
+    }
+}
+
 fn tab_to_json(t: &ost::api::TabInfo) -> serde_json::Value {
     json!({
         "id": t.id,
@@ -820,6 +854,57 @@ pub fn messages_page_json(chat_id: &str, page_token: &str, limit: usize) -> Stri
     match run() {
         Ok(s) => s,
         Err(e) => err_json("messages_page", e),
+    }
+}
+
+fn search_hit_to_json(h: &ost::api::SearchHitInfo) -> serde_json::Value {
+    json!({
+        "message_id": h.message_id,
+        "chat_id": h.chat_id,
+        "team_id": h.team_id,
+        "channel_id": h.channel_id,
+        "sender": h.sender,
+        "timestamp": h.timestamp,
+        "preview": h.preview,
+        "subject": h.subject,
+    })
+}
+
+/// Teams message search as JSON (Graph `/search/query`, one `from`/`size`
+/// window). Requires sign-in; unsigned yields `{ok:false}`. Empty `query`
+/// is rejected before any network; `size` clamps to Graph's `1..=25`.
+/// `next_from` (null when exhausted) chains the next window.
+pub fn search_json(query: &str, from: usize, size: usize) -> String {
+    if query.trim().is_empty() {
+        return err_json("arg", "empty query");
+    }
+    let size = ost::api::clamp_size(size);
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let page = ost::api::search_messages_data(&client, query, from, size)
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let items: Vec<_> = page.hits.iter().map(search_hit_to_json).collect();
+            Ok(json!({
+                "ok": true,
+                "query": query,
+                "from": from,
+                "size": size,
+                "total": page.total,
+                "more": page.more,
+                "next_from": ost::api::next_from(from, &page),
+                "hits": items,
+            })
+            .to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("search", e),
     }
 }
 
@@ -1340,6 +1425,63 @@ pub fn files_children_json(drive_id: &str, item_id: &str, limit: usize) -> Strin
     match run() {
         Ok(s) => s,
         Err(e) => err_json("files_children", e),
+    }
+}
+
+/// Search the signed-in user's OneDrive by name/content (om-jb-filesearch).
+/// One `$top` window (limit clamped 1..=25); rows reuse the Shared tab
+/// projection. Empty queries are rejected before any network.
+/// Returns `{ok:true, query, files:[...]}`.
+pub fn file_search_json(query: &str, limit: usize) -> String {
+    if query.trim().is_empty() {
+        return err_json("arg", "empty query");
+    }
+    let limit = ost::api::clamp_limit(limit);
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let files = ost::api::search_files_data(&client, query, limit)
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let items: Vec<_> = files.iter().map(shared_file_to_json).collect();
+            Ok(json!({"ok": true, "query": query, "files": items}).to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("file_search", e),
+    }
+}
+
+/// Search the directory for people by display name (om-jb-filesearch).
+/// One `$top` window (limit clamped 1..=25); rows reuse the roster
+/// projection with empty roles (directory hits carry no team role).
+/// Empty queries are rejected before any network.
+/// Returns `{ok:true, query, people:[...]}`.
+pub fn people_search_json(query: &str, limit: usize) -> String {
+    if query.trim().is_empty() {
+        return err_json("arg", "empty query");
+    }
+    let limit = ost::api::clamp_limit(limit);
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let people = ost::api::search_people_data(&client, query, limit)
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let items: Vec<_> = people.iter().map(team_member_to_json).collect();
+            Ok(json!({"ok": true, "query": query, "people": items}).to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("people_search", e),
     }
 }
 
@@ -2423,6 +2565,19 @@ pub fn trouter_poll_wait_json(timeout_ms: u64) -> String {
 /// NOTE: drains the same queue as [`trouter_poll_json`] — use one consumer.
 pub fn trouter_poll_typed_json() -> String {
     let events = ost::event_hub::drain(TROUTER_DRAIN_MAX);
+    typed_envelope(events)
+}
+
+/// Blocking variant of [`trouter_poll_typed_json`]: waits up to
+/// `timeout_ms` for the first event instead of returning empty
+/// immediately. Same envelope. `timeout_ms == 0` polls without waiting.
+pub fn trouter_poll_typed_wait_json(timeout_ms: u64) -> String {
+    let events = ost::event_hub::drain_wait(TROUTER_DRAIN_MAX, timeout_ms);
+    typed_envelope(events)
+}
+
+/// Build the typed realtime envelope for one drained batch.
+fn typed_envelope(events: Vec<String>) -> String {
     let backlog = ost::event_hub::len();
     let mut values = Vec::with_capacity(events.len());
     let mut unparseable = 0usize;
@@ -2592,6 +2747,24 @@ pub extern "C" fn ostmac_team_join(team_id: *const c_char) -> *mut c_char {
     }
 }
 
+/// Create one standard team (async Graph POST, requires sign-in).
+/// `description` may be NULL (no description). See
+/// [`team_create_json`]. Caller frees.
+#[no_mangle]
+pub extern "C" fn ostmac_team_create(
+    name: *const c_char,
+    description: *const c_char,
+) -> *mut c_char {
+    let nm = match cstr_to_string(name) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    match opt_cstr_to_string(description) {
+        Ok(d) => string_to_c(team_create_json(&nm, d.as_deref())),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
 /// One team's roster JSON (requires sign-in). See [`team_members_json`].
 #[no_mangle]
 pub extern "C" fn ostmac_team_members(team_id: *const c_char) -> *mut c_char {
@@ -2668,6 +2841,22 @@ pub extern "C" fn ostmac_messages_page(
     };
     match cstr_to_string(page_token) {
         Ok(t) => string_to_c(messages_page_json(&id, &t, lim)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
+/// Teams message search, one `from`/`size` window. See [`search_json`].
+/// Negative `from` clamps to 0; non-positive `size` means 25.
+#[no_mangle]
+pub extern "C" fn ostmac_search(
+    query: *const c_char,
+    from: c_int,
+    size: c_int,
+) -> *mut c_char {
+    let from = if from < 0 { 0 } else { from as usize };
+    let size = if size <= 0 { 25 } else { size as usize };
+    match cstr_to_string(query) {
+        Ok(q) => string_to_c(search_json(&q, from, size)),
         Err(e) => string_to_c(err_json("arg", e)),
     }
 }
@@ -2880,6 +3069,34 @@ pub extern "C" fn ostmac_files_children(
         Err(e) => return string_to_c(err_json("arg", e)),
     };
     string_to_c(files_children_json(&drive, &item, lim))
+}
+
+/// OneDrive file search, one `$top` window. See [`file_search_json`].
+/// Non-positive `limit` means 25.
+#[no_mangle]
+pub extern "C" fn ostmac_file_search(
+    query: *const c_char,
+    limit: c_int,
+) -> *mut c_char {
+    let lim = if limit <= 0 { 25 } else { limit as usize };
+    match cstr_to_string(query) {
+        Ok(q) => string_to_c(file_search_json(&q, lim)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
+/// Directory people search, one `$top` window. See [`people_search_json`].
+/// Non-positive `limit` means 25.
+#[no_mangle]
+pub extern "C" fn ostmac_people_search(
+    query: *const c_char,
+    limit: c_int,
+) -> *mut c_char {
+    let lim = if limit <= 0 { 25 } else { limit as usize };
+    match cstr_to_string(query) {
+        Ok(q) => string_to_c(people_search_json(&q, lim)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
 }
 
 /// Upload a local file to a chat/channel. See [`files_upload_json`].
@@ -3188,6 +3405,14 @@ pub extern "C" fn ostmac_trouter_poll_wait(timeout_ms: u64) -> *mut c_char {
 #[no_mangle]
 pub extern "C" fn ostmac_trouter_poll_typed() -> *mut c_char {
     string_to_c(trouter_poll_typed_json())
+}
+
+/// Blocking typed poll: waits up to `timeout_ms` for events. Same
+/// envelope as [`trouter_poll_typed_json`]. Call off the main thread.
+/// Caller frees with [`ostmac_free`].
+#[no_mangle]
+pub extern "C" fn ostmac_trouter_poll_typed_wait(timeout_ms: u64) -> *mut c_char {
+    string_to_c(trouter_poll_typed_wait_json(timeout_ms))
 }
 
 /// Stop background Trouter. See [`trouter_stop`].
@@ -3543,6 +3768,16 @@ mod tests {
             let v: serde_json::Value =
                 serde_json::from_str(&channel_create_json(team_id, name, desc)).unwrap();
             assert_eq!(v["ok"], false, "team {:?} name {:?}", team_id, name);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
+    fn team_create_rejects_bad_args_without_network() {
+        for (name, desc) in [("", None), ("   ", None), ("   ", Some("d"))] {
+            let v: serde_json::Value =
+                serde_json::from_str(&team_create_json(name, desc)).unwrap();
+            assert_eq!(v["ok"], false, "name {:?}", name);
             assert_eq!(v["error"], "arg");
         }
     }
@@ -3944,6 +4179,19 @@ mod tests {
     }
 
     #[test]
+    fn ffi_team_create_null_name_is_arg_error() {
+        unsafe {
+            let p = ostmac_team_create(std::ptr::null(), std::ptr::null());
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
     fn ffi_tabs_null_is_arg_error() {
         unsafe {
             let p = ostmac_tabs(std::ptr::null());
@@ -4273,6 +4521,26 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&trouter_poll_wait_json(0)).unwrap();
         assert_eq!(v["events"].as_array().unwrap().len(), 1);
         assert_eq!(v["backlog"].as_u64().unwrap(), 0);
+    }
+
+    #[test]
+    fn typed_poll_wait_zero_timeout_returns_envelope() {
+        let _hub = hub_test_guard();
+        let _ = ost::event_hub::drain(1024);
+        ost::event_hub::publish(
+            r#"{"content":"hi","messagetype":"Text","from":"8:x","threadId":"19:t@thread.v2","id":"1"}"#
+                .to_string(),
+        );
+        let v: serde_json::Value =
+            serde_json::from_str(&trouter_poll_typed_wait_json(0)).unwrap();
+        assert_eq!(v["ok"], true);
+        assert_eq!(v["messages"].as_array().unwrap().len(), 1);
+        assert_eq!(v["messages"][0]["id"], "1");
+        // Drained: second wait returns empty.
+        let v2: serde_json::Value =
+            serde_json::from_str(&trouter_poll_typed_wait_json(0)).unwrap();
+        assert_eq!(v2["messages"].as_array().unwrap().len(), 0);
+        assert_eq!(v2["resync"], false);
     }
 
     #[test]
@@ -5020,6 +5288,91 @@ mod tests {
             assert_eq!(v["ok"], false);
             assert_eq!(v["error"], "arg");
         }
+    }
+
+    #[test]
+    fn search_rejects_empty_query_without_network() {
+        // om-ja-search: blank queries never reach Graph.
+        for bad in ["", "   "] {
+            let v: serde_json::Value =
+                serde_json::from_str(&search_json(bad, 0, 25)).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
+    fn find_search_rejects_empty_query_without_network() {
+        // om-jb-filesearch: blank queries never reach Graph.
+        for bad in ["", "   "] {
+            let v: serde_json::Value =
+                serde_json::from_str(&file_search_json(bad, 25)).unwrap();
+            assert_eq!(v["ok"], false, "query={:?}", bad);
+            assert_eq!(v["error"], "arg");
+            let v: serde_json::Value =
+                serde_json::from_str(&people_search_json(bad, 25)).unwrap();
+            assert_eq!(v["ok"], false, "query={:?}", bad);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
+    fn search_hit_json_shape() {
+        // om-ja-search: channel-hit projection (chat_id = channel).
+        let h = ost::api::SearchHitInfo {
+            message_id: "m9".to_string(),
+            chat_id: "19:chan@thread.tacv2".to_string(),
+            team_id: Some("t1".to_string()),
+            channel_id: Some("19:chan@thread.tacv2".to_string()),
+            sender: "Tom".to_string(),
+            timestamp: "2026-09-22T09:13:05Z".to_string(),
+            preview: "...lane...".to_string(),
+            subject: None,
+        };
+        let v = search_hit_to_json(&h);
+        assert_eq!(v["message_id"], "m9");
+        assert_eq!(v["chat_id"], "19:chan@thread.tacv2");
+        assert_eq!(v["team_id"], "t1");
+        assert_eq!(v["sender"], "Tom");
+        assert!(v["subject"].is_null());
+    }
+
+    #[test]
+    fn find_search_null_query_is_arg_error() {
+        // om-jb-filesearch: null pointers reject (no network).
+        unsafe {
+            for p in [
+                ostmac_file_search(std::ptr::null(), 25),
+                ostmac_people_search(std::ptr::null(), 0),
+            ] {
+                assert!(!p.is_null());
+                let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+                ostmac_free(p);
+                let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+                assert_eq!(v["ok"], false);
+                assert_eq!(v["error"], "arg");
+            }
+        }
+    }
+
+    #[test]
+    fn find_people_row_reuses_roster_projection() {
+        // om-jb-filesearch: directory hit -> TeamMember row, roles empty.
+        let m = ost::api::TeamMemberInfo {
+            id: "u1".to_string(),
+            display_name: "Ava Lindqvist".to_string(),
+            user_id: Some("u1".to_string()),
+            email: Some("ava@x".to_string()),
+            roles: Vec::new(),
+            is_owner: false,
+        };
+        let v = team_member_to_json(&m);
+        assert_eq!(v["id"], "u1");
+        assert_eq!(v["display_name"], "Ava Lindqvist");
+        assert_eq!(v["user_id"], "u1");
+        assert_eq!(v["email"], "ava@x");
+        assert!(v["roles"].as_array().unwrap().is_empty());
+        assert_eq!(v["is_owner"], false);
     }
 
     #[test]

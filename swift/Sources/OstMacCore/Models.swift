@@ -236,6 +236,28 @@ public struct TeamJoinResponse: Decodable, Sendable {
     }
 }
 
+/// `{ok,team,polls?,elapsed_ms?}` from `ostmac_team_create`. Telemetry
+/// is optional (older cores omit it); the team row always decodes.
+public struct TeamCreateResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let team: TeamItem
+    public let polls: Int?
+    public let elapsedMs: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case ok, team, polls
+        case elapsedMs = "elapsed_ms"
+    }
+
+    /// Host-side construction (mocks, previews). Wire decoding is untouched.
+    public init(ok: Bool, team: TeamItem, polls: Int? = nil, elapsedMs: Int? = nil) {
+        self.ok = ok
+        self.team = team
+        self.polls = polls
+        self.elapsedMs = elapsedMs
+    }
+}
+
 // MARK: - Channel tabs (om-h4-tabs lane)
 
 /// Where one channel tab deep-links. Posts/Files/Notes land in the
@@ -826,6 +848,82 @@ public struct ReceiptsResponse: Decodable, Sendable {
     }
 }
 
+// MARK: - Message search (om-ja-search lane: Graph /search/query)
+
+/// One message hit from core `ostmac_search`. `chatID` is the conversation
+/// to open (the chat thread, or the channel id for channel hits, which
+/// carry no chat id). `id` composites both so rows stay unique when two
+/// chats share a message id.
+public struct SearchHit: Decodable, Sendable, Identifiable, Equatable {
+    public var id: String { "\(chatID):\(messageID)" }
+    public let messageID: String
+    public let chatID: String
+    public let teamID: String?
+    public let channelID: String?
+    public let sender: String
+    public let timestamp: String
+    public let preview: String
+    public let subject: String?
+
+    enum CodingKeys: String, CodingKey {
+        case messageID = "message_id"
+        case chatID = "chat_id"
+        case teamID = "team_id"
+        case channelID = "channel_id"
+        case sender, timestamp, preview, subject
+    }
+
+    /// Host-side construction (demo data, previews). Wire decoding is untouched.
+    public init(
+        messageID: String, chatID: String,
+        teamID: String? = nil, channelID: String? = nil,
+        sender: String, timestamp: String,
+        preview: String, subject: String? = nil
+    ) {
+        self.messageID = messageID
+        self.chatID = chatID
+        self.teamID = teamID
+        self.channelID = channelID
+        self.sender = sender
+        self.timestamp = timestamp
+        self.preview = preview
+        self.subject = subject
+    }
+
+    /// "2026-09-22T09:12:05Z" -> "09:12 22 Sep" (ChatMessage rules).
+    public var displayTime: String {
+        ChatMessage.shortTime(timestamp)
+    }
+}
+
+/// One `from`/`size` window from core `ostmac_search`. `next_from` (nil
+/// when exhausted) chains the next window via `from`.
+public struct SearchResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let query: String?
+    public let from: Int?
+    public let size: Int?
+    public let total: Int?
+    public let more: Bool
+    public let next_from: Int?
+    public let hits: [SearchHit]
+
+    /// Host-side construction (demo data, previews). Wire decoding is untouched.
+    public init(
+        ok: Bool, query: String? = nil, from: Int? = nil, size: Int? = nil,
+        total: Int? = nil, more: Bool, next_from: Int? = nil, hits: [SearchHit]
+    ) {
+        self.ok = ok
+        self.query = query
+        self.from = from
+        self.size = size
+        self.total = total
+        self.more = more
+        self.next_from = next_from
+        self.hits = hits
+    }
+}
+
 // MARK: - Rich media (om-richmedia lane)
 
 /// One fetched inline image: base64 bytes + the server's content type.
@@ -1002,6 +1100,40 @@ public struct SharedFileLinkResponse: Decodable, Sendable {
         self.ok = ok
         self.link = link
         self.scope = scope
+    }
+}
+
+// MARK: - File + people search (om-jb-filesearch lane)
+
+/// One OneDrive search window from core `ostmac_file_search`:
+/// `{"ok","query","files":[...]}`. Rows reuse ``SharedFile`` (the
+/// Shared tab shape), so palette rows render with `iconName`/`sizeLabel`.
+public struct FileSearchResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let query: String?
+    public let files: [SharedFile]
+
+    /// Host-side construction (demo data, mock searchers).
+    public init(ok: Bool, query: String? = nil, files: [SharedFile]) {
+        self.ok = ok
+        self.query = query
+        self.files = files
+    }
+}
+
+/// One directory search window from core `ostmac_people_search`:
+/// `{"ok","query","people":[...]}`. Rows reuse ``TeamMember`` (the
+/// roster shape) with empty roles — directory hits carry no team role.
+public struct PeopleSearchResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let query: String?
+    public let people: [TeamMember]
+
+    /// Host-side construction (demo data, mock searchers).
+    public init(ok: Bool, query: String? = nil, people: [TeamMember]) {
+        self.ok = ok
+        self.query = query
+        self.people = people
     }
 }
 

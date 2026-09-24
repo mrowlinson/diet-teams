@@ -58,6 +58,16 @@ enum Commands {
         limit: usize,
     },
 
+    /// Search Teams messages (Graph /search/query, first window)
+    Search {
+        /// Free-text query (KQL scope terms like from: allowed)
+        query: String,
+
+        /// Maximum hits to show (Graph caps at 25)
+        #[arg(short, long, default_value = "25")]
+        limit: usize,
+    },
+
     /// Send a message
     Send {
         /// Chat thread ID (from `chats` output)
@@ -200,6 +210,26 @@ enum Commands {
         /// Link scope: organization (org-only, default) or anonymous
         #[arg(long, default_value = "organization")]
         scope: String,
+    },
+
+    /// Search OneDrive files by name/content (om-jb-filesearch)
+    FileSearch {
+        /// Free-text query
+        query: String,
+
+        /// Maximum number of files to show
+        #[arg(short, long, default_value = "25")]
+        limit: usize,
+    },
+
+    /// Search the directory for people (om-jb-filesearch)
+    PeopleSearch {
+        /// Free-text query (matches display name)
+        query: String,
+
+        /// Maximum number of people to show
+        #[arg(short, long, default_value = "25")]
+        limit: usize,
     },
 
     /// OneNote notebooks, sections, pages (read; --append edits)
@@ -386,6 +416,14 @@ async fn main() -> Result<()> {
         } => {
             api::create_link(&drive_id, &item_id, &scope).await?;
         }
+        Commands::FileSearch { query, limit } => {
+            tracing::info!("Searching files...");
+            api::search_files(&query, limit).await?;
+        }
+        Commands::PeopleSearch { query, limit } => {
+            tracing::info!("Searching people...");
+            api::search_people(&query, limit).await?;
+        }
         Commands::Notes {
             group,
             notebook,
@@ -499,6 +537,9 @@ async fn main() -> Result<()> {
             } else {
                 api::list_todo_lists().await?;
             }
+        }
+        Commands::Search { query, limit } => {
+            api::search_messages(&query, limit).await?;
         }
         Commands::Meetings { limit, parse } => {
             if let Some(raw) = parse {

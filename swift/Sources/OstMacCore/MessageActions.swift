@@ -17,11 +17,17 @@ public enum MessageActions {
     /// no link parsed). Plain messages are unchanged (no rows).
     public static func copyText(for message: ChatMessage) -> String {
         let body = MessageRender.bubbleText(for: message)
-        let rows = MessageRender.botPosts(fromRaw: message.raw ?? message.content).map { post in
-            if let url = post.url { return "\(post.title) — \(url)" }
-            return post.title
+        let cards = MessageBubbleState.cards(for: message).flatMap(\.copyLines)
+        let rows: [String]
+        if MessageBubbleState.shouldShowFallbackRows(for: message) {
+            rows = MessageRender.botPosts(fromRaw: message.raw ?? message.content).map { post in
+                if let url = post.url { return "\(post.title) — \(url)" }
+                return post.title
+            }
+        } else {
+            rows = []
         }
-        return ([body] + rows).filter { !$0.isEmpty }.joined(separator: "\n")
+        return ([body] + cards + rows).filter { !$0.isEmpty }.joined(separator: "\n")
     }
 
     /// One Copy payload: the plain bubble text plus an RTF rendering

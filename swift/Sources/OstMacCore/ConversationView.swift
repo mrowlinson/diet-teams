@@ -246,19 +246,22 @@ public struct ConversationView: View {
         .frame(minWidth: 320, idealWidth: 400)
     }
 
-    /// Lazily load the Shared tab when selected (no unsigned core calls
-    /// from the Chat tab). Demo mode adopts canned files offline.
-    /// Om-inline-docs: the Chat tab also preloads the list (metadata
-    /// only, never bytes) when a visible bubble carries doc refs, so
-    /// inline rows can resolve; chats without refs never load.
+    /// Prefetch gate (om-fix-tabs): Shared loads on every chat change,
+    /// whatever tab is showing — by the time the user taps Shared the
+    /// rows are cached and the switch is instant (native, no wait, no
+    /// custom transition). Pure, testable.
+    public nonisolated static func shouldPrefetchShared(sharedChatID: String?, chatID: String?) -> Bool {
+        guard let chatID else { return false }
+        return sharedChatID != chatID
+    }
+
+    /// Prefetch the Shared list on conversation open (metadata only,
+    /// never bytes). Demo mode adopts canned files offline. Inline doc
+    /// rows resolve against the prefetched list in memory.
     private func syncShared() {
         guard let id = store.chatID else { return }
-        guard shared.chatID != id else { return }
-        if tab == 1 {
-            loadShared(id: id)
-        } else if tab == 0, InlineDocs.shouldPreload(messages: store.messages) {
-            loadShared(id: id)
-        }
+        guard Self.shouldPrefetchShared(sharedChatID: shared.chatID, chatID: id) else { return }
+        loadShared(id: id)
     }
 
     private func loadShared(id: String) {
@@ -290,8 +293,9 @@ public struct ConversationView: View {
         }
     }
 
-    /// Chip tap: well-known tabs switch this picker's tab (tab change
-    /// drives syncShared); website tabs open in the browser.
+    /// Chip tap: well-known tabs switch this picker's tab instantly
+    /// (Shared/Notes are prefetched on open, never on tap); website tabs
+    /// open in the browser.
     private func selectTabTarget(_ target: ChannelTabTarget) {
         switch target {
         case .chat: tab = 0
@@ -679,6 +683,9 @@ struct MessageBubble: View {
     /// Pinned state (om-pinmessages): drives the Pin/Unpin menu label.
     var isPinned: Bool = false
     var onTogglePin: () -> Void = {}
+    /// Open chat id (om-jd-cardactions): feeds the "Open in Teams"
+    /// fallback link. Nil (previews, tests) falls back to Teams home.
+    var chatID: String? = nil
 
     var body: some View {
         HStack(spacing: DietSpace.xs) {
@@ -728,8 +735,29 @@ struct MessageBubble: View {
                     ForEach(Array(photos.enumerated()), id: \.offset) { _, img in
                         RemoteImage(url: img.url, messageID: message.id, alt: img.alt)
                     }
-                    if !posts.isEmpty {
+                    let cards = MessageBubbleState.cards(for: message)
+                    if !cards.isEmpty {
+                        ForEach(Array(cards.enumerated()), id: \.offset) { _, card in
+                            AdaptiveCardView(
+                                card: card, messageID: message.id,
+                                chatID: chatID)
+                        }
+                    }
+                    if !posts.isEmpty, MessageBubbleState.shouldShowFallbackRows(for: message) {
                         BotPostRows(posts: posts)
+                    }
+                    // Card actions (om-jd-cardactions): rendered cards own
+                    // their rows inside AdaptiveCardView (OpenUrl links +
+                    // "Open in Teams" fallback); this decoupled block stays
+                    // for non-card payloads (O365 connector actions etc).
+                    // No-op without card actions.
+                    let cardActions = cards.isEmpty
+                        ? CardActions.actions(fromRaw: message.raw ?? message.content)
+                        : .empty
+                    if !cardActions.isEmpty {
+                        CardActionRows(
+                            actions: cardActions, chatID: chatID,
+                            messageID: message.id)
                     }
                     if !docs.isEmpty {
                         InlineDocRows(docs: docs, onOpen: onOpenDoc)
