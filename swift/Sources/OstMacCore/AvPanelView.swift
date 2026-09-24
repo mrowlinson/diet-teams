@@ -8,7 +8,8 @@
 // om-avfix: mic TCC gate (one .audio prompt on Test; probe/meter wait
 // for the grant; denial hint + Settings link), unknown_device
 // rescan+heal (empty-list wedge keeps the pick, true unplug heals to
-// the default).
+// the default). om-av-fix: open_failed (resolved but unusable) shows a
+// retry line and never heals the pick.
 import DietDesign
 import SwiftUI
 
@@ -66,12 +67,15 @@ public enum AvSummary {
     public static func friendlyError(_ e: Error) -> String {
         guard case let CoreCallError.failed(m) = e else { return e.localizedDescription }
         if m.contains("unknown_device") { return "Device unplugged — pick another" }
+        if m.contains("open_failed") { return "Couldn't open device — try again" }
         if m.contains("no_input") { return "Microphone unavailable" }
         if m.contains("no_output") { return "Speaker unavailable" }
         return m
     }
 
     /// True when a core error is a stale device pick (unknown_device).
+    /// open_failed is NOT unknown: the pick resolved, the stream failed —
+    /// the panel must not heal it away.
     public static func isUnknownDevice(_ e: Error) -> Bool {
         guard case let CoreCallError.failed(m) = e else { return false }
         return m.contains("unknown_device")

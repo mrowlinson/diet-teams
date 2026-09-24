@@ -80,7 +80,22 @@ pub fn mic_probe_json() -> String {
     json!({"ok": true, "input": input, "output": output}).to_string()
 }
 
-/// Capture `seconds` of mic + play back. Errors `no_input` without a mic.
+/// Map an ost audio error message to its FFI code. Resolve-fail
+/// (`Unknown audio…`) stays `unknown_device`; open-fail
+/// (`Failed to open audio…`) is `open_failed` so the panel never heals
+/// a healthy pick; anything else is the `missing` code.
+pub fn audio_error_code<'a>(msg: &str, missing: &'a str) -> &'a str {
+    if msg.starts_with("Unknown audio") {
+        "unknown_device"
+    } else if msg.starts_with("Failed to open audio") {
+        "open_failed"
+    } else {
+        missing
+    }
+}
+
+/// Capture `seconds` of mic + play back. Errors `no_input` without a mic,
+/// `open_failed` when the device resolves but the stream fails.
 pub fn mic_test_json(seconds: u64) -> String {
     match ost::calling::audio::mic_test_report(seconds, false) {
         Ok(r) => json!({
@@ -91,15 +106,24 @@ pub fn mic_test_json(seconds: u64) -> String {
             "played_back": r.played_back,
         })
         .to_string(),
-        Err(e) => err_json("no_input", e),
+        Err(e) => {
+            let msg = e.to_string();
+            let code = audio_error_code(&msg, "no_input");
+            err_json(code, msg)
+        }
     }
 }
 
-/// Play a 1kHz tone for `msecs`. Errors `no_output` without a speaker.
+/// Play a 1kHz tone for `msecs`. Errors `no_output` without a speaker,
+/// `open_failed` when the device resolves but the stream fails.
 pub fn tone_play_json(msecs: u64) -> String {
     match ost::calling::audio::play_tone(msecs) {
         Ok(frames) => json!({"ok": true, "frames": frames}).to_string(),
-        Err(e) => err_json("no_output", e),
+        Err(e) => {
+            let msg = e.to_string();
+            let code = audio_error_code(&msg, "no_output");
+            err_json(code, msg)
+        }
     }
 }
 
@@ -128,7 +152,8 @@ pub fn audio_devices_json() -> String {
 }
 
 /// Named-device mic test (None/empty = default). Errors `no_input` when
-/// the device is missing, `unknown_device` for a stale pick.
+/// the device is missing, `unknown_device` for a stale pick, `open_failed`
+/// when a resolved device cannot be opened.
 pub fn mic_test_on_json(seconds: u64, input: Option<&str>, output: Option<&str>) -> String {
     match ost::calling::audio::mic_test_report_on(seconds, false, input, output) {
         Ok(r) => json!({
@@ -141,27 +166,20 @@ pub fn mic_test_on_json(seconds: u64, input: Option<&str>, output: Option<&str>)
         .to_string(),
         Err(e) => {
             let msg = e.to_string();
-            let code = if msg.starts_with("Unknown audio") {
-                "unknown_device"
-            } else {
-                "no_input"
-            };
+            let code = audio_error_code(&msg, "no_input");
             err_json(code, msg)
         }
     }
 }
 
 /// Named-device tone play (None/empty = default output).
+/// `unknown_device` = stale pick, `open_failed` = resolved but unusable.
 pub fn tone_play_on_json(msecs: u64, output: Option<&str>) -> String {
     match ost::calling::audio::play_tone_on(msecs, output) {
         Ok(frames) => json!({"ok": true, "frames": frames}).to_string(),
         Err(e) => {
             let msg = e.to_string();
-            let code = if msg.starts_with("Unknown audio") {
-                "unknown_device"
-            } else {
-                "no_output"
-            };
+            let code = audio_error_code(&msg, "no_output");
             err_json(code, msg)
         }
     }
@@ -586,6 +604,53 @@ mod tests {
             serde_json::from_str(&tone_play_on_json(100, Some("ostmac-no-such-device"))).unwrap();
         assert_eq!(v["ok"], false);
         assert_eq!(v["error"], "unknown_device");
+    }
+
+    #[test]
+    fn av_f32_converters_roundtrip() {
+        // Gate-covered (ost audio tests need --features audio): pure
+        // converter checks over the real ost functions, no hardware.
+        use ost::calling::audio as a;
+        assert_eq!(a::f32_to_i16(0.0), 0);
+        assert_eq!(a::f32_to_i16(1.0), 32767);
+        assert_eq!(a::f32_to_i16(-1.5), -32767);
+        assert_eq!(a::i16_to_f32(0), 0.0);
+        assert_eq!(
+            a::f32_interleaved_to_mono_i16(&[1.0, -1.0], 2),
+            vec![0]
+        );
+        assert_eq!(
+            a::f32_interleaved_to_mono_i16(&[0.5, 0.5], 2),
+            vec![16384]
+        );
+    }
+
+    #[test]
+    fn av_audio_error_code_splits_open_from_resolve() {
+        // Pure mapping: no hardware touched.
+        assert_eq!(
+            audio_error_code("Unknown audio input device: X", "no_input"),
+            "unknown_device"
+        );
+        assert_eq!(
+            audio_error_code(
+                "Failed to open audio input device 'X': build failed",
+                "no_input"
+            ),
+            "open_failed"
+        );
+        assert_eq!(
+            audio_error_code(
+                "Failed to open audio output device: build failed",
+                "no_output"
+            ),
+            "open_failed"
+        );
+        assert_eq!(audio_error_code("No audio input device found", "no_input"), "no_input");
+        assert_eq!(
+            audio_error_code("No audio output device found", "no_output"),
+            "no_output"
+        );
     }
 
     #[test]

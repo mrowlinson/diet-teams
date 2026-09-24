@@ -96,6 +96,9 @@ final class AvPanelTests: XCTestCase {
         XCTAssertEqual(
             AvSummary.friendlyError(CoreCallError.failed("unknown_device: Unknown audio input device: X")),
             "Device unplugged — pick another")
+        XCTAssertEqual(
+            AvSummary.friendlyError(CoreCallError.failed("open_failed: Failed to open audio input device 'X': boom")),
+            "Couldn't open device — try again")
         // Unknown codes pass through untouched.
         XCTAssertEqual(
             AvSummary.friendlyError(CoreCallError.failed("boom: details")),
@@ -121,6 +124,8 @@ final class AvPanelTests: XCTestCase {
             CoreCallError.failed("unknown_device: Unknown audio input device: X")))
         XCTAssertFalse(AvSummary.isUnknownDevice(
             CoreCallError.failed("no_input: No audio input device found")))
+        XCTAssertFalse(AvSummary.isUnknownDevice(
+            CoreCallError.failed("open_failed: Failed to open audio input device 'X': boom")))
         XCTAssertFalse(AvSummary.isUnknownDevice(
             CoreCallError.failed("boom: details")))
         XCTAssertFalse(AvSummary.isUnknownDevice(CoreCallError.badUTF8))

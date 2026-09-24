@@ -233,6 +233,22 @@ needing maintainer buy-in. Minor PRs stand alone; majors are separate PRs.
     endpoint/body shapes, id split incl. blanks, tolerant parse incl.
     missing/empty lists.
 
+26. [minor] `src/calling/audio.rs` — **F32 audio path + open/resolve
+    error split + fail-fast setup (om-av-fix lane)**. Streams build as F32
+    (i16 rejected by CoreAudio: "stream configuration not supported") with
+    `f32_to_i16`/`i16_to_f32`/`f32_interleaved_to_mono_i16` conversion in
+    the callback accumulator (mic + speaker; multi-channel downmixed).
+    `AudioStartError::{UnknownDevice,NoDevice,OpenFailed}` splits
+    resolve-fail from open-fail (`start_on_detailed`; `mic_test_report_on`/
+    `play_tone_on` propagate it); `start_on` keeps its `Option` shape for
+    probe/meter/media callers. Setup reports over a oneshot channel so
+    `build_*_stream` errors return in milliseconds instead of burning the
+    10 s poll timeout on every path (mic test, meter, probe, tone).
+    Unit tests: converter scale/clamp/mono/stereo/6ch, error display
+    prefixes, detailed-unknown determinism. Live-verified 2026-09-24
+    (MacBook mic + BoomAudio resolve AND open; mic_test dB numbers,
+    tone_play exit 0).
+
 ## Upstream PRs (2026-09-22, base 0892144; main red on sdp E0308 until #5)
 
 Minor (standalone modulo #5-first; merge in any order after):
