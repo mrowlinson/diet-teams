@@ -66,9 +66,12 @@ pub use notes::{
 pub use presence::get_presence_data;
 pub use tabs::list_tabs_data;
 pub use teams::{
-    add_member_body, add_team_member_data, create_channel_body, create_channel_data,
-    create_channel_path, join_team_data, list_team_members_data, list_teams_data,
-    member_path, members_path, remove_team_member_data,
+    add_member_body, add_team_member_data, channel_react_body,
+    channel_reply_set_reaction_path, channel_reply_unset_reaction_path,
+    channel_set_reaction_path, channel_unset_reaction_path, create_channel_body,
+    create_channel_data, create_channel_path, join_team_data, list_team_members_data,
+    list_teams_data, member_path, members_path, remove_team_member_data,
+    set_channel_reaction_data, unset_channel_reaction_data,
 };
 pub use todo::{
     complete_todo_task_data, create_todo_task_data, list_todo_lists_data,
