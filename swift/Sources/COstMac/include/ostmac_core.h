@@ -55,6 +55,9 @@ char *ostmac_channel_create(
 // Join one team by id (self-enroll): {ok, team_id}. Caller frees.
 char *ostmac_team_join(const char *team_id);
 
+// One channel's pinned tabs JSON, read-only: {ok, channel_id, tabs}. Caller frees.
+char *ostmac_tabs(const char *channel_id);
+
 // Message history JSON for one chat (requires sign-in). Caller frees.
 char *ostmac_messages(const char *chat_id, int limit);
 

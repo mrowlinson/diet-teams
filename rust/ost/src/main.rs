@@ -126,6 +126,12 @@ enum Commands {
     /// List joined teams and their channels
     Teams,
 
+    /// List a channel's pinned tabs (read-only)
+    Tabs {
+        /// Channel ID (from `teams` output)
+        channel_id: String,
+    },
+
     /// List shared files in a chat or channel
     Files {
         /// Chat or channel ID (from `chats` / `teams` output)
@@ -295,6 +301,10 @@ async fn main() -> Result<()> {
         }
         Commands::Teams => {
             api::list_teams().await?;
+        }
+        Commands::Tabs { channel_id } => {
+            tracing::info!("Fetching channel tabs...");
+            api::list_tabs(&channel_id).await?;
         }
         Commands::Files { chat_id, limit } => {
             tracing::info!("Fetching shared files...");

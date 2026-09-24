@@ -583,6 +583,43 @@ pub fn team_join_json(team_id: &str) -> String {
     }
 }
 
+fn tab_to_json(t: &ost::api::TabInfo) -> serde_json::Value {
+    json!({
+        "id": t.id,
+        "name": t.name,
+        "app_id": t.app_id,
+        "content_url": t.content_url,
+        "website_url": t.website_url,
+    })
+}
+
+/// One channel's pinned tabs as JSON (read-only). Requires sign-in;
+/// unsigned yields `{ok:false}`. Empty `channel_id` is rejected before
+/// any network. Swift deep-links Posts/Files/Notes into its own views
+/// and opens web-tab URLs in the browser; no content is fetched here.
+pub fn tabs_json(channel_id: &str) -> String {
+    if channel_id.trim().is_empty() {
+        return err_json("arg", "empty channel_id");
+    }
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let tabs = ost::api::list_tabs_data(&client, channel_id)
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let items: Vec<_> = tabs.iter().map(tab_to_json).collect();
+            Ok(json!({"ok": true, "channel_id": channel_id, "tabs": items}).to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("tabs", e),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Messages (one chat: history + send)
 // ---------------------------------------------------------------------------
@@ -1959,6 +1996,15 @@ pub extern "C" fn ostmac_team_join(team_id: *const c_char) -> *mut c_char {
     }
 }
 
+/// One channel's pinned tabs JSON (read-only). See [`tabs_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_tabs(channel_id: *const c_char) -> *mut c_char {
+    match cstr_to_string(channel_id) {
+        Ok(id) => string_to_c(tabs_json(&id)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
 /// Message history JSON for one chat. See [`messages_json`].
 #[no_mangle]
 pub extern "C" fn ostmac_messages(chat_id: *const c_char, limit: c_int) -> *mut c_char {
@@ -2835,9 +2881,48 @@ mod tests {
     }
 
     #[test]
+    fn tab_json_shape() {
+        let t = ost::api::TabInfo {
+            id: "tab-1".to_string(),
+            name: "Dashboard".to_string(),
+            app_id: Some("com.example.dashboard".to_string()),
+            content_url: Some("https://example.com/app".to_string()),
+            website_url: None,
+        };
+        let v = tab_to_json(&t);
+        assert_eq!(v["id"], "tab-1");
+        assert_eq!(v["name"], "Dashboard");
+        assert_eq!(v["app_id"], "com.example.dashboard");
+        assert_eq!(v["content_url"], "https://example.com/app");
+        assert!(v["website_url"].is_null());
+    }
+
+    #[test]
+    fn tabs_empty_args_is_error() {
+        for bad in ["", "   "] {
+            let v: serde_json::Value = serde_json::from_str(&tabs_json(bad)).unwrap();
+            assert_eq!(v["ok"], false, "channel={:?}", bad);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
     fn ffi_team_join_null_is_arg_error() {
         unsafe {
             let p = ostmac_team_join(std::ptr::null());
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
+    fn ffi_tabs_null_is_arg_error() {
+        unsafe {
+            let p = ostmac_tabs(std::ptr::null());
             assert!(!p.is_null());
             let s = CStr::from_ptr(p).to_string_lossy().into_owned();
             ostmac_free(p);
