@@ -63,12 +63,12 @@ final class LeaveBlockTests: XCTestCase {
             LeaveSelection.fallback(removedID: "a", chats: chats, selectedID: "b"), "b")
         XCTAssertNil(
             LeaveSelection.fallback(removedID: "a", chats: chats, selectedID: nil))
-        // Synthetic selections survive a real-row removal too.
+        // Unknown-but-untouched selections survive a real-row removal too.
         XCTAssertEqual(
             LeaveSelection.fallback(
                 removedID: "a", chats: chats,
-                selectedID: PinnedChats.mentionsID),
-            PinnedChats.mentionsID)
+                selectedID: "zz-other"),
+            "zz-other")
     }
 
     func testFallbackMiddleGoesNext() {
@@ -217,8 +217,7 @@ final class LeaveBlockTests: XCTestCase {
             leaver: { _ in calls.value += 1; return LeaveResponse(ok: true) })
         model.selectedChatID = "g1"
         await model.leave(chatID: "unknown")
-        await model.leave(chatID: PinnedChats.mentionsID)
-        await model.leave(chatID: PinnedChats.notificationsID)
+        await model.leave(chatID: "om-stale-id")
         await model.leave(chatID: "   ")
         XCTAssertEqual(calls.value, 0)
         XCTAssertEqual(model.chats.map(\.id), ["g1", "g2", "g3"])
@@ -340,7 +339,7 @@ final class LeaveBlockTests: XCTestCase {
         let model = await loadedModel(Self.groups3(), blocked: blocked)
         model.selectedChatID = "g1"
         model.block(chatID: "unknown")
-        model.block(chatID: PinnedChats.mentionsID)
+        model.block(chatID: "om-stale-id")
         model.block(chatID: "   ")
         XCTAssertTrue(blocked.users.isEmpty)
         XCTAssertEqual(model.chats.map(\.id), ["g1", "g2", "g3"])
