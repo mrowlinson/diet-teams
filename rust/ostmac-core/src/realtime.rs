@@ -27,6 +27,11 @@
 //! order. Reaction-only events (no content) yield empty text so the host
 //! patches counts onto the known bubble.
 //!
+//! Typing (om-typing): `messagetype: "Control/Typing"` frames (no content)
+//! yield `TypingEvent`s (`typing[]`), never messages. The host holds them
+//! per thread with a timeout; frames without an attributable sender are
+//! skipped (nothing to show).
+//!
 //! `message_loss` behavior: the server sends `trouter.message_loss` when it
 //! dropped queued indicators (backpressure / reconnect gap / stale etag). It
 //! means "push is not a complete log — some events were never delivered".
@@ -78,10 +83,23 @@ pub struct ReactionCount {
     pub count: usize,
 }
 
+/// One typing indicator extracted from a Trouter event (om-typing).
+/// Skype/Teams sends `messagetype: "Control/Typing"` frames (no content);
+/// the host holds them per thread with a timeout, never as bubbles.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TypingEvent {
+    pub chat_id: String,
+    pub sender: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sender_id: Option<String>,
+    pub time: String,
+}
+
 /// Result of parsing one batch of raw events.
 #[derive(Debug, Default)]
 pub struct ParsedBatch {
     pub messages: Vec<RealtimeMessage>,
+    pub typing: Vec<TypingEvent>,
     pub resync: bool,
     pub skipped: usize,
 }
@@ -126,7 +144,18 @@ fn parse_value(v: &Value, batch: &mut ParsedBatch) {
                     return;
                 }
                 let edit_hint = name.contains("edit");
+                let typing_hint = name.contains("typing");
                 for a in args {
+                    // Named typing envelope: the name may be the only
+                    // marker, so try typing before the generic path.
+                    if typing_hint {
+                        if let Value::Object(m) = a {
+                            if let Some(t) = typing_from_object_hinted(m, true) {
+                                batch.typing.push(t);
+                                continue;
+                            }
+                        }
+                    }
                     parse_value_hint(a, edit_hint, batch);
                 }
                 return;
@@ -146,6 +175,12 @@ fn parse_value(v: &Value, batch: &mut ParsedBatch) {
                 }
                 return;
             }
+            // Typing frames first: they must surface as indicators,
+            // never as bubbles (even if one ever carries content).
+            if let Some(t) = typing_from_object_hinted(map, false) {
+                batch.typing.push(t);
+                return;
+            }
             match message_from_object(map, false) {
                 Some(m) => batch.messages.push(m),
                 None => batch.skipped += 1,
@@ -161,6 +196,10 @@ fn parse_value_hint(v: &Value, edit_hint: bool, batch: &mut ParsedBatch) {
             if has_loss_marker(map) {
                 batch.resync = true;
                 batch.skipped += 1;
+                return;
+            }
+            if let Some(t) = typing_from_object_hinted(map, false) {
+                batch.typing.push(t);
                 return;
             }
             match message_from_object(map, true) {
@@ -202,6 +241,66 @@ fn str_ci(map: &serde_json::Map<String, Value>, key: &str) -> Option<String> {
 
 fn first_str(map: &serde_json::Map<String, Value>, keys: &[&str]) -> Option<String> {
     keys.iter().find_map(|k| str_ci(map, k))
+}
+
+/// True when the object is a typing indicator, not a message.
+/// Skype/Teams sends `messagetype: "Control/Typing"` frames (no content).
+/// Matched case-insensitively; `type`/`resourceType` covered defensively.
+fn is_typing_frame(map: &serde_json::Map<String, Value>) -> bool {
+    for key in ["messagetype", "messageType", "type", "resourceType"] {
+        if let Some(s) = str_ci(map, key) {
+            if s.to_lowercase().contains("typing") {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Build a typing indicator from a flat resource object. None = not a
+/// typing frame, or one with no attributable sender (nothing to show).
+/// When `hinted` (named typing envelope), the envelope name itself is
+/// the marker, so attributed sender + thread suffice without a type field.
+fn typing_from_object_hinted(
+    map: &serde_json::Map<String, Value>,
+    hinted: bool,
+) -> Option<TypingEvent> {
+    if !hinted && !is_typing_frame(map) {
+        return None;
+    }
+    let sender = first_str(
+        map,
+        &["imdisplayname", "displayname", "displayName", "from"],
+    )
+    .unwrap_or_default();
+    let sender_id = str_ci(map, "from").filter(|f| f.starts_with("8:"));
+    if sender.is_empty() && sender_id.is_none() {
+        return None;
+    }
+    if hinted && !is_typing_frame(map) && chat_id_from(map).is_empty() {
+        return None; // named envelope, but no thread and no marker
+    }
+    let time = first_str(
+        map,
+        &[
+            "originalarrivaltime",
+            "composetime",
+            "createddatetime",
+            "arrivaltime",
+            "timestamp",
+        ],
+    )
+    .unwrap_or_default();
+    Some(TypingEvent {
+        chat_id: chat_id_from(map),
+        sender: if sender.is_empty() {
+            "?".to_string()
+        } else {
+            sender
+        },
+        sender_id,
+        time,
+    })
 }
 
 /// Build a typed message from a flat resource object. None = not a message.
@@ -534,5 +633,73 @@ mod tests {
         let b = parse_batch(&[v]);
         assert_eq!(b.messages.len(), 1);
         assert_eq!(b.messages[0].message_type, "");
+    }
+
+    #[test]
+    fn control_typing_frame_yields_typing_not_message() {
+        let b = batch_of(json!({
+            "messagetype": "Control/Typing",
+            "from": "8:orgid:aaa",
+            "imdisplayname": "Doe, Jane",
+            "conversationlink": "https://x/conversations/19:abc/messages/1",
+            "originalarrivaltime": "2026-09-22T14:25:45.000Z",
+        }));
+        assert!(b.messages.is_empty());
+        assert_eq!(b.skipped, 0);
+        assert_eq!(b.typing.len(), 1);
+        let t = &b.typing[0];
+        assert_eq!(t.chat_id, "19:abc");
+        assert_eq!(t.sender, "Doe, Jane");
+        assert_eq!(t.sender_id.as_deref(), Some("8:orgid:aaa"));
+        assert_eq!(t.time, "2026-09-22T14:25:45.000Z");
+        let env = serde_json::to_value(t).unwrap();
+        assert_eq!(env["chat_id"], "19:abc");
+        assert_eq!(env["sender_id"], "8:orgid:aaa");
+    }
+
+    #[test]
+    fn typing_matches_case_insensitively_and_named_envelope() {
+        let b = batch_of(json!({
+            "name": "typing",
+            "args": [{
+                "messageType": "control/typing",
+                "displayname": "Bob",
+                "threadid": "19:x",
+            }],
+        }));
+        assert!(b.messages.is_empty());
+        assert_eq!(b.typing.len(), 1);
+        assert_eq!(b.typing[0].sender, "Bob");
+        assert_eq!(b.typing[0].chat_id, "19:x");
+        assert!(b.typing[0].sender_id.is_none());
+        // sender_id omitted when absent (old-host envelope shape).
+        assert!(serde_json::to_value(&b.typing[0])
+            .unwrap()
+            .get("sender_id")
+            .is_none());
+    }
+
+    #[test]
+    fn typing_without_sender_is_skipped() {
+        let b = batch_of(json!({
+            "messagetype": "Control/Typing",
+            "threadid": "19:x",
+        }));
+        assert!(b.typing.is_empty());
+        assert!(b.messages.is_empty());
+        assert_eq!(b.skipped, 1);
+    }
+
+    #[test]
+    fn typing_frame_with_content_is_still_not_a_message() {
+        let b = batch_of(json!({
+            "content": "stray",
+            "messagetype": "Control/Typing",
+            "imdisplayname": "A",
+            "threadid": "19:x",
+        }));
+        assert!(b.messages.is_empty());
+        assert_eq!(b.typing.len(), 1);
+        assert_eq!(b.typing[0].sender, "A");
     }
 }

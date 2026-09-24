@@ -203,6 +203,7 @@ final class AppState: ObservableObject {
     let conv = ConversationStore()
     let shared = SharedFilesStore()
     let feed = RealtimeFeed()
+    let typing = TypingStore()
     let notifs = MessageNotifications()
     let unread = UnreadStore()
     let mentions = MentionStore()
@@ -235,6 +236,7 @@ final class AppState: ObservableObject {
     @Published var feedEvents = 0
     @Published var feedResyncs = 0
     @Published var feedPolls = 0
+    @Published var feedTyping = 0
     @Published var feedError: String?
     @Published var showJump = false
     @AppStorage("selectedChatID") private var persistedSelection: String?
@@ -435,6 +437,9 @@ final class AppState: ObservableObject {
             feed.onCall { [weak self] ev in
                 Task { @MainActor [weak self] in self?.call.ingest(ev) }
             }
+            feed.onTyping { [weak self] ev in
+                Task { @MainActor [weak self] in self?.handleTyping(ev) }
+            }
             notifs.attach()
             await notifs.requestAuthorization()
             feed.start()
@@ -592,9 +597,21 @@ final class AppState: ObservableObject {
     /// the mate's sender MRI for live presence dots (own messages
     /// and group chats skipped — same sender==name identity rule as
     /// ConversationStore).
+    /// One typing event: count it, refresh that sender's per-thread
+    /// timeout. Never touches the chat list (no refresh — the timeline
+    /// row is the only surface); own typing echoes are skipped.
+    private func handleTyping(_ ev: TypingEvent) {
+        feedTyping += 1
+        if ev.sender != conv.ownDisplayName {
+            typing.ingest(ev)
+        }
+    }
+
     private func handleRealtime(_ msg: RealtimeMessage) {
         feedEvents += 1
         refreshFeedStatus()
+        typing.noteMessage(
+            chatID: msg.chatID, sender: msg.sender, senderID: msg.senderID)
         chats.ingest(realtime: msg)
         // om-notif: banner for non-open, non-own, non-edit events.
         Task {
@@ -760,6 +777,7 @@ final class AppState: ObservableObject {
             signedIn = false
             feed.stop()
             presence.clear()
+            typing.clear()
             unread.markAllRead() // om-notifbadge: dock clears on sign-out
             mentions.markAllRead() // om-mentions: flags clear on sign-out
             refreshFeedStatus()
@@ -806,7 +824,7 @@ struct RootView: View {
                         ConversationView(
                             store: state.conv, presence: state.presence,
                             call: state.call, shared: state.shared, notes: state.notes,
-                            catchUp: state.catchUp,
+                            catchUp: state.catchUp, typing: state.typing,
                             isGroup: state.chats.selectedChat?.is_group ?? true,
                             initialTab: CommandLine.arguments.contains("--show-shared") ? 1
                                 : (state.showNotes ? 2 : 0),

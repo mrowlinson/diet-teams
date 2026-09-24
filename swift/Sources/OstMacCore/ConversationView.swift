@@ -16,6 +16,8 @@ public struct ConversationView: View {
     @ObservedObject public var shared: SharedFilesStore
     @ObservedObject public var notes: NotesStore
     @ObservedObject public var catchUp: CatchUpStore
+    /// Live typing indicators (om-typing): passed to the timeline tail.
+    @ObservedObject public var typing: TypingStore
     /// False for 1:1 chats (header shows the chatmate dot).
     private let isGroup: Bool
     @State private var draft = ""
@@ -49,6 +51,7 @@ public struct ConversationView: View {
         store: ConversationStore, presence: PresenceStore = PresenceStore(),
         call: CallStore = CallStore(), shared: SharedFilesStore = SharedFilesStore(),
         notes: NotesStore = NotesStore(), catchUp: CatchUpStore = CatchUpStore(),
+        typing: TypingStore = TypingStore(),
         isGroup: Bool = true, initialTab: Int = 0, catchUpOpen: Bool = false,
         onForward: @escaping (ChatMessage) -> Void = { _ in },
         editOpen: Bool = false, deleteOpen: Bool = false
@@ -59,6 +62,7 @@ public struct ConversationView: View {
         self.shared = shared
         self.notes = notes
         self.catchUp = catchUp
+        self.typing = typing
         self.isGroup = isGroup
         self.onForward = onForward
         _tab = State(initialValue: initialTab)
@@ -94,7 +98,7 @@ public struct ConversationView: View {
                 // Per-chat identity: fresh scroll model/sentinel/settle per
                 // chat (see ChatTimelineView).
                 ChatTimelineView(
-                    store: store, onForward: onForward,
+                    store: store, typing: typing, onForward: onForward,
                     onEdit: beginEdit, onDelete: beginDelete,
                     sharedFiles: shared.chatID == store.chatID ? shared.files : [],
                     onOpenDoc: { _ = shared.open($0.file) })
