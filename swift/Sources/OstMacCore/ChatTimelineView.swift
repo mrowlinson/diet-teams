@@ -106,7 +106,8 @@ struct ChatTimelineView: View {
                                         chatID: store.chatID, messageID: msg.id),
                                     onTogglePin: {
                                         pins.toggle(chatID: store.chatID, message: msg)
-                                    }
+                                    },
+                                    chatID: store.chatID
                                 )
                                 .id(msg.id)
                                 .onAppear {

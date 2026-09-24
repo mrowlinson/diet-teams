@@ -679,6 +679,9 @@ struct MessageBubble: View {
     /// Pinned state (om-pinmessages): drives the Pin/Unpin menu label.
     var isPinned: Bool = false
     var onTogglePin: () -> Void = {}
+    /// Open chat id (om-jd-cardactions): feeds the "Open in Teams"
+    /// fallback link. Nil (previews, tests) falls back to Teams home.
+    var chatID: String? = nil
 
     var body: some View {
         HStack(spacing: DietSpace.xs) {
@@ -730,6 +733,15 @@ struct MessageBubble: View {
                     }
                     if !posts.isEmpty {
                         BotPostRows(posts: posts)
+                    }
+                    // Card actions (om-jd-cardactions, decoupled): OpenUrl
+                    // buttons + "Open in Teams" fallback. No-op without
+                    // card actions; merge moves this into the J-C renderer.
+                    let cardActions = CardActions.actions(fromRaw: message.raw ?? message.content)
+                    if !cardActions.isEmpty {
+                        CardActionRows(
+                            actions: cardActions, chatID: chatID,
+                            messageID: message.id)
                     }
                     if !docs.isEmpty {
                         InlineDocRows(docs: docs, onOpen: onOpenDoc)
