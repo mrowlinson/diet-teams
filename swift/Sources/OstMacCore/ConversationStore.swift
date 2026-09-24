@@ -491,6 +491,17 @@ public final class ConversationStore: ObservableObject {
         return index.byID[parentID]
     }
 
+    /// Resolvable quote-link target (om-lt2-quotelink): the parent id
+    /// when it is still in history, else nil (plain bubbles, blank
+    /// ids, and evicted parents never link; the bubble fallback covers
+    /// the last case).
+    public func quoteJumpID(for message: ChatMessage, in index: MessageIndex) -> String? {
+        guard let parentID = message.reply_to?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !parentID.isEmpty, index.byID[parentID] != nil
+        else { return nil }
+        return parentID
+    }
+
     /// One-line quote preview: collapsed whitespace, 120 chars + `…`.
     /// Pure so the bubble, chip, and tests share it.
     public static func quotePreview(_ text: String, max: Int = 120) -> String {

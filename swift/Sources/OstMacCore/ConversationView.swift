@@ -686,6 +686,10 @@ struct MessageBubble: View {
     /// Open chat id (om-jd-cardactions): feeds the "Open in Teams"
     /// fallback link. Nil (previews, tests) falls back to Teams home.
     var chatID: String? = nil
+    /// Quote-strip tap (om-lt2-quotelink): the host scrolls to this
+    /// parent id. Default no-op (previews, tests). Evicted parents
+    /// never call it (fallback line is not a button).
+    var onQuoteJump: (String) -> Void = { _ in }
 
     var body: some View {
         HStack(spacing: DietSpace.xs) {
@@ -865,26 +869,31 @@ struct MessageBubble: View {
     }
 
     /// Quoted parent strip above the body. Resolved parents show sender
-    /// + preview with an accent bar; an evicted parent shows a muted
-    /// fallback so the reply link is never silently dropped.
+    /// + preview with an accent bar as a jump link to the parent bubble;
+    /// an evicted parent shows a muted fallback so the reply link is
+    /// never silently dropped.
     @ViewBuilder
     private var quoteBlock: some View {
         if let parent = quoted {
-            HStack(spacing: DietSpace.xs) {
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(Color.accentColor)
-                    .frame(width: 3)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(parent.sender)
-                        .font(DietType.caption1).bold()
-                        .foregroundStyle(DietColor.textPrimaryColor)
-                        .lineLimit(1)
-                    Text(ConversationStore.quotePreview(parent.content))
-                        .font(DietType.caption1)
-                        .foregroundStyle(DietColor.textSecondaryColor)
-                        .lineLimit(2)
+            Button { onQuoteJump(parent.id) } label: {
+                HStack(spacing: DietSpace.xs) {
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(Color.accentColor)
+                        .frame(width: 3)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(parent.sender)
+                            .font(DietType.caption1).bold()
+                            .foregroundStyle(DietColor.textPrimaryColor)
+                            .lineLimit(1)
+                        Text(ConversationStore.quotePreview(parent.content))
+                            .font(DietType.caption1)
+                            .foregroundStyle(DietColor.textSecondaryColor)
+                            .lineLimit(2)
+                    }
                 }
             }
+            .buttonStyle(.plain)
+            .help("Jump to quoted message")
             .padding(.vertical, DietSpace.xxs)
         } else if message.reply_to != nil {
             Text("↩ Original message not in history")
