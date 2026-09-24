@@ -84,6 +84,21 @@ public enum ScrollPolicy {
     /// one scroll lands short; these settle passes pin the true bottom.
     public static let settleDelays: [TimeInterval] = [0.35, 1.0, 2.0]
 
+    /// Bottom sentinel id (om-fix-scroll): the TRUE content end — laid
+    /// out last (below the tail bubble and the typing row) with the
+    /// trailing inset as part of it. Must never equal a bubble id.
+    public static let bottomSentinelID = "om-bottom-sentinel"
+
+    /// Exact-bottom scroll target (om-fix-scroll): always the sentinel,
+    /// never the tail bubble. Targeting the last bubble parks ~1
+    /// wheel-click short (sentinel + trailing inset below the fold),
+    /// and every settle re-assert repeats the same short landing.
+    /// Nil tail (empty thread) → nil (nothing to land on).
+    public static func bottomTargetID(tailID: String?) -> String? {
+        guard tailID != nil else { return nil }
+        return bottomSentinelID
+    }
+
     /// Top progress caption while the open page-chain runs (om-hu-polish):
     /// names the bubbles landed so far. Nil when idle (no row) and when
     /// nothing landed yet (the centered "Loading recent" block covers it).
