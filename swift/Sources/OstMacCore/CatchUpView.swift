@@ -179,7 +179,7 @@ public struct CatchUpInstallPrompt: View {
             }
         }
         .padding(DietSpace.sm)
-        .background(.secondary.opacity(0.12))
+        .background(DietColor.dividerColor)
         .clipShape(RoundedRectangle(cornerRadius: DietRadius.control))
     }
 }

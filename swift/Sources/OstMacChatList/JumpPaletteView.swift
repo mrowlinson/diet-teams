@@ -415,6 +415,7 @@ public struct JumpPaletteView: View {
     private func icon(for kind: JumpTarget.Kind) -> String {
         switch kind {
         case .chat: "bubble.left.and.bubble.right"
+        case .oneToOne: "person"
         case .channel: "number"
         case .team: "person.3.fill"
         }

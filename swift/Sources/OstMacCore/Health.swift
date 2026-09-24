@@ -245,18 +245,21 @@ public struct HealthView: View {
         case .broken: Color(nsColor: DietColor.danger)
         case nil: DietColor.textTertiaryColor
         }
-        return HStack(spacing: 4) {
-            Circle().fill(color).frame(width: 8, height: 8)
+        return HStack(spacing: DietSpace.xs) {
+            Circle().fill(color).frame(
+                width: DietSize.presenceDot, height: DietSize.presenceDot)
             Text(label).font(DietType.headline)
         }
     }
 
     private func tokenSection(_ tokens: [HealthToken]) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: DietSpace.xxs) {
             Text("Tokens").font(DietType.caption1).bold()
             ForEach(tokens, id: \.audience) { t in
                 HStack {
-                    Circle().fill(tokenColor(t)).frame(width: 6, height: 6)
+                    Circle().fill(tokenColor(t)).frame(
+                        width: DietSize.presenceDot,
+                        height: DietSize.presenceDot)
                     Text(t.audience).font(DietType.caption1).monospaced()
                     Spacer()
                     Text(t.state).font(DietType.caption1)
@@ -269,28 +272,30 @@ public struct HealthView: View {
     private func tokenColor(_ t: HealthToken) -> Color {
         !t.present
             ? DietColor.textTertiaryColor
-            : t.expired ? Color(nsColor: DietColor.danger) : Color(nsColor: DietColor.success)
+            : t.expired
+                ? Color(nsColor: DietColor.danger)
+                : Color(nsColor: DietColor.success)
     }
 
     private func probeSection(_ probes: [HealthProbe]) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: DietSpace.xs) {
             Text("Probes").font(DietType.caption1).bold()
             ForEach(probes, id: \.name) { p in
                 VStack(alignment: .leading, spacing: 0) {
                     HStack {
                         Image(systemName: p.ok ? "checkmark.circle" : "xmark.circle")
-                            .foregroundStyle(
-                                p.ok
-                                    ? Color(nsColor: DietColor.success)
-                                    : Color(nsColor: DietColor.danger))
+                            .foregroundStyle(p.ok
+                                ? Color(nsColor: DietColor.success)
+                                : Color(nsColor: DietColor.danger))
                         Text(p.name).font(DietType.caption1).monospaced()
                         Spacer()
                         Text("\(p.durationMs)ms")
-                            .font(DietType.caption1).monospaced()
+                            .font(DietType.captionMono)
                             .foregroundStyle(DietColor.textSecondaryColor)
                     }
                     Text(p.detail)
-                        .font(DietType.caption2).foregroundStyle(DietColor.textSecondaryColor)
+                        .font(DietType.caption2)
+                        .foregroundStyle(DietColor.textSecondaryColor)
                         .lineLimit(2)
                         .textSelection(.enabled)
                 }

@@ -63,14 +63,28 @@ final class RichConversationTests: XCTestCase {
         XCTAssertEqual(styled[0].range, want)
     }
 
-    /// Mono range lands exactly on the backtick span (ticks excluded).
+    /// Ticks are markup: stripped from display, mono on the inner text.
     func testAttributedBodyMonoBacktick() {
         let m = ChatMessage(id: "m", sender: "A", timestamp: "t", content: "run `go build` now")
         let a = MessageRender.attributedBody(for: m)
+        XCTAssertEqual(String(a.characters), "run go build now")
         let mono = a.runs.filter { $0.font != nil }
         XCTAssertEqual(mono.count, 1)
-        let want = Range(m.content.range(of: "go build")!, in: a)!
+        let want = Range("run go build now".range(of: "go build")!, in: a)!
         XCTAssertEqual(mono[0].range, want)
+    }
+
+    /// stripBackticks: valid spans lose ticks; strays stay literal.
+    func testStripBackticks() {
+        let two = MessageRender.stripBackticks("run `a b` then `c` end")
+        XCTAssertEqual(two.clean, "run a b then c end")
+        XCTAssertEqual(two.spans.count, 2)
+        XCTAssertEqual(String(two.clean[two.spans[0]]), "a b")
+        XCTAssertEqual(String(two.clean[two.spans[1]]), "c")
+        // Unbalanced / empty / newline ticks are user text, kept.
+        XCTAssertEqual(MessageRender.stripBackticks("oops `x end").clean, "oops `x end")
+        XCTAssertEqual(MessageRender.stripBackticks("a `` b").clean, "a `` b")
+        XCTAssertEqual(MessageRender.stripBackticks("a `x\ny` b").clean, "a `x\ny` b")
     }
 
     func testAttributedBodyLink() {

@@ -1,5 +1,6 @@
 // PresenceTests.swift — om-presence lane: envelopes, status table,
 // store fetch/set/cache with mock fetchers (no core, no network).
+import DietDesign
 import XCTest
 
 @testable import OstMacCore
@@ -54,6 +55,19 @@ final class PresenceTests: XCTestCase {
         XCTAssertEqual(
             PresenceFormat.label(availability: "Busy", activity: "InACall"), "Busy · InACall")
         XCTAssertEqual(PresenceFormat.label(availability: "Away", activity: ""), "Away")
+    }
+
+    func testTeamsAvailabilityMapsToDietPresence() {
+        // DND rides the purple token (DietPresence.dnd), never busy-red.
+        XCTAssertEqual(DietPresence(teamsAvailability: "DoNotDisturb"), .dnd)
+        XCTAssertEqual(DietPresence(teamsAvailability: "Available"), .available)
+        XCTAssertEqual(DietPresence(teamsAvailability: "Busy"), .busy)
+        XCTAssertEqual(DietPresence(teamsAvailability: "Away"), .away)
+        XCTAssertEqual(DietPresence(teamsAvailability: "BeRightBack"), .away)
+        XCTAssertEqual(DietPresence(teamsAvailability: "Offline"), .offline)
+        XCTAssertNil(DietPresence(teamsAvailability: nil))
+        XCTAssertNil(DietPresence(teamsAvailability: "PresenceUnknown"))
+        XCTAssertNil(DietPresence(teamsAvailability: "FutureValue"))
     }
 
     func testRefreshOwnAdoptsAndClearsError() async {

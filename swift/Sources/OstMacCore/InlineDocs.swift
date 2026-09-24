@@ -220,7 +220,7 @@ struct InlineDocRow: View {
             }
         }
         .padding(DietSpace.sm)
-        .background(Color.gray.opacity(0.12))
+        .background(DietColor.dividerColor)
         .clipShape(RoundedRectangle(cornerRadius: DietRadius.control))
         .accessibilityLabel("\(doc.name), \(doc.sizeLabel)")
     }

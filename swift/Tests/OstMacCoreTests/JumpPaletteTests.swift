@@ -62,11 +62,23 @@ final class JumpPaletteTests: XCTestCase {
     func testBuildCounts() {
         let targets = JumpTargets.build(chats: DemoData.chats, teams: DemoData.teams)
         let chats = targets.filter { $0.kind == .chat }
+        let direct = targets.filter { $0.kind == .oneToOne }
         let channels = targets.filter { $0.kind == .channel }
         let teams = targets.filter { $0.kind == .team }
-        XCTAssertEqual(chats.count, DemoData.chats.count)
+        XCTAssertEqual(chats.count + direct.count, DemoData.chats.count)
         XCTAssertEqual(channels.count, 4) // 3 eng + 1 design (om-hu-fixture long channel)
         XCTAssertEqual(teams.count, 2)
+    }
+
+    /// 1:1 chats build .oneToOne rows (person icon); groups stay .chat.
+    func testBuildMarksOneToOne() {
+        let targets = JumpTargets.build(chats: DemoData.chats, teams: [])
+        let ava = targets.first { $0.id == "demo-2" }!
+        XCTAssertEqual(ava.kind, .oneToOne)
+        XCTAssertEqual(ava.subtitle, "Chat")
+        let group = targets.first { $0.id == "demo" }!
+        XCTAssertEqual(group.kind, .chat)
+        XCTAssertEqual(group.subtitle, "Group chat")
     }
 
     func testTeamOpensFirstChannel() {

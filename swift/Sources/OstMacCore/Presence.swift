@@ -65,12 +65,14 @@ public enum PresenceFormat {
     }
 
     /// Dot color for a server availability (unknown → gray).
+    /// Same tokens as DietPresence.color (DND is purple, not red).
     public static func color(availability: String) -> Color {
         switch availability {
-        case "Available": .green
-        case "Busy", "DoNotDisturb": .red
-        case "Away", "BeRightBack": .yellow
-        default: .gray // Offline, PresenceUnknown, future values
+        case "Available": Color(nsColor: DietColor.presenceAvailable)
+        case "Busy": Color(nsColor: DietColor.presenceBusy)
+        case "DoNotDisturb": Color(nsColor: DietColor.presenceDND)
+        case "Away", "BeRightBack": Color(nsColor: DietColor.presenceAway)
+        default: Color(nsColor: DietColor.presenceOffline) // Offline, PresenceUnknown, future values
         }
     }
 
@@ -294,12 +296,18 @@ public struct PresenceDot: View {
         if let avail = availability {
             Circle()
                 .fill(PresenceFormat.color(availability: avail))
-                .frame(width: 8, height: 8)
+                .frame(
+                    width: DietSize.presenceDot,
+                    height: DietSize.presenceDot)
                 .help(PresenceFormat.label(availability: avail, activity: ""))
         } else {
             Circle()
-                .stroke(.gray, lineWidth: 1.5)
-                .frame(width: 8, height: 8)
+                .stroke(
+                    Color(nsColor: DietColor.presenceOffline),
+                    lineWidth: 1.5)
+                .frame(
+                    width: DietSize.presenceDot,
+                    height: DietSize.presenceDot)
                 .help("Presence unknown")
         }
     }
