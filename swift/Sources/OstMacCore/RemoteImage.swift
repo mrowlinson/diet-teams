@@ -54,7 +54,9 @@ public final class RemoteImageModel: ObservableObject {
         image = nil
         do {
             let data = try await cache.data(url: url, messageID: messageID, fetcher: fetcher)
-            guard let img = NSImage(data: data) else {
+            guard let img = await ImageDecode.decodeOffMain(
+                data: data, maxPixels: ImageDecode.bubbleMaxPixels)
+            else {
                 phase = .failed("not an image")
                 return
             }

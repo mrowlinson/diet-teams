@@ -16,6 +16,7 @@
 //! shutdown flag on 500ms recv timeouts so `stop` joins within ~1s.
 
 use std::collections::VecDeque;
+use std::os::raw::{c_char, c_int};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
@@ -155,53 +156,87 @@ fn is_wrapper_nal(nal: &[u8]) -> bool {
     matches!(nal_type(nal), 14 | 30)
 }
 
-fn b64_encode(v: &[u8]) -> String {
-    base64::engine::general_purpose::STANDARD.encode(v)
+// ---------------------------------------------------------------------------
+// Framed NAL payloads (byte+len FFI ABI, om-s3-mediahot)
+// ---------------------------------------------------------------------------
+
+/// Length-prefixed NAL framing, both directions:
+/// `u32LE nal_count (1..=32)`, then per NAL `u32LE len + raw bytes`.
+/// Total payload must fit [`MAX_SEND_BYTES`]. Swift mirrors this layout
+/// (`NalFraming`) — the base64/JSON path is gone.
+pub fn frame_nals(nals: &[Vec<u8>]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(4 + nals.len() * 4 + nals.iter().map(Vec::len).sum::<usize>());
+    out.extend_from_slice(&(nals.len() as u32).to_le_bytes());
+    for nal in nals {
+        out.extend_from_slice(&(nal.len() as u32).to_le_bytes());
+        out.extend_from_slice(nal);
+    }
+    out
+}
+
+/// Parse [`frame_nals`] output. Same limits as the old JSON path:
+/// 1..=32 NALs, each 1..=MAX_SEND_BYTES, total <= MAX_SEND_BYTES.
+pub fn unframe_nals(data: &[u8]) -> Result<Vec<Vec<u8>>, String> {
+    if data.len() < 4 {
+        return Err("NAL payload too short".to_string());
+    }
+    let n = u32::from_le_bytes(data[0..4].try_into().unwrap()) as usize;
+    if n == 0 || n > 32 {
+        return Err(format!("need 1..=32 NALs, got {}", n));
+    }
+    let mut nals = Vec::with_capacity(n);
+    let mut off = 4usize;
+    let mut total = 0usize;
+    for i in 0..n {
+        if off + 4 > data.len() {
+            return Err(format!("nal {} truncated", i));
+        }
+        let len = u32::from_le_bytes(data[off..off + 4].try_into().unwrap()) as usize;
+        off += 4;
+        if len == 0 || len > MAX_SEND_BYTES {
+            return Err(format!("nal {} bad size {}", i, len));
+        }
+        if off + len > data.len() {
+            return Err(format!("nal {} truncated", i));
+        }
+        total += len;
+        if total > MAX_SEND_BYTES {
+            return Err(format!("unit too large: {} bytes", total));
+        }
+        nals.push(data[off..off + len].to_vec());
+        off += len;
+    }
+    if off != data.len() {
+        return Err(format!("{} trailing bytes", data.len() - off));
+    }
+    Ok(nals)
 }
 
 // ---------------------------------------------------------------------------
 // JSON bodies: send queue / incoming queue / stats
 // ---------------------------------------------------------------------------
 
-/// Push one send-side access unit: JSON array of base64 NALs (no start
-/// codes). Over-cap pushes drop the oldest unit (still `{ok:true}`).
-pub fn video_send_push_json(nals_json: &str) -> String {
-    let arr: Vec<String> = match serde_json::from_str(nals_json) {
-        Ok(a) => a,
-        Err(e) => return err_json("arg", format!("nals must be a JSON string array: {}", e)),
+/// Push one send-side access unit: framed NALs (no start codes).
+/// Over-cap pushes drop the oldest unit (still `{ok:true}`).
+pub fn video_send_push_bytes_json(data: &[u8]) -> String {
+    let nals = match unframe_nals(data) {
+        Ok(n) => n,
+        Err(e) => return err_json("arg", e),
     };
-    if arr.is_empty() || arr.len() > 32 {
-        return err_json("arg", format!("need 1..=32 NALs, got {}", arr.len()));
-    }
-    let mut nals = Vec::with_capacity(arr.len());
-    let mut total = 0usize;
-    for (i, s) in arr.iter().enumerate() {
-        let raw = match base64::engine::general_purpose::STANDARD.decode(s) {
-            Ok(r) => r,
-            Err(e) => return err_json("arg", format!("nal {} base64: {}", i, e)),
-        };
-        if raw.is_empty() || raw.len() > MAX_SEND_BYTES {
-            return err_json("arg", format!("nal {} bad size {}", i, raw.len()));
-        }
-        total += raw.len();
-        if total > MAX_SEND_BYTES {
-            return err_json("arg", format!("unit too large: {} bytes", total));
-        }
-        nals.push(raw);
-    }
     push_send(SendUnit { nals });
     serde_json::json!({"ok": true, "queued": lock(send_queue()).len()}).to_string()
 }
 
 /// Drain the newest recv-side access unit (older ones count as dropped).
-/// `{ok:true, au:{nals:[b64..]}|null, dropped:n}`.
-pub fn video_incoming_poll_json() -> String {
+/// Returns the framed payload (empty when none), the stale count, and
+/// whether an AU is present. All-wrapper AUs read as absent, as before.
+pub fn video_incoming_poll_raw() -> (Vec<u8>, usize, bool) {
     let mut q = lock(recv_queue());
     let au = q.pop_back().map(|u| {
         u.nals
             .iter()
             .filter(|n| !is_wrapper_nal(n))
-            .map(|n| b64_encode(n))
+            .cloned()
             .collect::<Vec<_>>()
     });
     let stale = q.len();
@@ -210,10 +245,8 @@ pub fn video_incoming_poll_json() -> String {
         RECV_DROPPED.fetch_add(stale as u64, Ordering::Relaxed);
     }
     match au {
-        Some(nals) if !nals.is_empty() => {
-            serde_json::json!({"ok": true, "au": {"nals": nals}, "dropped": stale}).to_string()
-        }
-        _ => serde_json::json!({"ok": true, "au": null, "dropped": stale}).to_string(),
+        Some(nals) if !nals.is_empty() => (frame_nals(&nals), stale, true),
+        _ => (Vec::new(), stale, false),
     }
 }
 
@@ -1067,16 +1100,41 @@ async fn wait_shutdown(flag: &std::sync::Arc<AtomicBool>) {
 // ---------------------------------------------------------------------------
 
 #[no_mangle]
-pub extern "C" fn ostmac_video_send_push(nals_json: *const std::os::raw::c_char) -> *mut std::os::raw::c_char {
-    match crate::cstr_to_string(nals_json) {
-        Ok(s) => string_to_c(video_send_push_json(&s)),
-        Err(e) => string_to_c(err_json("arg", e)),
+pub extern "C" fn ostmac_video_send_push_bytes(data: *const u8, len: usize) -> *mut c_char {
+    if data.is_null() && len > 0 {
+        return string_to_c(err_json("arg", "null NAL payload"));
     }
+    let bytes = if len == 0 {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(data, len) }
+    };
+    string_to_c(video_send_push_bytes_json(bytes))
 }
 
 #[no_mangle]
-pub extern "C" fn ostmac_video_poll_incoming() -> *mut std::os::raw::c_char {
-    string_to_c(video_incoming_poll_json())
+pub extern "C" fn ostmac_video_poll_incoming_bytes(
+    out: *mut *mut u8,
+    out_len: *mut usize,
+    dropped: *mut c_int,
+) -> c_int {
+    if out.is_null() || out_len.is_null() || dropped.is_null() {
+        return -1;
+    }
+    let (payload, stale, has) = video_incoming_poll_raw();
+    unsafe {
+        *dropped = stale as c_int;
+        if has {
+            let boxed = payload.into_boxed_slice();
+            *out_len = boxed.len();
+            *out = Box::into_raw(boxed) as *mut u8;
+            1
+        } else {
+            *out = std::ptr::null_mut();
+            *out_len = 0;
+            0
+        }
+    }
 }
 
 #[no_mangle]
@@ -1123,8 +1181,29 @@ mod tests {
         lock(recv_queue()).clear();
     }
 
-    fn b64(nal: &[u8]) -> String {
-        base64::engine::general_purpose::STANDARD.encode(nal)
+    fn framed(nals: &[Vec<u8>]) -> Vec<u8> {
+        frame_nals(nals)
+    }
+
+    #[test]
+    fn framing_roundtrips_and_bounds_overhead() {
+        let nals = vec![vec![0x67u8, 0x42], vec![0x68u8], vec![0x65u8, 0, 1, 2, 3]];
+        let payload: usize = nals.iter().map(Vec::len).sum();
+        let f = framed(&nals);
+        // Overhead is exactly count + per-NAL length prefixes (perf guard).
+        assert_eq!(f.len(), 4 + 4 * nals.len() + payload);
+        assert_eq!(unframe_nals(&f).unwrap(), nals);
+        // Malformed payloads reject without panicking.
+        assert!(unframe_nals(&[]).is_err());
+        assert!(unframe_nals(&[1, 0, 0]).is_err());
+        assert!(unframe_nals(&0u32.to_le_bytes()).is_err()); // zero NALs
+        assert!(unframe_nals(&33u32.to_le_bytes()).is_err()); // too many
+        let mut trunc = f.clone();
+        trunc.pop();
+        assert!(unframe_nals(&trunc).is_err());
+        let mut trailing = f.clone();
+        trailing.push(0);
+        assert!(unframe_nals(&trailing).is_err());
     }
 
     #[test]
@@ -1132,16 +1211,18 @@ mod tests {
         let _t = test_lock();
         let _c = crate::calls::test_lock();
         drain_queues();
-        // Not JSON.
+        // Too short / zero NALs / truncated length.
+        for bad in [vec![], 0u32.to_le_bytes().to_vec(), vec![1, 0, 0]] {
+            let v: serde_json::Value =
+                serde_json::from_str(&video_send_push_bytes_json(&bad)).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+        }
+        // Empty NAL body.
+        let mut empty_nal = 1u32.to_le_bytes().to_vec();
+        empty_nal.extend_from_slice(&0u32.to_le_bytes());
         let v: serde_json::Value =
-            serde_json::from_str(&video_send_push_json("nope")).unwrap();
-        assert_eq!(v["ok"], false);
-        // Empty array / too many.
-        let v: serde_json::Value = serde_json::from_str(&video_send_push_json("[]")).unwrap();
-        assert_eq!(v["ok"], false);
-        // Bad base64.
-        let v: serde_json::Value =
-            serde_json::from_str(&video_send_push_json(r#"["!!!"]"#)).unwrap();
+            serde_json::from_str(&video_send_push_bytes_json(&empty_nal)).unwrap();
         assert_eq!(v["ok"], false);
         assert_eq!(v["error"], "arg");
         drain_queues();
@@ -1152,10 +1233,10 @@ mod tests {
         let _t = test_lock();
         let _c = crate::calls::test_lock();
         drain_queues();
-        let one = format!(r#"["{}"]"#, b64(&[0x67, 0x42, 0x00]));
+        let one = framed(&[vec![0x67, 0x42, 0x00]]);
         for _ in 0..(SEND_QUEUE_CAP + 3) {
             let v: serde_json::Value =
-                serde_json::from_str(&video_send_push_json(&one)).unwrap();
+                serde_json::from_str(&video_send_push_bytes_json(&one)).unwrap();
             assert_eq!(v["ok"], true);
         }
         assert_eq!(lock(send_queue()).len(), SEND_QUEUE_CAP);
@@ -1167,20 +1248,19 @@ mod tests {
         let _t = test_lock();
         let _c = crate::calls::test_lock();
         drain_queues();
-        let v: serde_json::Value =
-            serde_json::from_str(&video_incoming_poll_json()).unwrap();
-        assert_eq!(v["ok"], true);
-        assert!(v["au"].is_null());
+        let (payload, stale, has) = video_incoming_poll_raw();
+        assert!(!has);
+        assert!(payload.is_empty());
+        assert_eq!(stale, 0);
         // Wrapper NALs (PACSI 30, prefix 14) are stripped for VT.
         push_recv(RecvUnit {
             nals: vec![vec![0x1E, 0x00], vec![0x0E, 0x00], vec![0x67, 0x42]],
         });
-        let v: serde_json::Value =
-            serde_json::from_str(&video_incoming_poll_json()).unwrap();
-        assert_eq!(v["au"]["nals"].as_array().unwrap().len(), 1);
-        let v: serde_json::Value =
-            serde_json::from_str(&video_incoming_poll_json()).unwrap();
-        assert!(v["au"].is_null());
+        let (payload, _, has) = video_incoming_poll_raw();
+        assert!(has);
+        assert_eq!(unframe_nals(&payload).unwrap(), vec![vec![0x67, 0x42]]);
+        let (_, _, has) = video_incoming_poll_raw();
+        assert!(!has);
         drain_queues();
     }
 
@@ -1190,13 +1270,9 @@ mod tests {
         let _c = crate::calls::test_lock();
         drain_queues();
         // Black IDR [SPS, PPS, IDR] through the real engine data path.
-        let nals: Vec<String> = video::generate_black_iframe()
-            .iter()
-            .map(|n| b64(n))
-            .collect();
+        let nals: Vec<Vec<u8>> = video::generate_black_iframe();
         let v: serde_json::Value =
-            serde_json::from_str(&video_send_push_json(&serde_json::to_string(&nals).unwrap()))
-                .unwrap();
+            serde_json::from_str(&video_send_push_bytes_json(&framed(&nals))).unwrap();
         assert_eq!(v["ok"], true);
         let v: serde_json::Value = serde_json::from_str(&live_loopback_json()).unwrap();
         assert_eq!(v["ok"], true);
@@ -1205,9 +1281,9 @@ mod tests {
         assert_eq!(v["aus"], 1);
         assert_eq!(v["nals"], 3); // SPS + PPS + IDR (wrappers stripped)
         // The AU is pollable for the Swift decode join.
-        let v: serde_json::Value =
-            serde_json::from_str(&video_incoming_poll_json()).unwrap();
-        let got = v["au"]["nals"].as_array().unwrap();
+        let (payload, _, has) = video_incoming_poll_raw();
+        assert!(has);
+        let got = unframe_nals(&payload).unwrap();
         assert_eq!(got.len(), 3);
         assert_eq!(got[0], nals[0]); // SPS bit-identical
         assert_eq!(got[2], nals[2]); // IDR bit-identical
@@ -1224,18 +1300,17 @@ mod tests {
         idr.extend((0..3999u32).map(|i| (i % 251) as u8));
         let sps = vec![0x67u8, 0x42, 0x00, 0x1E];
         let pps = vec![0x68u8, 0xCE, 0x06, 0xE2];
-        let arr = vec![b64(&sps), b64(&pps), b64(&idr)];
+        let arr = vec![sps, pps, idr];
         let v: serde_json::Value =
-            serde_json::from_str(&video_send_push_json(&serde_json::to_string(&arr).unwrap()))
-                .unwrap();
+            serde_json::from_str(&video_send_push_bytes_json(&framed(&arr))).unwrap();
         assert_eq!(v["ok"], true);
         let v: serde_json::Value = serde_json::from_str(&live_loopback_json()).unwrap();
         assert_eq!(v["ok"], true);
         assert!(v["packets"].as_u64().unwrap() >= 5);
         assert_eq!(v["aus"], 1);
-        let v: serde_json::Value =
-            serde_json::from_str(&video_incoming_poll_json()).unwrap();
-        let got = v["au"]["nals"].as_array().unwrap();
+        let (payload, _, has) = video_incoming_poll_raw();
+        assert!(has);
+        let got = unframe_nals(&payload).unwrap();
         assert_eq!(got.len(), 3);
         assert_eq!(got[2], arr[2]); // reassembled IDR bit-identical
         drain_queues();
@@ -1356,7 +1431,7 @@ mod tests {
     #[test]
     fn ffi_push_null_is_arg_error() {
         unsafe {
-            let p = ostmac_video_send_push(std::ptr::null());
+            let p = ostmac_video_send_push_bytes(std::ptr::null(), 8);
             assert!(!p.is_null());
             let s = std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned();
             crate::ostmac_free(p);
@@ -1368,13 +1443,12 @@ mod tests {
 
     #[test]
     fn ffi_poll_roundtrip_shape() {
-        use std::os::raw::c_char;
         let _t = test_lock();
         let _c = crate::calls::test_lock();
         drain_queues();
         unsafe {
-            let one = CString::new(format!(r#"["{}"]"#, b64(&[0x67, 0x42]))).unwrap();
-            let p = ostmac_video_send_push(one.as_ptr() as *const c_char);
+            let one = framed(&[vec![0x67, 0x42]]);
+            let p = ostmac_video_send_push_bytes(one.as_ptr(), one.len());
             let s = std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned();
             crate::ostmac_free(p);
             assert_eq!(serde_json::from_str::<serde_json::Value>(&s).unwrap()["ok"], true);
@@ -1382,11 +1456,28 @@ mod tests {
             let s = std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned();
             crate::ostmac_free(p);
             assert_eq!(serde_json::from_str::<serde_json::Value>(&s).unwrap()["aus"], 1);
-            let p = ostmac_video_poll_incoming();
-            let s = std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned();
-            crate::ostmac_free(p);
-            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
-            assert_eq!(v["au"]["nals"].as_array().unwrap().len(), 1);
+            let mut out: *mut u8 = std::ptr::null_mut();
+            let mut out_len: usize = 0;
+            let mut dropped: c_int = -1;
+            let rc = ostmac_video_poll_incoming_bytes(&mut out, &mut out_len, &mut dropped);
+            assert_eq!(rc, 1);
+            assert_eq!(dropped, 0);
+            let payload = std::slice::from_raw_parts(out, out_len).to_vec();
+            crate::ostmac_bytes_free(out, out_len);
+            assert_eq!(unframe_nals(&payload).unwrap().len(), 1);
+            // Drained: second poll reports none.
+            let rc = ostmac_video_poll_incoming_bytes(&mut out, &mut out_len, &mut dropped);
+            assert_eq!(rc, 0);
+            assert!(out.is_null());
+            // Null out-params are a hard -1.
+            assert_eq!(
+                ostmac_video_poll_incoming_bytes(
+                    std::ptr::null_mut(),
+                    &mut out_len,
+                    &mut dropped
+                ),
+                -1
+            );
         }
         drain_queues();
     }

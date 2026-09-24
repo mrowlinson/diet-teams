@@ -32,12 +32,23 @@ public final class CameraCapture: NSObject, ObservableObject {
     public let session = AVCaptureSession()
     private var output: AVCaptureVideoDataOutput?
     private let queue = DispatchQueue(label: "dev.ostmac.camera")
-    /// Touched only from the delegate queue (serial); locked for Sendable.
+    /// Push worker: the AVCapture callback only packs rows, then hands the
+    /// buffer here so capture never waits on the core push or VT encode.
+    private nonisolated let pushQueue = DispatchQueue(label: "dev.ostmac.camera-push")
+    /// Touched from the delegate + push queues; locked for Sendable.
     private nonisolated let pushCount = LockedInt()
     /// Live-send path (om-liveav): VT-encode each frame and push NALs to the
     /// Rust send queue. Box is queue-confined; flag toggles from any thread.
     private nonisolated let liveBox = StreamEncoderBox()
     private nonisolated let liveFlag = LockedFlag()
+    /// Reusable pack buffers (checkout on the callback, checkin on the
+    /// worker). Steady state allocates nothing per frame.
+    private nonisolated let packPool = FramePackPool()
+    /// Bounds queued pushes so a slow core/VT drops frames (like
+    /// alwaysDiscardsLateVideoFrames did) instead of growing a backlog.
+    private nonisolated let pushGate = InFlightGate()
+    /// Stats publish at most 1/s (was: every frame to main).
+    private nonisolated let statsGate = StatsGate()
 
     /// Enable/disable live-send encoding (call when a live call connects).
     public func setLiveSend(_ on: Bool) {
@@ -231,6 +242,88 @@ public enum CameraError: Error, Sendable {
 
 // MARK: - Frame delegate (private queue)
 
+/// Stats-publish gate: first stats always publish, then at most 1/s.
+public enum CameraStatsGate {
+    public static let minIntervalMs: UInt64 = 1000
+
+    public static func shouldPublish(nowMs: UInt64, lastMs: UInt64?) -> Bool {
+        guard let lastMs else { return true }
+        return nowMs &- lastMs >= minIntervalMs
+    }
+
+    static func nowMs() -> UInt64 {
+        DispatchTime.now().uptimeNanoseconds / 1_000_000
+    }
+}
+
+/// Locked last-publish timestamp for the stats gate (worker-side use).
+private final class StatsGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var lastMs: UInt64?
+
+    /// True when this publish may go through (records the timestamp).
+    func take(nowMs: UInt64) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard CameraStatsGate.shouldPublish(nowMs: nowMs, lastMs: lastMs) else {
+            return false
+        }
+        lastMs = nowMs
+        return true
+    }
+}
+
+/// Bounded in-flight counter: the callback drops the frame when the push
+/// worker is already this deep, so a slow core/VT sheds load instead of
+/// queueing latency.
+private final class InFlightGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var depth = 0
+    let limit: Int
+
+    init(limit: Int = 3) { self.limit = limit }
+
+    func enter() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard depth < limit else { return false }
+        depth += 1
+        return true
+    }
+
+    func leave() {
+        lock.lock(); defer { lock.unlock() }
+        depth = Swift.max(0, depth - 1)
+    }
+}
+
+/// Small pool of reusable pack buffers. The callback checks one out,
+/// packs rows into it, and the push worker checks it back in; extras
+/// are dropped. All methods are lock-guarded (two queues touch it).
+private final class FramePackPool: @unchecked Sendable {
+    private let lock = NSLock()
+    private var free: [Data] = []
+    let limit: Int
+
+    init(limit: Int = 3) { self.limit = limit }
+
+    /// A buffer of exactly `need` bytes, reused when one fits.
+    func checkout(need: Int) -> Data {
+        lock.lock(); defer { lock.unlock() }
+        if let i = free.firstIndex(where: { $0.count == need }) {
+            return free.remove(at: i)
+        }
+        free.removeAll(where: { $0.count != need })
+        return Data(count: need)
+    }
+
+    func checkin(_ buf: Data) {
+        lock.lock(); defer { lock.unlock() }
+        guard free.count < limit, free.allSatisfy({ $0.count == buf.count }) else {
+            return
+        }
+        free.append(buf)
+    }
+}
+
 extension CameraCapture: AVCaptureVideoDataOutputSampleBufferDelegate {
     public nonisolated func captureOutput(
         _ output: AVCaptureOutput,
@@ -244,40 +337,57 @@ extension CameraCapture: AVCaptureVideoDataOutputSampleBufferDelegate {
         let w = CVPixelBufferGetWidth(pixels)
         let h = CVPixelBufferGetHeight(pixels)
         let stride = CVPixelBufferGetBytesPerRow(pixels)
-        // Pack tightly (stride may exceed w*4).
-        var packed = Data(count: w * h * 4)
+        guard pushGate.enter() else { return } // worker saturated: drop
+        // Pack tightly into a reused buffer (stride may exceed w*4).
+        var packed = packPool.checkout(need: w * h * 4)
         packed.withUnsafeMutableBytes { (dst: UnsafeMutableRawBufferPointer) in
             let d = dst.baseAddress!
             for row in 0 ..< h {
                 memcpy(d + row * w * 4, base + row * stride, w * 4)
             }
         }
-        do {
-            let stats = try RustCore.cameraPush(
-                pixels: packed, width: w, height: h, fmt: "bgra")
-            pushCount.increment()
-            Task { @MainActor [weak self] in self?.lastStats = stats }
-            if liveFlag.get() {
-                // Live send: VT-encode + push NALs; transient failures drop
-                // the frame (engine falls back to black IDR when idle).
-                let box = liveBox
-                do {
-                    let nals = try box.encode(bgra: packed, width: w, height: h)
-                    _ = try RustCore.videoSendPush(nals: nals)
-                } catch {
-                    // First failure surfaces; the rest stay silent.
-                    if pushCount.current == 1 {
-                        Task { @MainActor [weak self] in
-                            self?.status = "live encode: \(error.localizedDescription)"
+        // The core push + VT encode run off the callback (serial worker
+        // preserves frame order); the callback returns to AVFoundation now.
+        let worker = pushQueue
+        let pool = packPool
+        let gate = pushGate
+        let counts = pushCount
+        let box = liveBox
+        let flag = liveFlag
+        let stats = statsGate
+        worker.async { [weak self] in
+            defer {
+                pool.checkin(packed)
+                gate.leave()
+            }
+            do {
+                let s = try RustCore.cameraPush(
+                    pixels: packed, width: w, height: h, fmt: "bgra")
+                counts.increment()
+                if stats.take(nowMs: CameraStatsGate.nowMs()) {
+                    Task { @MainActor [weak self] in self?.lastStats = s }
+                }
+                if flag.get() {
+                    // Live send: VT-encode + push NALs; transient failures
+                    // drop the frame (engine falls back to black IDR idle).
+                    do {
+                        let nals = try box.encode(bgra: packed, width: w, height: h)
+                        _ = try RustCore.videoSendPush(nals: nals)
+                    } catch {
+                        // First failure surfaces; the rest stay silent.
+                        if counts.current == 1 {
+                            Task { @MainActor [weak self] in
+                                self?.status = "live encode: \(error.localizedDescription)"
+                            }
                         }
                     }
                 }
-            }
-        } catch {
-            // Push failures are transient; surface at most the first one.
-            if pushCount.current == 0 {
-                Task { @MainActor [weak self] in
-                    self?.status = "push failed: \(error.localizedDescription)"
+            } catch {
+                // Push failures are transient; surface at most the first one.
+                if counts.current == 0 {
+                    Task { @MainActor [weak self] in
+                        self?.status = "push failed: \(error.localizedDescription)"
+                    }
                 }
             }
         }

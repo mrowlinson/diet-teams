@@ -88,7 +88,9 @@ public final class FullResImageModel: ObservableObject {
         do {
             let data = try await cache.data(
                 url: fullURL, messageID: messageID, fetcher: fetcher)
-            guard let img = NSImage(data: data) else {
+            guard let img = await ImageDecode.decodeOffMain(
+                data: data, maxPixels: ImageDecode.viewerMaxPixels)
+            else {
                 phase = .failed("not an image")
                 return
             }

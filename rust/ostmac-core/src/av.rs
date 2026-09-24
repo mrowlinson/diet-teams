@@ -5,7 +5,7 @@
 //! - caps: static capability map
 //! - mic: cpal device probe + capture/playback test (CoreAudio on macOS)
 //! - tone: audible 1kHz tone + deterministic echo self-check
-//! - camera: I420 pump fed by Swift AVCapture frames (base64 over FFI)
+//! - camera: I420 pump fed by Swift AVCapture frames (byte+len over FFI)
 //! - video: remote-frame slot SwiftUI polls for display
 //! - dry-run: offline media pipeline (SRTP loopback + H.264 packetize)
 
@@ -13,7 +13,6 @@ use std::ffi::CStr;
 use std::os::raw::{c_char, c_int};
 use std::sync::{Mutex, OnceLock};
 
-use base64::Engine;
 use serde_json::json;
 
 use ost::calling::macav;
@@ -37,21 +36,19 @@ fn lock<T>(m: &'static Mutex<T>) -> std::sync::MutexGuard<'static, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-fn b64_decode(s: &str) -> Result<Vec<u8>, String> {
-    base64::engine::general_purpose::STANDARD
-        .decode(s)
-        .map_err(|e| format!("base64: {}", e))
-        .and_then(|v| {
-            if v.len() > MAX_FRAME_BYTES {
-                Err(format!("frame too large: {} bytes", v.len()))
-            } else {
-                Ok(v)
-            }
-        })
-}
-
-fn b64_encode(v: &[u8]) -> String {
-    base64::engine::general_purpose::STANDARD.encode(v)
+/// Borrow a byte+len FFI arg. Null with nonzero len is an error; empty
+/// borrows as `&[]` so validation reports the domain error, not a crash.
+fn bytes_arg<'a>(ptr: *const u8, len: usize) -> Result<&'a [u8], String> {
+    if ptr.is_null() && len > 0 {
+        return Err("null pixels".to_string());
+    }
+    if len == 0 {
+        return Ok(&[]);
+    }
+    if len > MAX_FRAME_BYTES {
+        return Err(format!("frame too large: {} bytes", len));
+    }
+    Ok(unsafe { std::slice::from_raw_parts(ptr, len) })
 }
 
 // ---------------------------------------------------------------------------
@@ -214,18 +211,17 @@ pub fn camera_begin_json(width: u32, height: u32, fps: u32) -> String {
     json!({"ok": true, "width": width, "height": height, "fps": fps}).to_string()
 }
 
-/// Push one camera frame (base64 pixels, `fmt`: i420|nv12|bgra|420v|32bgra).
+/// Push one camera frame (raw pixels, `fmt`: i420|nv12|bgra|420v|32bgra).
 /// Convert failures count as drops (still `{ok:true}` + stats).
-pub fn camera_push_json(b64: &str, width: u32, height: u32, fmt: &str) -> String {
-    let data = match b64_decode(b64) {
-        Ok(d) => d,
-        Err(e) => return err_json("arg", e),
-    };
+pub fn camera_push_bytes_json(data: &[u8], width: u32, height: u32, fmt: &str) -> String {
+    if data.len() > MAX_FRAME_BYTES {
+        return err_json("arg", format!("frame too large: {} bytes", data.len()));
+    }
     let pix = match macav::PixFmt::parse(fmt) {
         Ok(p) => p,
         Err(e) => return err_json("arg", e),
     };
-    lock(camera_pump()).push(&data, width, height, pix);
+    lock(camera_pump()).push(data, width, height, pix);
     camera_stats_json()
 }
 
@@ -250,12 +246,11 @@ pub fn camera_end_json() -> String {
     json!({"ok": true}).to_string()
 }
 
-/// Push one decoded remote I420 frame (base64) for the SwiftUI view.
-pub fn video_push_remote_json(b64: &str, width: u32, height: u32) -> String {
-    let data = match b64_decode(b64) {
-        Ok(d) => d,
-        Err(e) => return err_json("arg", e),
-    };
+/// Push one decoded remote I420 frame (raw bytes) for the SwiftUI view.
+pub fn video_push_remote_bytes_json(data: &[u8], width: u32, height: u32) -> String {
+    if data.len() > MAX_FRAME_BYTES {
+        return err_json("arg", format!("frame too large: {} bytes", data.len()));
+    }
     let need = macav::I420Frame::expected_len(width, height);
     if width == 0 || height == 0 || data.len() < need {
         return err_json(
@@ -271,16 +266,9 @@ pub fn video_push_remote_json(b64: &str, width: u32, height: u32) -> String {
     json!({"ok": true, "bytes": need}).to_string()
 }
 
-/// Drain the latest remote frame (or `{ok:true, frame:null}`).
-pub fn video_poll_remote_json() -> String {
-    match lock(remote_slot()).take() {
-        Some(f) => json!({
-            "ok": true,
-            "frame": {"width": f.width, "height": f.height, "data": b64_encode(&f.data)},
-        })
-        .to_string(),
-        None => json!({"ok": true, "frame": null}).to_string(),
-    }
+/// Drain the latest remote frame, if any.
+pub fn video_poll_remote_raw() -> Option<macav::I420Frame> {
+    lock(remote_slot()).take()
 }
 
 /// Black 176x144 IDR access unit as base64 NALs (VideoToolbox target).
@@ -384,22 +372,23 @@ pub extern "C" fn ostmac_camera_begin(width: c_int, height: c_int, fps: c_int) -
 }
 
 #[no_mangle]
-pub extern "C" fn ostmac_camera_push(
-    b64: *const c_char,
+pub extern "C" fn ostmac_camera_push_bytes(
+    pixels: *const u8,
+    len: usize,
     width: c_int,
     height: c_int,
     fmt: *const c_char,
 ) -> *mut c_char {
-    let data = match cstr_to_string(b64) {
-        Ok(s) => s,
+    let data = match bytes_arg(pixels, len) {
+        Ok(d) => d,
         Err(e) => return string_to_c(err_json("arg", e)),
     };
     let format = match cstr_to_string(fmt) {
         Ok(s) => s,
         Err(e) => return string_to_c(err_json("arg", e)),
     };
-    string_to_c(camera_push_json(
-        &data,
+    string_to_c(camera_push_bytes_json(
+        data,
         width.max(0) as u32,
         height.max(0) as u32,
         &format,
@@ -417,14 +406,15 @@ pub extern "C" fn ostmac_camera_end() -> *mut c_char {
 }
 
 #[no_mangle]
-pub extern "C" fn ostmac_video_push_remote(
-    b64: *const c_char,
+pub extern "C" fn ostmac_video_push_remote_bytes(
+    data: *const u8,
+    len: usize,
     width: c_int,
     height: c_int,
 ) -> *mut c_char {
-    match cstr_to_string(b64) {
-        Ok(s) => string_to_c(video_push_remote_json(
-            &s,
+    match bytes_arg(data, len) {
+        Ok(d) => string_to_c(video_push_remote_bytes_json(
+            d,
             width.max(0) as u32,
             height.max(0) as u32,
         )),
@@ -433,8 +423,32 @@ pub extern "C" fn ostmac_video_push_remote(
 }
 
 #[no_mangle]
-pub extern "C" fn ostmac_video_poll_remote() -> *mut c_char {
-    string_to_c(video_poll_remote_json())
+pub extern "C" fn ostmac_video_poll_remote_bytes(
+    width: *mut c_int,
+    height: *mut c_int,
+    out: *mut *mut u8,
+    out_len: *mut usize,
+) -> c_int {
+    if width.is_null() || height.is_null() || out.is_null() || out_len.is_null() {
+        return -1;
+    }
+    match video_poll_remote_raw() {
+        Some(f) => unsafe {
+            *width = f.width as c_int;
+            *height = f.height as c_int;
+            let boxed = f.data.into_boxed_slice();
+            *out_len = boxed.len();
+            *out = Box::into_raw(boxed) as *mut u8;
+            1
+        },
+        None => unsafe {
+            *width = 0;
+            *height = 0;
+            *out = std::ptr::null_mut();
+            *out_len = 0;
+            0
+        },
+    }
 }
 
 #[no_mangle]
@@ -485,25 +499,23 @@ mod tests {
             serde_json::from_str(&camera_begin_json(320, 240, 15)).unwrap();
         assert_eq!(v["ok"], true);
 
-        // bad base64 / bad fmt are arg errors
+        // bad fmt is an arg error
+        let tiny = [0u8; 4];
         let v: serde_json::Value =
-            serde_json::from_str(&camera_push_json("!!!", 320, 240, "bgra")).unwrap();
-        assert_eq!(v["ok"], false);
-        let v: serde_json::Value =
-            serde_json::from_str(&camera_push_json("AAAA", 320, 240, "mjpeg")).unwrap();
+            serde_json::from_str(&camera_push_bytes_json(&tiny, 320, 240, "mjpeg")).unwrap();
         assert_eq!(v["ok"], false);
 
         // one good BGRA frame (320x240x4)
-        let bgra = b64_encode(&vec![0x80u8; 320 * 240 * 4]);
+        let bgra = vec![0x80u8; 320 * 240 * 4];
         let v: serde_json::Value =
-            serde_json::from_str(&camera_push_json(&bgra, 320, 240, "bgra")).unwrap();
+            serde_json::from_str(&camera_push_bytes_json(&bgra, 320, 240, "bgra")).unwrap();
         assert_eq!(v["ok"], true);
         assert_eq!(v["frames"], 1);
         assert_eq!(v["last_bytes"], 320 * 240 * 3 / 2);
 
         // short buffer counts as drop, still ok
         let v: serde_json::Value =
-            serde_json::from_str(&camera_push_json("AAAA", 320, 240, "bgra")).unwrap();
+            serde_json::from_str(&camera_push_bytes_json(&tiny, 320, 240, "bgra")).unwrap();
         assert_eq!(v["ok"], true);
         assert_eq!(v["frames"], 1);
         assert_eq!(v["dropped"], 1);
@@ -517,28 +529,26 @@ mod tests {
     #[test]
     fn av_video_push_poll_roundtrip() {
         // drain first so parallel order can't leak a frame in
-        let _ = video_poll_remote_json();
-        let v: serde_json::Value = serde_json::from_str(&video_poll_remote_json()).unwrap();
-        assert!(v["frame"].is_null());
+        let _ = video_poll_remote_raw();
+        assert!(video_poll_remote_raw().is_none());
 
         // reject short buffers
         let v: serde_json::Value =
-            serde_json::from_str(&video_push_remote_json("AAAA", 320, 240)).unwrap();
+            serde_json::from_str(&video_push_remote_bytes_json(&[0u8; 4], 320, 240)).unwrap();
         assert_eq!(v["ok"], false);
 
-        let i420 = b64_encode(&vec![0x10u8; 320 * 240 * 3 / 2]);
+        let i420 = vec![0x10u8; 320 * 240 * 3 / 2];
         let v: serde_json::Value =
-            serde_json::from_str(&video_push_remote_json(&i420, 320, 240)).unwrap();
+            serde_json::from_str(&video_push_remote_bytes_json(&i420, 320, 240)).unwrap();
         assert_eq!(v["ok"], true);
 
-        let v: serde_json::Value = serde_json::from_str(&video_poll_remote_json()).unwrap();
-        assert_eq!(v["frame"]["width"], 320);
-        assert_eq!(v["frame"]["height"], 240);
-        assert_eq!(v["frame"]["data"], i420);
+        let f = video_poll_remote_raw().expect("frame");
+        assert_eq!(f.width, 320);
+        assert_eq!(f.height, 240);
+        assert_eq!(f.data, i420); // bit-identical, no encode round-trip
 
         // poll drains
-        let v: serde_json::Value = serde_json::from_str(&video_poll_remote_json()).unwrap();
-        assert!(v["frame"].is_null());
+        assert!(video_poll_remote_raw().is_none());
     }
 
     #[test]
@@ -669,7 +679,7 @@ mod tests {
     fn av_ffi_push_null_is_arg_error() {
         unsafe {
             let fmt = CString::new("bgra").unwrap();
-            let p = ostmac_camera_push(std::ptr::null(), 2, 2, fmt.as_ptr());
+            let p = ostmac_camera_push_bytes(std::ptr::null(), 16, 2, 2, fmt.as_ptr());
             assert!(!p.is_null());
             let s = CStr::from_ptr(p).to_string_lossy().into_owned();
             crate::ostmac_free(p);
@@ -677,5 +687,44 @@ mod tests {
             assert_eq!(v["ok"], false);
             assert_eq!(v["error"], "arg");
         }
+    }
+
+    #[test]
+    fn av_ffi_remote_bytes_roundtrip() {
+        let _ = video_poll_remote_raw(); // drain
+        unsafe {
+            let i420 = vec![0x10u8; 64 * 64 * 3 / 2];
+            let p = ostmac_video_push_remote_bytes(i420.as_ptr(), i420.len(), 64, 64);
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            crate::ostmac_free(p);
+            assert_eq!(serde_json::from_str::<serde_json::Value>(&s).unwrap()["ok"], true);
+            let mut w: c_int = 0;
+            let mut h: c_int = 0;
+            let mut out: *mut u8 = std::ptr::null_mut();
+            let mut out_len: usize = 0;
+            assert_eq!(
+                ostmac_video_poll_remote_bytes(&mut w, &mut h, &mut out, &mut out_len),
+                1
+            );
+            assert_eq!((w, h), (64, 64));
+            let got = std::slice::from_raw_parts(out, out_len).to_vec();
+            crate::ostmac_bytes_free(out, out_len);
+            assert_eq!(got, i420);
+            assert_eq!(
+                ostmac_video_poll_remote_bytes(&mut w, &mut h, &mut out, &mut out_len),
+                0
+            );
+            assert!(out.is_null());
+            assert_eq!(
+                ostmac_video_poll_remote_bytes(
+                    std::ptr::null_mut(),
+                    &mut h,
+                    &mut out,
+                    &mut out_len
+                ),
+                -1
+            );
+        }
+        let _ = video_poll_remote_raw(); // leave drained
     }
 }
