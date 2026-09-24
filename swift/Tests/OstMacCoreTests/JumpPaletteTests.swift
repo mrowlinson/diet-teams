@@ -92,6 +92,42 @@ final class JumpPaletteTests: XCTestCase {
         XCTAssertFalse(DemoData.chats.contains { $0.id == "demo-chan-general" })
     }
 
+    // MARK: - PaletteNav (om-lt4-palettenav: flat ↑↓ across chats + files + people)
+
+    func testVisibleCountCapsAtFive() {
+        XCTAssertEqual(PaletteNav.visibleCount(9), 5)
+        XCTAssertEqual(PaletteNav.visibleCount(3), 3)
+        XCTAssertEqual(PaletteNav.visibleCount(0), 0)
+    }
+
+    func testTotalSumsVisibleRows() {
+        XCTAssertEqual(PaletteNav.total(mainCount: 3, fileCount: 2, personCount: 1), 6)
+        XCTAssertEqual(PaletteNav.total(mainCount: 0, fileCount: 0, personCount: 0), 0)
+    }
+
+    func testResolveMapsSections() {
+        XCTAssertEqual(PaletteNav.resolve(0, mainCount: 2, fileCount: 2, personCount: 1), .main(0))
+        XCTAssertEqual(PaletteNav.resolve(1, mainCount: 2, fileCount: 2, personCount: 1), .main(1))
+        XCTAssertEqual(PaletteNav.resolve(2, mainCount: 2, fileCount: 2, personCount: 1), .file(0))
+        XCTAssertEqual(PaletteNav.resolve(3, mainCount: 2, fileCount: 2, personCount: 1), .file(1))
+        XCTAssertEqual(PaletteNav.resolve(4, mainCount: 2, fileCount: 2, personCount: 1), .person(0))
+        XCTAssertNil(PaletteNav.resolve(5, mainCount: 2, fileCount: 2, personCount: 1))
+        XCTAssertNil(PaletteNav.resolve(-1, mainCount: 2, fileCount: 2, personCount: 1))
+    }
+
+    func testResolveSkipsEmptyMain() {
+        XCTAssertEqual(PaletteNav.resolve(0, mainCount: 0, fileCount: 1, personCount: 1), .file(0))
+        XCTAssertEqual(PaletteNav.resolve(1, mainCount: 0, fileCount: 1, personCount: 1), .person(0))
+    }
+
+    func testMoveClamps() {
+        XCTAssertEqual(PaletteNav.move(current: 0, delta: -1, total: 5), 0)
+        XCTAssertEqual(PaletteNav.move(current: 4, delta: 1, total: 5), 4)
+        XCTAssertEqual(PaletteNav.move(current: 1, delta: 1, total: 5), 2)
+        XCTAssertEqual(PaletteNav.move(current: 2, delta: -2, total: 5), 0)
+        XCTAssertEqual(PaletteNav.move(current: 0, delta: 1, total: 0), 0)
+    }
+
     private func sampleTargets() -> [JumpTarget] {
         JumpTargets.build(chats: DemoData.chats, teams: DemoData.teams)
     }

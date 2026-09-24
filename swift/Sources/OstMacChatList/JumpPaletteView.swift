@@ -22,9 +22,10 @@ import SwiftUI
 ///
 /// Files + People sections: when `filePeople` and at least one pick
 /// handler are present, the query also debounces into
-/// `FilePeopleSearchStore` and the hits render below the chat rows
-/// (click/tap to pick; arrow keys stay on the chat rows). The forward
-/// sheet (no store) stays chats-only.
+/// `FilePeopleSearchStore` and the hits render below the main rows.
+/// ↑↓/⏎ span all three sections as one flat list (om-lt4-palettenav);
+/// click/tap still picks directly. The forward sheet (no store) stays
+/// chats-only.
 public struct JumpPaletteView: View {
     private enum Scope: String {
         case chats
@@ -43,6 +44,10 @@ public struct JumpPaletteView: View {
     @State private var query = ""
     @State private var highlight = 0
     @State private var scope: Scope = .chats
+    /// Bumped by store publishers below: the stores are held plain (not
+    /// @ObservedObject), so without this the flat nav counts captured in
+    /// `body` would go stale when async hits land between keystrokes.
+    @State private var storeTick = 0
     @FocusState private var fieldFocused: Bool
 
     public init(
@@ -90,6 +95,36 @@ public struct JumpPaletteView: View {
     /// least one pick handler; the forward sheet stays chats-only.
     private var sectionsEnabled: Bool {
         filePeople != nil && (onPickFile != nil || onPickPerson != nil)
+    }
+
+    /// Sections render (and join the flat nav) only under a non-blank
+    /// query; mirrors the `body` gate for `FilePeopleResultsView`.
+    private var sectionsVisible: Bool {
+        sectionsEnabled && !trimmedQuery.isEmpty
+    }
+
+    /// Flat-nav counts (om-lt4-palettenav): main rows first (chats, or
+    /// message hits in Messages scope), then visible Files rows, then
+    /// visible People rows. Read live off the stores at each keypress.
+    private var mainCount: Int {
+        inMessages ? (searchStore?.hits.count ?? 0) : matches.count
+    }
+
+    private var fileVisibleCount: Int {
+        guard sectionsVisible, onPickFile != nil, let store = filePeople else { return 0 }
+        return PaletteNav.visibleCount(store.files.count)
+    }
+
+    private var personVisibleCount: Int {
+        guard sectionsVisible, onPickPerson != nil, let store = filePeople else { return 0 }
+        return PaletteNav.visibleCount(store.people.count)
+    }
+
+    private var navTotal: Int {
+        _ = storeTick
+        return PaletteNav.total(
+            mainCount: mainCount, fileCount: fileVisibleCount,
+            personCount: personVisibleCount)
     }
 
     private var trimmedQuery: String {
@@ -146,6 +181,8 @@ public struct JumpPaletteView: View {
                     search: store, query: query,
                     highlight: $highlight, chatNameFor: chatNameFor,
                     onPickMessage: { pickMessage($0, in: store) })
+                    // Refresh the flat nav counts when hits land.
+                    .onReceive(store.objectWillChange) { storeTick += 1 }
             } else if matches.isEmpty {
                 DietEmptyState(
                     systemImage: "magnifyingglass",
@@ -190,11 +227,14 @@ public struct JumpPaletteView: View {
                 // small ideal size (~3 rows); grow with the matches.
                 .frame(height: Self.listHeight(for: matches.count))
             }
-            if sectionsEnabled, let store = filePeople, !trimmedQuery.isEmpty {
+            if sectionsVisible, let store = filePeople {
                 DietDividerH()
                 FilePeopleResultsView(
                     search: store,
-                    onPickFile: onPickFile, onPickPerson: onPickPerson)
+                    onPickFile: onPickFile, onPickPerson: onPickPerson,
+                    highlight: highlight, mainCount: mainCount)
+                    // Refresh the flat nav counts when hits land.
+                    .onReceive(store.objectWillChange) { storeTick += 1 }
             }
             DietDividerH()
             Text("↑↓ move · ⏎ \(verb) · esc close")
@@ -241,16 +281,31 @@ public struct JumpPaletteView: View {
     }
 
     private func move(_ delta: Int) {
-        let count = inMessages ? (searchStore?.hits.count ?? 0) : matches.count
-        guard count > 0 else { return }
-        highlight = min(max(highlight + delta, 0), count - 1)
+        highlight = PaletteNav.move(current: highlight, delta: delta, total: navTotal)
     }
 
-    /// Return: chats pick immediately; messages search first when the
-    /// query outruns the debounce, else pick the highlighted hit.
+    /// Return: resolves the flat highlight across main + Files + People.
+    /// Main rows keep their old behavior (chats pick immediately;
+    /// messages search first when the query outruns the debounce, else
+    /// pick the highlighted hit); section rows pick directly.
     private func submit() {
+        guard let row = PaletteNav.resolve(
+            highlight, mainCount: mainCount,
+            fileCount: fileVisibleCount, personCount: personVisibleCount)
+        else { return }
+        switch row {
+        case .main(let i):
+            submitMain(i)
+        case .file(let i):
+            pickFile(i)
+        case .person(let i):
+            pickPerson(i)
+        }
+    }
+
+    private func submitMain(_ i: Int) {
         guard inMessages, let store = searchStore else {
-            pick(highlight)
+            pick(i)
             return
         }
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -258,13 +313,23 @@ public struct JumpPaletteView: View {
         if q != store.lastQuery || store.isSearching {
             Task { await store.search(query: q) }
         } else {
-            pickMessage(highlight, in: store)
+            pickMessage(i, in: store)
         }
     }
 
     private func pick(_ i: Int) {
         guard matches.indices.contains(i), let id = matches[i].openID else { return }
         onPick(id, matches[i].openName)
+    }
+
+    private func pickFile(_ i: Int) {
+        guard let store = filePeople, store.files.indices.contains(i) else { return }
+        onPickFile?(store.files[i])
+    }
+
+    private func pickPerson(_ i: Int) {
+        guard let store = filePeople, store.people.indices.contains(i) else { return }
+        onPickPerson?(store.people[i])
     }
 
     private func pickMessage(_ i: Int, in store: MessageSearchStore) {
@@ -411,17 +476,24 @@ private struct MessageResultsView: View {
 }
 
 /// Files + People sections (om-jb-filesearch): server-ranked rows under
-/// the chat matches, 5 per section with an overflow note. Owned by the
-/// palette; the host passes its store + pick handlers. Section rows are
-/// click/tap (arrow keys stay on the chat rows); a failed section shows
-/// an inline retry while the other section keeps its rows.
+/// the main matches, 5 per section with an overflow note. Owned by the
+/// palette; the host passes its store + pick handlers. Rows join the
+/// flat ↑↓/⏎ nav (om-lt4-palettenav) via `highlight` + `mainCount` and
+/// stay click/tap-able; a failed section shows an inline retry while
+/// the other section keeps its rows.
 private struct FilePeopleResultsView: View {
     @ObservedObject var search: FilePeopleSearchStore
     let onPickFile: ((SharedFile) -> Void)?
     let onPickPerson: ((TeamMember) -> Void)?
+    /// Flat highlight over main + Files + People (see ``PaletteNav``).
+    let highlight: Int
+    /// Main-section row count: the flat base the Files rows start at.
+    let mainCount: Int
 
-    /// Rows shown per section before the "+N more" note.
-    static let rowCap = 5
+    /// Visible Files rows (flat nav + highlight base for People).
+    private var fileVisible: Int {
+        onPickFile == nil ? 0 : PaletteNav.visibleCount(search.files.count)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -430,7 +502,7 @@ private struct FilePeopleResultsView: View {
                 if let err = search.fileError, search.files.isEmpty {
                     sectionError(message: err) { search.retry() }
                 } else {
-                    ForEach(search.files.prefix(Self.rowCap)) { file in
+                    ForEach(Array(search.files.prefix(PaletteNav.sectionRowCap).enumerated()), id: \.element.id) { j, file in
                         Button { onPickFile?(file) } label: {
                             HStack(spacing: DietSpace.sm) {
                                 Image(systemName: file.isFolder ? "folder" : file.iconName)
@@ -453,6 +525,11 @@ private struct FilePeopleResultsView: View {
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(highlight == mainCount + j
+                                    ? Color(nsColor: DietColor.accent).opacity(0.15)
+                                    : Color.clear))
                     }
                     overflowNote(count: search.files.count)
                 }
@@ -462,7 +539,7 @@ private struct FilePeopleResultsView: View {
                 if let err = search.peopleError, search.people.isEmpty {
                     sectionError(message: err) { search.retry() }
                 } else {
-                    ForEach(search.people.prefix(Self.rowCap)) { person in
+                    ForEach(Array(search.people.prefix(PaletteNav.sectionRowCap).enumerated()), id: \.element.id) { k, person in
                         Button { onPickPerson?(person) } label: {
                             HStack(spacing: DietSpace.sm) {
                                 Image(systemName: "person.circle")
@@ -485,6 +562,11 @@ private struct FilePeopleResultsView: View {
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(highlight == mainCount + fileVisible + k
+                                    ? Color(nsColor: DietColor.accent).opacity(0.15)
+                                    : Color.clear))
                     }
                     overflowNote(count: search.people.count)
                 }
@@ -524,9 +606,9 @@ private struct FilePeopleResultsView: View {
     /// "+N more" when the section overflows the row cap (nil otherwise).
     @ViewBuilder
     private func overflowNote(count: Int) -> some View {
-        if count > Self.rowCap {
+        if count > PaletteNav.sectionRowCap {
             HStack {
-                Text("+\(count - Self.rowCap) more")
+                Text("+\(count - PaletteNav.sectionRowCap) more")
                     .font(DietType.caption1)
                     .foregroundStyle(DietColor.textTertiaryColor)
                 Spacer(minLength: 0)
