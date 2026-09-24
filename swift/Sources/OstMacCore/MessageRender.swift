@@ -24,10 +24,18 @@ public enum MessageRender {
 
     // MARK: - Raw-HTML mining
 
-    /// Names inside `<at …>Name</at>` mention tags, entity-decoded.
+    /// Names inside `<at …>Name</at>` mention tags plus Teams
+    /// `<span itemtype="…Mention" …>Name</span>` mention spans,
+    /// entity-decoded. Live history ships spans (verified 2026-09-24:
+    /// no `<at>`, no `@` sigil, sometimes one person split across two
+    /// spans); demo seeds `<at>`. Both highlight identically.
     public static func mentions(fromRaw raw: String?) -> [String] {
         guard let raw else { return [] }
-        return innerTexts(of: "at", in: raw).map(decodeEntities).filter { !$0.isEmpty }
+        var out = innerTexts(of: "at", in: raw).map(decodeEntities).filter { !$0.isEmpty }
+        for m in Mentions.parseFromContent(raw) where !m.displayName.isEmpty {
+            if !out.contains(m.displayName) { out.append(m.displayName) }
+        }
+        return out
     }
 
     /// Inner text of `<pre>…</pre>` code blocks, tags stripped, decoded.
@@ -210,7 +218,7 @@ public enum MessageRender {
         func convert(_ r: Range<String.Index>) -> Range<AttributedString.Index>? {
             Range(r, in: a)
         }
-        // Mentions (names mined from <at> tags; fall back to @token scan).
+        // Mentions (<at> tags + Mention spans; fall back to @token scan).
         var names = mentions(fromRaw: raw)
         if names.isEmpty {
             names = mentionTokens(in: text)
