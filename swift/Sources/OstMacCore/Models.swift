@@ -236,6 +236,28 @@ public struct TeamJoinResponse: Decodable, Sendable {
     }
 }
 
+/// `{ok,team,polls?,elapsed_ms?}` from `ostmac_team_create`. Telemetry
+/// is optional (older cores omit it); the team row always decodes.
+public struct TeamCreateResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let team: TeamItem
+    public let polls: Int?
+    public let elapsedMs: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case ok, team, polls
+        case elapsedMs = "elapsed_ms"
+    }
+
+    /// Host-side construction (mocks, previews). Wire decoding is untouched.
+    public init(ok: Bool, team: TeamItem, polls: Int? = nil, elapsedMs: Int? = nil) {
+        self.ok = ok
+        self.team = team
+        self.polls = polls
+        self.elapsedMs = elapsedMs
+    }
+}
+
 // MARK: - Channel tabs (om-h4-tabs lane)
 
 /// Where one channel tab deep-links. Posts/Files/Notes land in the

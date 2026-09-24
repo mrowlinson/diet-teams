@@ -71,9 +71,13 @@ pub use teams::{
     add_member_body, add_team_member_data, channel_react_body,
     channel_reply_set_reaction_path, channel_reply_unset_reaction_path,
     channel_set_reaction_path, channel_unset_reaction_path, create_channel_body,
-    create_channel_data, create_channel_path, join_team_data, list_team_members_data,
-    list_teams_data, member_path, members_path, remove_team_member_data,
-    set_channel_reaction_data, unset_channel_reaction_data,
+    create_channel_data, create_channel_path, create_team_body, create_team_data,
+    create_team_path, join_team_data, list_team_members_data, list_teams_data,
+    member_path, members_path, operation_failed, operation_succeeded,
+    operation_team_id, operation_url, remove_team_member_data,
+    set_channel_reaction_data, standard_team_template, TeamCreateResult,
+    TeamsAsyncOperation, TEAM_CREATE_POLL_SECS, TEAM_CREATE_TIMEOUT_SECS,
+    unset_channel_reaction_data,
 };
 pub use todo::{
     complete_todo_task_data, create_todo_task_data, list_todo_lists_data,

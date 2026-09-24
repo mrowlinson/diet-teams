@@ -100,6 +100,23 @@ impl TeamsClient {
     }
 
     /// POST request to Microsoft Graph API (bearer auth with Graph token).
+    /// GET an absolute Graph URL with the Graph bearer token (async
+    /// `Content-Location` operation polls hand back absolute URLs).
+    pub async fn graph_get_url(&self, url: &str) -> Result<reqwest::Response> {
+        let token = self.graph_token()?;
+        tracing::debug!("Graph GET {}", url);
+
+        let resp = self
+            .http
+            .get(url)
+            .bearer_auth(&token)
+            .send()
+            .await
+            .with_context(|| format!("Graph GET {} failed", url))?;
+
+        check_response(resp, url).await
+    }
+
     pub async fn graph_post(
         &self,
         path: &str,
