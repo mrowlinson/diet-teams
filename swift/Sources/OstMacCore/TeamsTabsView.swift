@@ -119,7 +119,7 @@ public struct TeamsTabsView: View {
             .padding(.horizontal, DietSpace.md)
             .padding(.vertical, DietSpace.xs)
         case let .error(message):
-            HStack(spacing: 6) {
+            HStack(spacing: DietSpace.xs) {
                 Image(systemName: "exclamationmark.triangle")
                     .foregroundStyle(.orange)
                 Text(message)
@@ -135,7 +135,7 @@ public struct TeamsTabsView: View {
             .padding(.vertical, DietSpace.xs)
         case .loaded:
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
+                HStack(spacing: DietSpace.sm) {
                     ForEach(store.tabs) { tab in
                         chip(for: tab)
                     }
@@ -162,15 +162,15 @@ public struct TeamsTabsView: View {
         return Button {
             onSelect(target)
         } label: {
-            HStack(spacing: 4) {
+            HStack(spacing: DietSpace.xs) {
                 Image(systemName: icon(for: target))
                     .font(.caption2)
                 Text(tab.name)
                     .font(.caption)
                     .lineLimit(1)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 4)
+            .padding(.horizontal, DietSpace.sm)
+            .padding(.vertical, DietSpace.xs)
             .background(
                 highlighted
                     ? Color(nsColor: DietColor.accent).opacity(0.25)

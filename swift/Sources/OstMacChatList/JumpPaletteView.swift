@@ -526,7 +526,7 @@ private struct FilePeopleResultsView: View {
                         }
                         .buttonStyle(.plain)
                         .background(
-                            RoundedRectangle(cornerRadius: 6)
+                            RoundedRectangle(cornerRadius: DietRadius.control)
                                 .fill(highlight == mainCount + j
                                     ? Color(nsColor: DietColor.accent).opacity(0.15)
                                     : Color.clear))
@@ -563,7 +563,7 @@ private struct FilePeopleResultsView: View {
                         }
                         .buttonStyle(.plain)
                         .background(
-                            RoundedRectangle(cornerRadius: 6)
+                            RoundedRectangle(cornerRadius: DietRadius.control)
                                 .fill(highlight == mainCount + fileVisible + k
                                     ? Color(nsColor: DietColor.accent).opacity(0.15)
                                     : Color.clear))

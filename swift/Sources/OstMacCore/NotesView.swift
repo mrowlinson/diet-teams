@@ -4,6 +4,7 @@
 // renders through NSAttributedString's HTML importer; unparseable pages
 // fall back to stripped text (never blank, never raw tags).
 import SwiftUI
+import DietDesign
 
 public struct NotesView: View {
     @ObservedObject public var store: NotesStore
@@ -62,19 +63,19 @@ public struct NotesView: View {
                 Text("team notes")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
-                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .padding(.horizontal, DietSpace.xs).padding(.vertical, DietSpace.xxs)
                     .background(Color.blue.opacity(0.12))
                     .clipShape(Capsule())
             } else if store.isDemo {
                 Text("DEMO")
                     .font(.caption2).bold()
-                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .padding(.horizontal, DietSpace.xs).padding(.vertical, DietSpace.xxs)
                     .background(.orange.opacity(0.2))
                     .clipShape(Capsule())
             }
         }
         .padding(.horizontal)
-        .padding(.vertical, 8)
+        .padding(.vertical, DietSpace.sm)
     }
 
     private var notebookBinding: Binding<String?> {
@@ -100,7 +101,7 @@ public struct NotesView: View {
     }
 
     private var loadingHint: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: DietSpace.row) {
             ProgressView().controlSize(.small)
             Text("Loading notes…").foregroundStyle(.secondary)
         }
@@ -108,7 +109,7 @@ public struct NotesView: View {
     }
 
     private func errorHint(_ message: String) -> some View {
-        VStack(spacing: 10) {
+        VStack(spacing: DietSpace.row) {
             Image(systemName: "exclamationmark.triangle")
                 .font(.largeTitle).foregroundStyle(.secondary)
             Text(message)
@@ -123,7 +124,7 @@ public struct NotesView: View {
     }
 
     private func hint(systemImage: String, title: String, body: String) -> some View {
-        VStack(spacing: 10) {
+        VStack(spacing: DietSpace.row) {
             Image(systemName: systemImage)
                 .font(.largeTitle).foregroundStyle(.secondary)
             Text(title).font(.headline)
@@ -146,7 +147,7 @@ public struct NotesView: View {
                 systemImage: "note.text", title: "No notebooks",
                 body: Self.noNotebooksBody(groupID: store.groupID))
         case .loadingSections:
-            VStack(spacing: 10) {
+            VStack(spacing: DietSpace.row) {
                 ProgressView().controlSize(.small)
                 Text("Loading sections…").foregroundStyle(.secondary)
             }
@@ -175,7 +176,7 @@ public struct NotesView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List(store.pages, selection: pageBinding) { page in
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: DietSpace.xxs) {
                         Text(page.title.isEmpty ? "Untitled" : page.title)
                             .lineLimit(2)
                         if let updated = page.updated {
@@ -203,7 +204,7 @@ public struct NotesView: View {
         Group {
             if let page = store.page {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 8) {
+                    VStack(alignment: .leading, spacing: DietSpace.row) {
                         Text(page.title.isEmpty ? "Untitled" : page.title)
                             .font(.title3).bold()
                             .textSelection(.enabled)
@@ -228,7 +229,7 @@ public struct NotesView: View {
     // MARK: - Append
 
     private var appendBox: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: DietSpace.xs) {
             if let err = store.appendError {
                 Text(err)
                     .font(.caption)

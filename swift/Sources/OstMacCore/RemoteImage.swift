@@ -5,6 +5,7 @@
 // so paging/streaming re-renders never refetch. All phases share one fixed
 // slot (RemoteImageSlot) so resolving bytes never shifts the timeline.
 import AppKit
+import DietDesign
 import SwiftUI
 
 /// Load state for one bubble image. Plain enum keeps the state machine
@@ -99,7 +100,7 @@ public struct RemoteImage: View {
             switch model.phase {
             case .loading:
                 ZStack {
-                    RoundedRectangle(cornerRadius: 8)
+                    RoundedRectangle(cornerRadius: DietRadius.control)
                         .fill(Color.gray.opacity(0.25))
                     ProgressView()
                         .controlSize(.small)
@@ -112,7 +113,7 @@ public struct RemoteImage: View {
                             .resizable()
                             .aspectRatio(contentMode: .fit)
                             .frame(maxWidth: RemoteImageSlot.width, maxHeight: RemoteImageSlot.height)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .clipShape(RoundedRectangle(cornerRadius: DietRadius.control))
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel(alt.isEmpty ? "Image" : alt)
@@ -123,7 +124,7 @@ public struct RemoteImage: View {
                     }
                 }
             case let .failed(err):
-                HStack(spacing: 6) {
+                HStack(spacing: DietSpace.xs) {
                     Image(systemName: "photo.badge.exclamationmark")
                         .foregroundStyle(.secondary)
                     Text(alt.isEmpty ? "Couldn't load image" : "Couldn't load \(alt)")
@@ -134,9 +135,9 @@ public struct RemoteImage: View {
                         .font(.caption)
                         .buttonStyle(.link)
                 }
-                .padding(8)
+                .padding(DietSpace.sm)
                 .background(Color.gray.opacity(0.15))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .clipShape(RoundedRectangle(cornerRadius: DietRadius.control))
                 .help(err)
             }
         }
@@ -196,20 +197,20 @@ struct ZoomedImage: View {
                     }
                     if full.phase == .loading, display != nil {
                         VStack {
-                            HStack(spacing: 6) {
+                            HStack(spacing: DietSpace.xs) {
                                 ProgressView()
                                     .controlSize(.small)
                                 Text("Loading full resolution…")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
+                            .padding(.horizontal, DietSpace.sm)
+                            .padding(.vertical, DietSpace.xs)
                             .background(.thickMaterial)
                             .clipShape(Capsule())
                             Spacer()
                         }
-                        .padding(8)
+                        .padding(DietSpace.sm)
                     }
                 }
                 .onChange(of: full.phase) { _, new in
@@ -226,7 +227,7 @@ struct ZoomedImage: View {
                 }
             }
             if case let .failed(err) = full.phase {
-                HStack(spacing: 6) {
+                HStack(spacing: DietSpace.xs) {
                     Image(systemName: "photo.badge.exclamationmark")
                         .foregroundStyle(.secondary)
                     Text("Full resolution unavailable — showing preview")
@@ -237,12 +238,12 @@ struct ZoomedImage: View {
                         .font(.caption)
                         .buttonStyle(.link)
                 }
-                .padding(8)
+                .padding(DietSpace.sm)
                 .help(err)
                 Divider()
             }
             Divider()
-            HStack(spacing: 8) {
+            HStack(spacing: DietSpace.sm) {
                 Slider(
                     value: Binding(
                         get: { scale },
@@ -270,7 +271,7 @@ struct ZoomedImage: View {
                 Button("Close") { dismiss() }
                     .keyboardShortcut(.cancelAction)
             }
-            .padding(8)
+            .padding(DietSpace.sm)
         }
         .background(
             GeometryReader { outer in

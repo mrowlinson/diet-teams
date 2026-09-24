@@ -17,6 +17,7 @@
 //   store.displayedFiles           // filter + sort applied
 // Tests inject mock fetchers (same seam as ChatListViewModel.Fetcher).
 import AppKit
+import DietDesign
 import Foundation
 import SwiftUI
 
@@ -859,7 +860,7 @@ public struct SharedFilesView: View {
             }
         }
         .sheet(item: $copyTarget) { file in
-            VStack(spacing: 12) {
+            VStack(spacing: DietSpace.row) {
                 Text("Copy “\(file.name)”").font(.headline)
                 TextField("Destination folder id", text: $copyFolder)
                     .textFieldStyle(.roundedBorder)
@@ -900,7 +901,7 @@ public struct SharedFilesView: View {
     }
 
     private func renameSheet(_ file: SharedFile) -> some View {
-        VStack(spacing: 12) {
+        VStack(spacing: DietSpace.row) {
             Text("Rename “\(file.name)”").font(.headline)
             TextField("New name", text: $renameName)
                 .textFieldStyle(.roundedBorder)
@@ -925,7 +926,7 @@ public struct SharedFilesView: View {
         actionLabel: String,
         action: @escaping () -> Void
     ) -> some View {
-        VStack(spacing: 12) {
+        VStack(spacing: DietSpace.row) {
             Text(title).font(.headline)
             TextField("Destination folder id", text: folder)
                 .textFieldStyle(.roundedBorder)
@@ -944,7 +945,7 @@ public struct SharedFilesView: View {
     /// Back + breadcrumb trail (root "Files" + folder crumbs). Depth jumps
     /// read the store cache (no refetch).
     private var breadcrumbs: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: DietSpace.xs) {
             Button("‹ Back") { store.back() }
                 .font(.caption)
                 .buttonStyle(.link)
@@ -969,11 +970,11 @@ public struct SharedFilesView: View {
             Spacer()
         }
         .padding(.horizontal)
-        .padding(.vertical, 6)
+        .padding(.vertical, DietSpace.xs)
     }
 
     private var toolbar: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: DietSpace.xs) {
             HStack {
                 Text("\(store.displayedFiles.count) files")
                     .font(.caption).monospaced()
@@ -1023,11 +1024,11 @@ public struct SharedFilesView: View {
             }
         }
         .padding(.horizontal)
-        .padding(.vertical, 8)
+        .padding(.vertical, DietSpace.sm)
     }
 
     private var controls: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: DietSpace.sm) {
             Picker("Sort", selection: $store.sort) {
                 ForEach(SharedFilesSort.allCases, id: \.self) { order in
                     Text(order.label).tag(order)
@@ -1037,7 +1038,7 @@ public struct SharedFilesView: View {
             .frame(maxWidth: 210)
             .help("Sort shared files")
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
+                HStack(spacing: DietSpace.sm) {
                     ForEach(SharedFilesTypeFilter.allCases, id: \.self) { kind in
                         Button(kind.label) { store.filter = kind }
                             .buttonStyle(.bordered)
@@ -1050,7 +1051,7 @@ public struct SharedFilesView: View {
             Spacer()
         }
         .padding(.horizontal)
-        .padding(.bottom, 8)
+        .padding(.bottom, DietSpace.sm)
     }
 
     @ViewBuilder
@@ -1073,7 +1074,7 @@ public struct SharedFilesView: View {
         case .loading, .loaded:
             fileList
         case .empty:
-            VStack(spacing: 8) {
+            VStack(spacing: DietSpace.row) {
                 Spacer()
                 Image(systemName: "folder")
                     .font(.largeTitle).foregroundStyle(.secondary)
@@ -1085,7 +1086,7 @@ public struct SharedFilesView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         case let .error(message):
-            VStack(spacing: 8) {
+            VStack(spacing: DietSpace.row) {
                 Spacer()
                 Image(systemName: "exclamationmark.triangle")
                     .font(.largeTitle).foregroundStyle(.orange)
@@ -1189,12 +1190,12 @@ struct SharedFileRow: View {
 
     var body: some View {
         if drillable {
-            HStack(spacing: 10) {
+            HStack(spacing: DietSpace.sm) {
                 Image(systemName: "folder")
                     .font(.title2)
                     .foregroundStyle(.secondary)
                     .frame(width: 28)
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: DietSpace.xxs) {
                     Text(file.name)
                         .font(.body)
                         .lineLimit(1)
@@ -1208,21 +1209,21 @@ struct SharedFileRow: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            .padding(.vertical, 4)
+            .padding(.vertical, DietSpace.xs)
             .contentShape(Rectangle())
             .onTapGesture(perform: onDrill)
         } else {
-            HStack(spacing: 10) {
+            HStack(spacing: DietSpace.sm) {
                 Image(systemName: file.isFolder ? "folder" : file.iconName)
                     .font(.title2)
                     .foregroundStyle(.secondary)
                     .frame(width: 28)
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: DietSpace.xxs) {
                     Text(file.name)
                         .font(.body)
                         .lineLimit(1)
                         .textSelection(.enabled)
-                    HStack(spacing: 6) {
+                    HStack(spacing: DietSpace.xs) {
                         Text(file.sizeLabel)
                             .font(.caption).monospaced()
                             .foregroundStyle(.secondary)
@@ -1255,7 +1256,7 @@ struct SharedFileRow: View {
                     }
                 }
             }
-            .padding(.vertical, 4)
+            .padding(.vertical, DietSpace.xs)
         }
     }
 }

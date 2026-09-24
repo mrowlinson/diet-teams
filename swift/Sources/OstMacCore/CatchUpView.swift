@@ -9,6 +9,7 @@
 // sheet cannot dismiss on click-outside) with Done + Esc +
 // click-outside dismiss; every close resets the summary state.
 import AppKit
+import DietDesign
 import SwiftUI
 
 // MARK: - Sheet dismissal routing
@@ -72,11 +73,11 @@ public struct CatchUpView: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: DietSpace.section) {
             HStack {
                 Text("Thread catch-up")
                     .font(.headline)
-                Spacer(minLength: 12)
+                Spacer(minLength: DietSpace.section)
                 // Native macOS dismiss: a visible Done button that ALSO
                 // owns .cancelAction, so Esc dismisses from any focus
                 // (no focus trap). Summarize keeps .defaultAction (Return);
@@ -124,7 +125,7 @@ public struct CatchUpView: View {
                 ProgressView("Summarizing…")
                 Spacer()
             }
-            .padding(.top, 24)
+            .padding(.top, DietSpace.lg)
         case let .loaded(text):
             ScrollView {
                 Text(text)
@@ -160,7 +161,7 @@ public struct CatchUpInstallPrompt: View {
     public init() {}
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: DietSpace.xs) {
             Text("To use the OpenCode CLI provider:")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -177,9 +178,9 @@ public struct CatchUpInstallPrompt: View {
                     .font(.caption)
             }
         }
-        .padding(8)
+        .padding(DietSpace.sm)
         .background(.secondary.opacity(0.12))
-        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .clipShape(RoundedRectangle(cornerRadius: DietRadius.control))
     }
 }
 

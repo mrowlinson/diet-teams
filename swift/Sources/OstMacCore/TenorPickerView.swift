@@ -2,6 +2,7 @@
 // Trending on open, search on submit, thumbnails in a grid. No API key =
 // graceful off-state pointing at Settings (no request is ever made).
 import SwiftUI
+import DietDesign
 
 /// GIF picker. `onPick` fires with the full-size GIF URL; the host inserts
 /// it into the draft (or sends it) and dismisses the popover.
@@ -23,7 +24,7 @@ public struct TenorPickerView: View {
             if apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 offState
             } else {
-                HStack(spacing: 8) {
+                HStack(spacing: DietSpace.sm) {
                     Image(systemName: "magnifyingglass")
                         .foregroundStyle(.secondary)
                     TextField("Search GIFs", text: $query)
@@ -31,7 +32,7 @@ public struct TenorPickerView: View {
                         .onSubmit { Task { await runSearch() } }
                     if loading { ProgressView().controlSize(.small) }
                 }
-                .padding(10)
+                .padding(DietSpace.sm)
                 Divider()
                 grid
             }
@@ -44,7 +45,7 @@ public struct TenorPickerView: View {
     }
 
     private var offState: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: DietSpace.row) {
             Image(systemName: "photo.on.rectangle.angled")
                 .font(.largeTitle).foregroundStyle(.secondary)
             Text("GIFs need a Tenor API key").font(.headline)
@@ -52,14 +53,14 @@ public struct TenorPickerView: View {
                 .font(.callout).foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
         }
-        .padding(24)
+        .padding(DietSpace.lg)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var grid: some View {
         Group {
             if let error {
-                VStack(spacing: 8) {
+                VStack(spacing: DietSpace.row) {
                     Image(systemName: "exclamationmark.triangle")
                         .font(.largeTitle).foregroundStyle(.secondary)
                     Text(error).font(.callout)
@@ -76,8 +77,8 @@ public struct TenorPickerView: View {
             } else {
                 ScrollView {
                     LazyVGrid(
-                        columns: [GridItem(.adaptive(minimum: 100), spacing: 8)],
-                        spacing: 8
+                        columns: [GridItem(.adaptive(minimum: 100), spacing: DietSpace.sm)],
+                        spacing: DietSpace.sm
                     ) {
                         ForEach(gifs) { gif in
                             Button { onPick(gif.fullURL) } label: {
@@ -97,13 +98,13 @@ public struct TenorPickerView: View {
                                 }
                                 .frame(height: 90)
                                 .clipped()
-                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                                .clipShape(RoundedRectangle(cornerRadius: DietRadius.control))
                             }
                             .buttonStyle(.plain)
                             .help(gif.title.isEmpty ? "Send GIF" : gif.title)
                         }
                     }
-                    .padding(10)
+                    .padding(DietSpace.sm)
                 }
             }
         }
