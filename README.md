@@ -12,12 +12,14 @@ in `--demo` with canned data; sign in via device code or browser to go live.
 ## Features
 
 Chat & conversation
-: Sidebar (Chats / Teams / Reminders) + conversation with Chat / Shared /
-  Notes tabs, live Trouter feed, paged history, ⌘K jump palette, filters.
-: Send, edit, delete, quote replies, emoji reactions, forward/copy, rich
-  rendering (mentions, code, inline images, bot posts, link previews),
-  read receipts, typing indicators.
-: Shared files (list/upload/download); GIF picker (bring-your-own Tenor key).
+: Sidebar (Chats / Teams / Reminders, pinned Mentions/Notifications) +
+  conversation with Chat / Shared / Notes tabs, live Trouter feed, paged
+  history, ⌘K jump palette, filters.
+: Send, edit, delete, quote replies, emoji reactions, forward/copy/save,
+  @-mention picker, rich rendering (mentions, code, inline images, bot
+  posts, link previews), read receipts, typing indicators.
+: Shared files (list/upload/download) + composer attachments; GIF picker
+  (bring-your-own Tenor key).
 
 Teams, meetings, reminders, notes
 : Teams/channels browser; upcoming meetings + join-string parsing; To Do
@@ -36,8 +38,9 @@ Auth & session
   refresh/expiry handling, persisted on-disk session.
 
 Extras
-: AI thread catch-up (bring-your-own key, kept in the macOS keychain),
-  diagnostics/health windows, MCP server (`ostmac-mcp`, see `docs/mcp.md`).
+: AI thread catch-up (OpenCode CLI or bring-your-own key, kept in the
+  macOS keychain), diagnostics/health windows, MCP server (`ostmac-mcp`,
+  see `docs/mcp.md`).
 
 ## Requirements
 
