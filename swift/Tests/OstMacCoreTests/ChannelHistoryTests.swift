@@ -78,6 +78,48 @@ final class ChannelHistoryTests: XCTestCase {
         XCTAssertEqual(m.consumeTail(currentTailID: "t1", isOwnTail: false), .none)
     }
 
+    // MARK: - Open-chain progress + capped marker (om-hu-polish)
+
+    func testOpenProgressTitle() {
+        // Idle: no progress row.
+        XCTAssertNil(ScrollPolicy.openProgressTitle(loading: false, messageCount: 10))
+        // Chain running but nothing landed: the centered "Loading
+        // recent" block covers it, no top row.
+        XCTAssertNil(ScrollPolicy.openProgressTitle(loading: true, messageCount: 0))
+        // Mid-chain: count of bubbles landed so far.
+        XCTAssertEqual(
+            ScrollPolicy.openProgressTitle(loading: true, messageCount: 42),
+            "Loading older messages… 42 loaded")
+    }
+
+    func testShowingLastTitle() {
+        // End of history: no marker (the thread starts here).
+        XCTAssertNil(ScrollPolicy.showingLastTitle(
+            didLoad: true, loading: false, messageCount: 50,
+            hasMoreHistory: false, isDemo: false))
+        // Mid-chain: progress row owns the top, no marker.
+        XCTAssertNil(ScrollPolicy.showingLastTitle(
+            didLoad: true, loading: true, messageCount: 50,
+            hasMoreHistory: true, isDemo: false))
+        // Never loaded / empty: no marker.
+        XCTAssertNil(ScrollPolicy.showingLastTitle(
+            didLoad: false, loading: false, messageCount: 50,
+            hasMoreHistory: true, isDemo: false))
+        XCTAssertNil(ScrollPolicy.showingLastTitle(
+            didLoad: true, loading: false, messageCount: 0,
+            hasMoreHistory: true, isDemo: false))
+        // Demo threads never page: no marker on stale tokens.
+        XCTAssertNil(ScrollPolicy.showingLastTitle(
+            didLoad: true, loading: false, messageCount: 50,
+            hasMoreHistory: true, isDemo: true))
+        // Capped: marker names the visible slice.
+        XCTAssertEqual(
+            ScrollPolicy.showingLastTitle(
+                didLoad: true, loading: false, messageCount: 50,
+                hasMoreHistory: true, isDemo: false),
+            "Showing last 50 messages")
+    }
+
     private static func msgs() -> [ChatMessage] {
         [msg("a", "t"), msg("tail-9", "t")]
     }

@@ -83,6 +83,27 @@ public enum ScrollPolicy {
     /// reader stays near the bottom. Rows grow as images resolve, so
     /// one scroll lands short; these settle passes pin the true bottom.
     public static let settleDelays: [TimeInterval] = [0.35, 1.0, 2.0]
+
+    /// Top progress caption while the open page-chain runs (om-hu-polish):
+    /// names the bubbles landed so far. Nil when idle (no row) and when
+    /// nothing landed yet (the centered "Loading recent" block covers it).
+    public static func openProgressTitle(loading: Bool, messageCount: Int) -> String? {
+        guard loading, messageCount > 0 else { return nil }
+        return "Loading older messages… \(messageCount) loaded"
+    }
+
+    /// Capped-window marker (om-hu-polish): names the visible slice once
+    /// the open chain settled with older history still unpaged. Nil at
+    /// end of history (thread starts here), mid-chain (progress owns the
+    /// top), before first load, when empty, and for demo threads (never
+    /// page — a stale token must not caption them).
+    public static func showingLastTitle(
+        didLoad: Bool, loading: Bool, messageCount: Int,
+        hasMoreHistory: Bool, isDemo: Bool
+    ) -> String? {
+        guard didLoad, !loading, messageCount > 0, hasMoreHistory, !isDemo else { return nil }
+        return "Showing last \(messageCount) messages"
+    }
 }
 
 /// Live scroll state for one open chat (om-scroll).
