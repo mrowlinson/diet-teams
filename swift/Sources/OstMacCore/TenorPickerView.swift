@@ -15,6 +15,9 @@ public struct TenorPickerView: View {
     @State private var loading = false
     @State private var error: String?
 
+    /// Roving arrow-key highlight over `gifs` (om-a3-keyboard).
+    @State private var highlight = 0
+
     public init(apiKey: String, onPick: @escaping (String) -> Void) {
         self.apiKey = apiKey
         self.onPick = onPick
@@ -67,39 +70,72 @@ public struct TenorPickerView: View {
                     .foregroundStyle(DietColor.textSecondaryColor)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ScrollView {
-                    LazyVGrid(
-                        columns: [GridItem(.adaptive(minimum: 100), spacing: DietSpace.sm)],
-                        spacing: DietSpace.sm
-                    ) {
-                        ForEach(gifs) { gif in
-                            Button { onPick(gif.fullURL) } label: {
-                                AsyncImage(url: URL(string: gif.previewURL)) { phase in
-                                    switch phase {
-                                    case .success(let image):
-                                        image.resizable().aspectRatio(contentMode: .fill)
-                                    case .failure:
-                                        Color.gray.opacity(0.2)
-                                            .overlay(Image(systemName: "photo")
-                                                .foregroundStyle(DietColor.textSecondaryColor))
-                                    case .empty:
-                                        Color.gray.opacity(0.12)
-                                    @unknown default:
-                                        Color.gray.opacity(0.12)
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVGrid(
+                            columns: [GridItem(.adaptive(minimum: 100), spacing: DietSpace.sm)],
+                            spacing: DietSpace.sm
+                        ) {
+                            ForEach(Array(gifs.enumerated()), id: \.element.id) { i, gif in
+                                Button { onPick(gif.fullURL) } label: {
+                                    AsyncImage(url: URL(string: gif.previewURL)) { phase in
+                                        switch phase {
+                                        case .success(let image):
+                                            image.resizable().aspectRatio(contentMode: .fill)
+                                        case .failure:
+                                            Color.gray.opacity(0.2)
+                                                .overlay(Image(systemName: "photo")
+                                                    .foregroundStyle(DietColor.textSecondaryColor))
+                                        case .empty:
+                                            Color.gray.opacity(0.12)
+                                        @unknown default:
+                                            Color.gray.opacity(0.12)
+                                        }
                                     }
                                 }
                                 .frame(height: 90)
                                 .clipped()
                                 .clipShape(RoundedRectangle(cornerRadius: DietRadius.control))
+                                .buttonStyle(.plain)
+                                .help(gif.title.isEmpty ? "Send GIF" : gif.title)
+                                .accessibilityLabel(
+                                    gif.title.isEmpty ? "GIF" : gif.title)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: DietRadius.control)
+                                        .stroke(
+                                            i == highlight ? Color.accentColor : Color.clear,
+                                            lineWidth: 2))
+                                .id(i)
                             }
-                            .buttonStyle(.plain)
-                            .help(gif.title.isEmpty ? "Send GIF" : gif.title)
                         }
+                        .padding(DietSpace.sm)
                     }
-                    .padding(DietSpace.sm)
+                    .onChange(of: highlight) { proxy.scrollTo($0, anchor: .center) }
                 }
+                .onChange(of: gifs) { highlight = 0 }
+                // Field Return stays search (existing onSubmit); arrows
+                // rove the grid, Return on a focused cell picks natively.
+                .onKeyPress(.upArrow) { arrow(dx: 0, dy: -1) }
+                .onKeyPress(.downArrow) { arrow(dx: 0, dy: 1) }
+                .onKeyPress(.leftArrow) { arrow(dx: -1, dy: 0) }
+                .onKeyPress(.rightArrow) { arrow(dx: 1, dy: 0) }
             }
         }
+    }
+
+    /// Adaptive columns rendered for the fixed 380pt width: same
+    /// minimum + spacing the LazyVGrid uses, so arrow steps match.
+    private var columns: Int {
+        let pad = DietSpace.sm * 2
+        let gap = DietSpace.sm
+        return max(1, Int((380 - pad + gap) / (100 + gap)))
+    }
+
+    private func arrow(dx: Int, dy: Int) -> KeyPress.Result {
+        highlight = GridNav.move(
+            current: highlight, dx: dx, dy: dy,
+            columns: columns, count: gifs.count)
+        return .handled
     }
 
     private func loadTrending() async {

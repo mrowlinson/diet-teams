@@ -1177,28 +1177,32 @@ struct SharedFileRow: View {
 
     var body: some View {
         if drillable {
-            HStack(spacing: DietSpace.sm) {
-                Image(systemName: "folder")
-                    .font(DietType.title2)
-                    .foregroundStyle(DietColor.textSecondaryColor)
-                    .frame(width: 28)
-                VStack(alignment: .leading, spacing: DietSpace.xxs) {
-                    Text(file.name)
-                        .font(DietType.body)
-                        .lineLimit(1)
-                        .textSelection(.enabled)
-                    Text("Folder")
+            Button(action: onDrill) {
+                HStack(spacing: DietSpace.sm) {
+                    Image(systemName: "folder")
+                        .font(DietType.title2)
+                        .foregroundStyle(DietColor.textSecondaryColor)
+                        .frame(width: 28)
+                    VStack(alignment: .leading, spacing: DietSpace.xxs) {
+                        Text(file.name)
+                            .font(DietType.body)
+                            .lineLimit(1)
+                            .textSelection(.enabled)
+                        Text("Folder")
+                            .font(DietType.caption1)
+                            .foregroundStyle(DietColor.textSecondaryColor)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
                         .font(DietType.caption1)
                         .foregroundStyle(DietColor.textSecondaryColor)
                 }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(DietType.caption1)
-                    .foregroundStyle(DietColor.textSecondaryColor)
+                .padding(.vertical, DietSpace.xs)
+                .contentShape(Rectangle())
             }
-            .padding(.vertical, DietSpace.xs)
-            .contentShape(Rectangle())
-            .onTapGesture(perform: onDrill)
+            .buttonStyle(.plain)
+            .accessibilityLabel("Open folder \(file.name)")
+            .accessibilityHint("Shows this folder's files")
         } else {
             HStack(spacing: DietSpace.sm) {
                 Image(systemName: file.isFolder ? "folder" : file.iconName)
