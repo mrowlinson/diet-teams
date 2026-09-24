@@ -528,7 +528,7 @@ fn notification_from_value(v: &serde_json::Value) -> Option<CallNotification> {
 // ---------------------------------------------------------------------------
 
 fn skype_token_string() -> Result<String, String> {
-    let cfg = Config::load().map_err(|e| e.to_string())?;
+    let cfg = Config::load_cached().map_err(|e| e.to_string())?;
     cfg.get_skype_token()
         .filter(|t| !t.is_expired())
         .map(|t| t.token)
@@ -826,7 +826,7 @@ pub fn call_record_inject_json() -> String {
     };
     let (id, controller, caller_mri, participant_id, endpoint_id, thread_id, display_name, surl) =
         stored;
-    let cfg = Config::load().map_err(|e| e.to_string());
+    let cfg = Config::load_cached().map_err(|e| e.to_string());
     let cfg = match cfg {
         Ok(c) => c,
         Err(e) => return err_json("auth", e),
@@ -1018,7 +1018,7 @@ fn place_inner(
             );
         }
     }
-    let cfg = match Config::load() {
+    let cfg = match Config::load_cached() {
         Ok(c) => c,
         Err(e) => return err_json("auth", format!("config: {}", e)),
     };
