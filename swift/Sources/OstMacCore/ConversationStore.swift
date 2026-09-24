@@ -399,15 +399,20 @@ public final class ConversationStore: ObservableObject {
     /// Destination chat of the last forward (demo preview + tests).
     @Published public private(set) var lastForwardDestName: String?
 
-    /// Forward one bubble's text to another chat (om-msgactions). Reuses
-    /// the plain send path (no new FFI): the destination bubble stamps
-    /// its own sender/time. Demo mode records without touching core.
-    /// Empty destination or empty body is a no-op.
+    /// Forward one bubble's text to another chat (om-msgactions,
+    /// om-copyforward). Reuses the plain send path (no new FFI): the
+    /// posted body carries a forwarded-attribution header naming the
+    /// original sender, and the destination bubble stamps its own
+    /// sender/time. Demo mode records without touching core. Empty
+    /// destination or empty payload text is a no-op.
     public func forward(_ message: ChatMessage, toChatID destChatID: String, destName: String? = nil) {
         let dest = destChatID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !dest.isEmpty else { return }
+        // Guard on the payload text, not the attributed body: the
+        // header alone must never send (image-only bubbles stay a no-op).
+        let text = MessageActions.copyText(for: message)
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         let body = MessageActions.forwardBody(for: message)
-        guard !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         if isDemo {
             lastForward = MessageActions.ForwardRecord(messageID: message.id, destChatID: dest, body: body)
             lastForwardDestName = destName
