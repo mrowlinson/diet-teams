@@ -4973,7 +4973,6 @@ mod tests {
             is_folder: true,
             share_url: None,
             attachment_id: None,
-            share_url: None,
         };
         let v = shared_file_to_json(&f);
         assert_eq!(v["id"], "dir-1");
