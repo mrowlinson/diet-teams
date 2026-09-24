@@ -159,24 +159,20 @@ fn parse_value(v: &Value, batch: &mut ParsedBatch) {
             }
             // socket.io v1 envelope {"name","args"}.
             if let Some(args) = map.get("args").and_then(|a| a.as_array()) {
-                let name = map
-                    .get("name")
-                    .and_then(|n| n.as_str())
-                    .unwrap_or("")
-                    .to_lowercase();
-                if name.contains("message_loss") || name.contains("messageloss") {
+                let name = map.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                if contains_ci(name, "message_loss") || contains_ci(name, "messageloss") {
                     batch.resync = true;
                     batch.skipped += 1;
                     return;
                 }
-                if name == "trouter.connected" {
+                if name.eq_ignore_ascii_case("trouter.connected") {
                     batch.skipped += 1;
                     return;
                 }
-                let edit_hint = name.contains("edit");
-                let typing_hint = name.contains("typing");
-                let roster_hint = name.contains("roster");
-                let speaker_hint = name.contains("speaker");
+                let edit_hint = contains_ci(name, "edit");
+                let typing_hint = contains_ci(name, "typing");
+                let roster_hint = contains_ci(name, "roster");
+                let speaker_hint = contains_ci(name, "speaker");
                 for a in args {
                     // Named typing envelope: the name may be the only
                     // marker, so try typing before the generic path.
@@ -273,11 +269,41 @@ fn parse_value_hint(v: &Value, edit_hint: bool, batch: &mut ParsedBatch) {
     parse_value(v, batch);
 }
 
+/// ASCII case-insensitive substring search, no allocation.
+/// `needle` must already be lowercase ASCII (all call-site markers are).
+fn contains_ci(hay: &str, needle: &str) -> bool {
+    let (h, n) = (hay.as_bytes(), needle.as_bytes());
+    if n.is_empty() {
+        return true;
+    }
+    h.windows(n.len()).any(|w| w.eq_ignore_ascii_case(n))
+}
+
+/// Byte index of the first ASCII case-insensitive match, no allocation.
+/// `needle` must already be lowercase ASCII.
+fn find_ci(hay: &str, needle: &str) -> Option<usize> {
+    let (h, n) = (hay.as_bytes(), needle.as_bytes());
+    if n.is_empty() {
+        return Some(0);
+    }
+    h.windows(n.len())
+        .position(|w| w.eq_ignore_ascii_case(n))
+}
+
 /// True when the object itself carries a loss marker.
 fn has_loss_marker(map: &serde_json::Map<String, Value>) -> bool {
+    // Exact keys first (wire shape is lowercase / camelCase).
+    if map.contains_key("message_loss")
+        || map.contains_key("messageloss")
+        || map.contains_key("droppedindicators")
+        || map.contains_key("droppedIndicators")
+    {
+        return true;
+    }
     map.keys().any(|k| {
-        let l = k.to_lowercase();
-        l == "message_loss" || l == "messageloss" || l == "droppedindicators"
+        k.eq_ignore_ascii_case("message_loss")
+            || k.eq_ignore_ascii_case("messageloss")
+            || k.eq_ignore_ascii_case("droppedindicators")
     })
 }
 
@@ -291,6 +317,35 @@ fn get_ci<'a>(map: &'a serde_json::Map<String, Value>, key: &str) -> Option<&'a 
         .map(|(_, v)| v)
 }
 
+/// Case-insensitive multi-key lookup with one exact pass, then at most
+/// one fallback scan. Key priority (slice order) preserved: the scan
+/// keeps the value whose key ranks first.
+fn get_ci_multi<'a>(
+    map: &'a serde_json::Map<String, Value>,
+    keys: &[&str],
+) -> Option<&'a Value> {
+    for k in keys {
+        if let Some(v) = map.get(*k) {
+            return Some(v);
+        }
+    }
+    let mut best: Option<(usize, &'a Value)> = None;
+    for (mk, v) in map.iter() {
+        for (i, k) in keys.iter().enumerate() {
+            if mk.eq_ignore_ascii_case(k) {
+                if best.map_or(true, |(bi, _)| i < bi) {
+                    best = Some((i, v));
+                }
+                break;
+            }
+        }
+        if best.map_or(false, |(bi, _)| bi == 0) {
+            break;
+        }
+    }
+    best.map(|(_, v)| v)
+}
+
 fn str_ci(map: &serde_json::Map<String, Value>, key: &str) -> Option<String> {
     let v = get_ci(map, key)?;
     match v {
@@ -300,17 +355,37 @@ fn str_ci(map: &serde_json::Map<String, Value>, key: &str) -> Option<String> {
     }
 }
 
+/// Borrowed string view: no clone. Numbers stringify, so they are
+/// skipped — no call-site predicate can match a numeric rendering.
+fn str_ref_ci<'a>(map: &'a serde_json::Map<String, Value>, key: &str) -> Option<&'a str> {
+    get_ci(map, key)?.as_str()
+}
+
+fn str_ref_multi<'a>(
+    map: &'a serde_json::Map<String, Value>,
+    keys: &[&str],
+) -> Option<&'a str> {
+    get_ci_multi(map, keys)?.as_str()
+}
+
 fn first_str(map: &serde_json::Map<String, Value>, keys: &[&str]) -> Option<String> {
-    keys.iter().find_map(|k| str_ci(map, k))
+    let v = get_ci_multi(map, keys)?;
+    match v {
+        Value::String(s) => Some(s.clone()),
+        Value::Number(n) => Some(n.to_string()),
+        _ => None,
+    }
 }
 
 /// True when the object is a typing indicator, not a message.
 /// Skype/Teams sends `messagetype: "Control/Typing"` frames (no content).
 /// Matched case-insensitively; `type`/`resourceType` covered defensively.
 fn is_typing_frame(map: &serde_json::Map<String, Value>) -> bool {
+    // Every present key is tested (borrowed, no clone): a `type`
+    // marker counts even when `messagetype` says otherwise.
     for key in ["messagetype", "messageType", "type", "resourceType"] {
-        if let Some(s) = str_ci(map, key) {
-            if s.to_lowercase().contains("typing") {
+        if let Some(s) = str_ref_ci(map, key) {
+            if contains_ci(s, "typing") {
                 return true;
             }
         }
@@ -484,15 +559,19 @@ fn presence_of(map: &serde_json::Map<String, Value>) -> Option<bool> {
     if bool_ci(map, &["removed", "left", "departed"]) == Some(true) {
         return Some(false);
     }
-    match first_str(map, &["state", "status"])
-        .unwrap_or_default()
-        .to_lowercase()
-        .as_str()
+    let s = str_ref_multi(map, &["state", "status"]).unwrap_or("");
+    if ["joined", "active", "connected", "admitted", "present", "inlobby", "in_lobby"]
+        .iter()
+        .any(|k| s.eq_ignore_ascii_case(k))
     {
-        "joined" | "active" | "connected" | "admitted" | "present" | "inlobby"
-        | "in_lobby" => Some(true),
-        "left" | "removed" | "departed" | "disconnected" | "declined" => Some(false),
-        _ => None,
+        Some(true)
+    } else if ["left", "removed", "departed", "disconnected", "declined"]
+        .iter()
+        .any(|k| s.eq_ignore_ascii_case(k))
+    {
+        Some(false)
+    } else {
+        None
     }
 }
 
@@ -569,11 +648,15 @@ fn bool_ci(map: &serde_json::Map<String, Value>, keys: &[&str]) -> Option<bool> 
                     return Some(i != 0);
                 }
             }
-            Value::String(s) => match s.trim().to_lowercase().as_str() {
-                "true" | "1" | "yes" => return Some(true),
-                "false" | "0" | "no" => return Some(false),
-                _ => {}
-            },
+            Value::String(s) => {
+                let t = s.trim();
+                if t.eq_ignore_ascii_case("true") || t == "1" || t.eq_ignore_ascii_case("yes") {
+                    return Some(true);
+                }
+                if t.eq_ignore_ascii_case("false") || t == "0" || t.eq_ignore_ascii_case("no") {
+                    return Some(false);
+                }
+            }
             _ => {}
         }
     }
@@ -625,8 +708,8 @@ fn message_from_object(
     let edited_id = first_str(map, &["skypeeditedid"]);
     let type_field = first_str(map, &["type", "resourceType"]).unwrap_or_default();
     let is_edit = edit_hint
-        || msgtype.to_lowercase().contains("edit")
-        || type_field.to_lowercase().contains("edit")
+        || contains_ci(&msgtype, "edit")
+        || contains_ci(&type_field, "edit")
         || edited_id.is_some();
     let id = first_str(
         map,
@@ -720,16 +803,17 @@ fn chat_id_from(map: &serde_json::Map<String, Value>) -> String {
 
 /// `.../conversations/<id>/messages/...` -> `<id>`.
 fn parse_conversation_link(link: &str) -> Option<String> {
-    let lower = link.to_lowercase();
+    // Index from the original bytes: the old lowercased copy could
+    // shift offsets on non-ASCII links (and panicked on some).
     let marker = "/conversations/";
-    let start = lower.find(marker)? + marker.len();
-    let rest = &link[start..];
+    let start = find_ci(link, marker)? + marker.len();
+    let rest = link.get(start..)?;
     let end = rest.find('/').unwrap_or(rest.len());
-    let id = rest[..end].to_string();
+    let id = &rest[..end];
     if id.is_empty() {
         None
     } else {
-        Some(id)
+        Some(id.to_string())
     }
 }
 
@@ -755,45 +839,96 @@ const BLOCK_TAGS: &[&str] = &[
 /// text). Spacing-aware (om-chatnames): block boundaries become one
 /// space so live previews never glue words; no leading/trailing space.
 fn strip_html(html: &str) -> String {
+    let b = html.as_bytes();
     let mut out = String::with_capacity(html.len());
-    let mut tag = String::new();
-    let mut in_tag = false;
+    let mut i = 0;
     let mut pending_space = false;
-    for ch in html.chars() {
-        if in_tag {
-            if ch == '>' {
-                in_tag = false;
-                let body = tag.strip_prefix('/').unwrap_or(&tag);
-                let name: String = body
-                    .chars()
-                    .take_while(|c| !c.is_whitespace() && *c != '/')
-                    .collect();
-                if BLOCK_TAGS.contains(&name.to_lowercase().as_str()) {
-                    pending_space = true;
+    let mut saw_entity = false;
+    while i < b.len() {
+        if b[i] == b'<' {
+            match b[i..].iter().position(|&c| c == b'>') {
+                Some(rel) => {
+                    let mut body = &b[i + 1..i + rel];
+                    if let Some(rest) = body.strip_prefix(b"/") {
+                        body = rest;
+                    }
+                    let end = body
+                        .iter()
+                        .position(|&c| c == b'/' || c.is_ascii_whitespace())
+                        .unwrap_or(body.len());
+                    let name = &body[..end];
+                    if BLOCK_TAGS
+                        .iter()
+                        .any(|t| name.eq_ignore_ascii_case(t.as_bytes()))
+                    {
+                        pending_space = true;
+                    }
+                    i += rel + 1;
                 }
-                tag.clear();
-            } else {
-                tag.push(ch);
+                None => break, // unterminated '<': swallow rest, as before
             }
-        } else if ch == '<' {
-            in_tag = true;
-        } else {
-            if pending_space {
-                pending_space = false;
-                if !out.is_empty() && !out.ends_with(char::is_whitespace) && !ch.is_whitespace()
-                {
-                    out.push(' ');
-                }
-            }
-            out.push(ch);
+            continue;
         }
+        // b[i] != b'<': copy one char (tags/entities are ASCII, so a
+        // multi-byte char can never open either).
+        let ch = html[i..].chars().next().unwrap_or('\u{FFFD}');
+        if ch == '&' {
+            saw_entity = true;
+        }
+        if pending_space {
+            pending_space = false;
+            if !out.is_empty() && !out.ends_with(char::is_whitespace) && !ch.is_whitespace() {
+                out.push(' ');
+            }
+        }
+        out.push(ch);
+        i += ch.len_utf8().max(1);
     }
-    out.replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&#39;", "'")
-        .replace("&nbsp;", " ")
+    if saw_entity {
+        decode_entities(&out)
+    } else {
+        out
+    }
+}
+
+/// Single-pass entity decode over the stripped text (was: six chained
+/// full-string `replace` passes). Unknown entities pass through
+/// untouched. One deliberate fix: `&amp;lt;` now decodes once to
+/// `&lt;` (correct HTML); the old chain re-scanned and double-decoded
+/// it to `<`.
+fn decode_entities(s: &str) -> String {
+    const ENTS: &[(&str, char)] = &[
+        ("&amp;", '&'),
+        ("&lt;", '<'),
+        ("&gt;", '>'),
+        ("&quot;", '"'),
+        ("&#39;", '\''),
+        ("&nbsp;", ' '),
+    ];
+    let b = s.as_bytes();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'&' {
+            let rest = &b[i..];
+            let mut hit: Option<(usize, char)> = None;
+            for (ent, ch) in ENTS {
+                if rest.starts_with(ent.as_bytes()) {
+                    hit = Some((ent.len(), *ch));
+                    break;
+                }
+            }
+            if let Some((len, ch)) = hit {
+                out.push(ch);
+                i += len;
+                continue;
+            }
+        }
+        let ch = s[i..].chars().next().unwrap_or('\u{FFFD}');
+        out.push(ch);
+        i += ch.len_utf8().max(1);
+    }
+    out
 }
 
 #[cfg(test)]
@@ -1086,6 +1221,68 @@ mod tests {
         assert_eq!(bare.roster.len(), 1);
         assert_eq!(bare.roster[0].name, "A");
         assert_eq!(bare.roster[0].meeting_id, "");
+    }
+
+    #[test]
+    fn ci_helpers_match_without_alloc_semantics() {
+        assert!(contains_ci("Control/TYPING", "typing"));
+        assert!(contains_ci("trouter.MESSAGE_loss", "message_loss"));
+        assert!(!contains_ci("Text", "typing"));
+        assert!(!contains_ci("ty", "typing"));
+        assert_eq!(find_ci("/CONVERSATIONS/19:z/x", "/conversations/"), Some(0));
+        assert_eq!(find_ci("https://h/a/Conversations/19:z", "/conversations/"), Some(11));
+        assert_eq!(find_ci("nope", "/conversations/"), None);
+    }
+
+    #[test]
+    fn entities_decode_single_pass() {
+        assert_eq!(strip_html("<p>a &amp; b</p>"), "a & b");
+        assert_eq!(strip_html("x&nbsp;y"), "x y");
+        assert_eq!(strip_html("&lt;&gt;&quot;&#39;"), "<>\"'");
+        assert_eq!(strip_html("plain"), "plain"); // fast path: no '&'
+        assert_eq!(strip_html("a &foo; b"), "a &foo; b"); // unknown kept
+        assert_eq!(strip_html("a&amp"), "a&amp"); // missing ';' kept
+        // Single pass: no double-decode of &amp;lt; (old chain gave "<").
+        assert_eq!(strip_html("<p>&amp;lt;</p>"), "&lt;");
+    }
+
+    #[test]
+    fn mixed_case_keys_and_link_parse() {
+        let b = batch_of(json!({
+            "content": "<P>Hi</P>",
+            "MessageType": "RichText/Html",
+            "DisplayName": "Zed",
+            "MessageId": "m7",
+            "ConversationLink": "https://h/V1/CONVERSATIONS/19:z/Messages/1",
+            "OriginalArrivalTime": "2026-01-01T00:00:00.000Z",
+        }));
+        assert_eq!(b.messages.len(), 1);
+        let m = &b.messages[0];
+        assert_eq!((m.text.as_str(), m.id.as_str(), m.chat_id.as_str()), ("Hi", "m7", "19:z"));
+        assert_eq!(m.message_type, "RichText/Html");
+        // all-caps key spellings resolve through the fallback scan
+        let b2 = batch_of(json!({
+            "CONTENT": "yo",
+            "MESSAGETYPE": "Text",
+            "FROM": "8:orgid:q",
+            "THREADID": "19:q",
+        }));
+        assert_eq!(b2.messages.len(), 1);
+        assert_eq!(b2.messages[0].chat_id, "19:q");
+        assert_eq!(b2.messages[0].sender_id.as_deref(), Some("8:orgid:q"));
+    }
+
+    #[test]
+    fn type_marker_still_flags_typing_when_messagetype_plain() {
+        // is_typing_frame tests every present key, not just the first.
+        let b = batch_of(json!({
+            "messagetype": "Text",
+            "type": "threadTyping",
+            "from": "8:orgid:aaa",
+            "threadid": "19:x",
+        }));
+        assert!(b.messages.is_empty());
+        assert_eq!(b.typing.len(), 1);
     }
 
     #[test]
