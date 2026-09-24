@@ -145,4 +145,11 @@ public enum DiagnosticsFormat {
     public static func pinsLine(count: Int) -> String {
         "\(count) pinned"
     }
+
+    /// Leave/block counters (om-leave-block): threads left this
+    /// session, users currently blocked, failed leave calls. The
+    /// sidebar and Settings show no numbers; the counts live here only.
+    public static func leaveBlockLine(leaves: Int, blocks: Int, failed: Int) -> String {
+        "\(leaves) left · \(blocks) blocked · \(failed) failed"
+    }
 }

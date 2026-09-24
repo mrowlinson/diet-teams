@@ -77,6 +77,10 @@ char *ostmac_edit(const char *chat_id, const char *message_id, const char *text)
 // Delete one own message: {ok, chat_id, message_id}. Caller frees.
 char *ostmac_delete(const char *chat_id, const char *message_id);
 
+// Leave one group chat (remove self from the thread roster):
+// {ok, chat_id}. Caller frees.
+char *ostmac_leave(const char *chat_id);
+
 // Mark one conversation read up to a message (consumption horizon PUT):
 // {ok, chat_id, message_id}. Caller frees.
 char *ostmac_mark_read(const char *chat_id, const char *message_id);

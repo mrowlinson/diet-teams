@@ -185,7 +185,7 @@ struct OstMacAppMain: App {
             SettingsView(
                 auth: state.auth, catchUp: state.catchUp, notifs: state.notifs,
                 rules: state.rules, chats: state.chats.chats,
-                quiet: state.quietHours)
+                quiet: state.quietHours, blocked: state.blocked)
         }
         .commands { OstMacCommands() }
     }
@@ -229,6 +229,10 @@ private struct OstMacCommands: Commands {
 @MainActor
 final class AppState: ObservableObject {
     let isDemo: Bool
+    /// Blocked users (om-leave-block): shared by the chat list (row
+    /// filter), Settings (Unblock), Diagnostics (count), and the live
+    /// feed gate below. Demo runs memory-only (never the real defaults).
+    let blocked: BlockedStore
     let chats: ChatListViewModel
     let teams: TeamsViewModel
     let reminders: RemindersViewModel
@@ -382,12 +386,16 @@ final class AppState: ObservableObject {
         } else {
             autoSay = nil
         }
+        blocked = isDemo ? BlockedStore(defaults: nil) : BlockedStore()
         if isDemo {
             // Shot hook: the churn dataset swaps the whole list (the
             // standard demo rows + count assertions stay untouched).
             let seed = showSidebarChurn
                 ? DemoData.churnChatsResponse() : DemoData.chatsResponse()
-            chats = ChatListViewModel(fetcher: { _ in seed })
+            chats = ChatListViewModel(
+                fetcher: { _ in seed },
+                leaver: { LeaveResponse(ok: true, chat_id: $0) },
+                blocked: blocked)
             teams = TeamsViewModel(fetcher: { DemoData.teamsResponse() })
             reminders = RemindersViewModel(
                 listsFetcher: { DemoData.remindersResponse() },
@@ -405,10 +413,16 @@ final class AppState: ObservableObject {
             mentions.adopt(DemoData.mentionedChatIDs)
             history.seedDemo() // canned recents (in-memory, offline)
         } else {
-            chats = ChatListViewModel()
+            chats = ChatListViewModel(blocked: blocked)
             teams = TeamsViewModel()
             reminders = RemindersViewModel()
             meetings = MeetingsViewModel()
+        }
+        // om-leave-block: a locally-removed row drops its satellite
+        // state (unread, mention flags) — never a list refresh.
+        chats.onLocalRemove = { [weak self] id in
+            self?.unread.markRead(chatID: id)
+            self?.mentions.markRead(chatID: id)
         }
         chats.$selectedChatID
             .dropFirst()
@@ -666,6 +680,7 @@ final class AppState: ObservableObject {
     private func openSelected(_ id: String?) {
         guard let id else {
             openChatID = nil
+            conv.close() // never show a dead thread behind the empty detail
             return
         }
         guard id != openChatID else { return } // already open (direct --chat path)
@@ -720,6 +735,8 @@ final class AppState: ObservableObject {
         // demo-react default 404d the installed build); demo
         // selections never reach shared defaults either.
         guard isDemo || !DemoData.isDemoID(id) else { return }
+        // Blocked threads never open (jump/direct paths fail closed).
+        guard !blocked.isBlocked(chatID: id) else { return }
         openChatID = id
         if SelectionRestore.shouldPersist(chatID: id) {
             persistedSelection = id
@@ -849,6 +866,16 @@ final class AppState: ObservableObject {
     private func handleRealtime(_ msg: RealtimeMessage) {
         feedEvents += 1
         refreshFeedStatus()
+        // om-leave-block: blocked senders skip everything (list, typing,
+        // unread, mentions, banners) — counted as a skip in Diagnostics.
+        // Unknown threads default to 1:1, so a new thread from a blocked
+        // mate still matches by name.
+        let threadGroup = chats.chats.first(where: { $0.id == msg.chatID })?.is_group ?? false
+        if blocked.isBlocked(chatID: msg.chatID, senderName: msg.sender, isGroup: threadGroup) {
+            notifSkipped += 1
+            notifLastReason = "blocked-user"
+            return
+        }
         typing.noteMessage(
             chatID: msg.chatID, sender: msg.sender, senderID: msg.senderID)
         chats.ingest(realtime: msg)

@@ -549,6 +549,19 @@ public struct DeleteResponse: Decodable, Sendable {
     }
 }
 
+// MARK: - Leave chat (om-leave-block lane)
+
+/// `{ok,chat_id}` from `ostmac_leave` (self removed from the thread roster).
+public struct LeaveResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let chat_id: String?
+
+    public init(ok: Bool, chat_id: String? = nil) {
+        self.ok = ok
+        self.chat_id = chat_id
+    }
+}
+
 // MARK: - Read receipts (om-receipts lane)
 
 /// `{ok,chat_id,message_id}` from `ostmac_mark_read`.

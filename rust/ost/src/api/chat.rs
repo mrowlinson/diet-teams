@@ -606,6 +606,54 @@ pub async fn delete_message_with_client(
 }
 
 // ---------------------------------------------------------------------------
+// Leave chat (OstMac om-leave-block lane)
+// ---------------------------------------------------------------------------
+//
+// Self-removal from a thread's roster: DELETE .../v1/threads/{id}/members/{mri}
+// with skypetoken auth, where the member MRI is the signed-in user's own
+// (`8:orgid:{oid}` from whoami). Best-effort: NOT yet verified live against
+// the server (see OSTMAC-PATCHES.md §27). Targets group threads; 1:1
+// threads are hidden client-side instead (the block flow).
+
+/// Own roster MRI for an Entra object id (`8:orgid:{oid}`).
+pub fn own_member_mri(oid: &str) -> String {
+    format!("8:orgid:{}", oid.trim())
+}
+
+/// DELETE target for removing one member from a thread's roster.
+pub fn leave_member_url(base: &str, chat_id: &str, member_mri: &str) -> String {
+    format!(
+        "{}/v1/threads/{}/members/{}",
+        base, chat_id, member_mri
+    )
+}
+
+/// Leave one chat: remove self from the thread roster. Empty ids are
+/// rejected before any network; the own MRI resolves via whoami.
+pub async fn leave_chat_with_client(client: &TeamsClient, chat_id: &str) -> Result<()> {
+    if chat_id.trim().is_empty() {
+        anyhow::bail!("empty chat_id");
+    }
+    let me = whoami_data(client).await?;
+    if me.id.trim().is_empty() {
+        anyhow::bail!("empty owner id");
+    }
+    let base = client.chat_service_url();
+    let url = leave_member_url(&base, chat_id.trim(), &own_member_mri(&me.id));
+    tracing::debug!("Leaving chat at {}", url);
+    client.chat_delete(&url, None).await?;
+    Ok(())
+}
+
+/// Leave one chat thread (prints to stdout).
+pub async fn leave_chat(chat_id: &str) -> Result<()> {
+    let client = TeamsClient::new().await?;
+    leave_chat_with_client(&client, chat_id).await?;
+    println!("Left chat.");
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Read receipts (OstMac om-receipts lane)
 // ---------------------------------------------------------------------------
 //
@@ -1271,6 +1319,16 @@ mod tests {
         assert_eq!(
             b["content"],
             "<p>a&lt;b&gt;&amp;&quot;&#39;</p>"
+        );
+    }
+
+    #[test]
+    fn leave_url_and_mri_shape() {
+        assert_eq!(own_member_mri("abc-123"), "8:orgid:abc-123");
+        assert_eq!(own_member_mri("  abc-123  "), "8:orgid:abc-123");
+        assert_eq!(
+            leave_member_url("https://h", "19:t@thread.v2", "8:orgid:abc-123"),
+            "https://h/v1/threads/19:t@thread.v2/members/8:orgid:abc-123"
         );
     }
 
