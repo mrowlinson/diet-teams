@@ -145,6 +145,22 @@ char *ostmac_files_link(const char *drive_id, const char *item_id, const char *s
 // Returns {ok, path, bytes}. Caller frees.
 char *ostmac_files_download(const char *drive_id, const char *item_id, const char *dest);
 
+// Version history for one driveItem (requires sign-in):
+// {ok, drive_id, item_id, versions:[{id,size,modified?,modified_by?}]},
+// newest first. Caller frees.
+char *ostmac_file_versions(const char *drive_id, const char *item_id);
+
+// Restore one version as current (Graph restoreVersion action).
+// Returns {ok, drive_id, item_id, version_id}. Caller frees.
+char *ostmac_file_version_restore(
+    const char *drive_id, const char *item_id, const char *version_id);
+
+// Download one old version's content to dest path.
+// Returns {ok, path, bytes}. Caller frees.
+char *ostmac_file_version_download(
+    const char *drive_id, const char *item_id,
+    const char *version_id, const char *dest);
+
 // To Do lists JSON (requires sign-in): {ok,lists:[{id,name,wellknown?}]}.
 // Caller frees.
 char *ostmac_reminders(void);

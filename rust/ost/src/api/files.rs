@@ -462,6 +462,94 @@ pub async fn download_file(drive_id: &str, item_id: &str, dest_path: &str) -> Re
     Ok(())
 }
 
+// -- Versions (om-i2-versions: OneDrive/SharePoint version history) --
+
+#[derive(Debug, Deserialize)]
+struct VersionsResponse {
+    value: Vec<DriveItemVersion>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DriveItemVersion {
+    id: String,
+    size: Option<u64>,
+    #[serde(rename = "lastModifiedDateTime")]
+    modified: Option<String>,
+    #[serde(rename = "lastModifiedBy")]
+    modified_by: Option<ModifiedBy>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ModifiedBy {
+    user: Option<MessageUser>,
+}
+
+/// One file version (driveItemVersion projection for list/restore/download).
+pub struct FileVersion {
+    pub id: String,
+    pub size: u64,
+    pub modified: Option<String>,
+    pub modified_by: Option<String>,
+}
+
+fn version_from_item(item: DriveItemVersion) -> FileVersion {
+    FileVersion {
+        id: item.id,
+        size: item.size.unwrap_or(0),
+        modified: item.modified,
+        modified_by: item.modified_by.and_then(|b| b.user).and_then(|u| u.display_name),
+    }
+}
+
+/// List version history for one driveItem, newest first (Graph order).
+pub async fn list_file_versions_data(
+    client: &TeamsClient,
+    drive_id: &str,
+    item_id: &str,
+) -> Result<Vec<FileVersion>> {
+    let path = format!("/drives/{}/items/{}/versions", drive_id, item_id);
+    let resp = client.graph_get(&path).await?;
+    let body: VersionsResponse = resp
+        .json()
+        .await
+        .context("Failed to parse versions response")?;
+    Ok(body.value.into_iter().map(version_from_item).collect())
+}
+
+/// Restore one version as current (Graph `restoreVersion` action).
+pub async fn restore_file_version_data(
+    client: &TeamsClient,
+    drive_id: &str,
+    item_id: &str,
+    version_id: &str,
+) -> Result<()> {
+    let path = format!(
+        "/drives/{}/items/{}/versions/{}/restoreVersion",
+        drive_id, item_id, version_id
+    );
+    client.graph_post(&path, &serde_json::json!({})).await?;
+    Ok(())
+}
+
+/// Download one old version's content to `dest_path`. Returns bytes written.
+pub async fn download_file_version_data(
+    client: &TeamsClient,
+    drive_id: &str,
+    item_id: &str,
+    version_id: &str,
+    dest_path: &str,
+) -> Result<u64> {
+    let path = format!(
+        "/drives/{}/items/{}/versions/{}/content",
+        drive_id, item_id, version_id
+    );
+    let resp = client.graph_get(&path).await?;
+    let bytes = resp.bytes().await.context("Failed to read version content")?;
+    std::fs::write(dest_path, &bytes)
+        .with_context(|| format!("Failed to write {}", dest_path))?;
+    Ok(bytes.len() as u64)
+}
+
 // -- Upload --
 
 /// Upload a local file to a chat or channel and post it as a `reference`
@@ -931,6 +1019,30 @@ mod tests {
         let item: DriveItem =
             serde_json::from_str(r#"{"id":"i1","name":"f.docx"}"#).unwrap();
         assert_eq!(shared_from_item(item, None).share_url, None);
+    }
+
+    #[test]
+    fn versions_parse_newest_first_with_author() {
+        let body: VersionsResponse = serde_json::from_str(
+            r#"{"value":[
+                {"id":"3.0","size":48211,"lastModifiedDateTime":"2026-09-20T10:00:00Z",
+                 "lastModifiedBy":{"user":{"displayName":"Priya Nair"}}},
+                {"id":"2.0"},
+                {"id":"1.0","size":100,"lastModifiedBy":{}}
+            ]}"#,
+        )
+        .unwrap();
+        let vs: Vec<FileVersion> = body.value.into_iter().map(version_from_item).collect();
+        assert_eq!(vs.len(), 3);
+        assert_eq!(vs[0].id, "3.0");
+        assert_eq!(vs[0].size, 48211);
+        assert_eq!(vs[0].modified.as_deref(), Some("2026-09-20T10:00:00Z"));
+        assert_eq!(vs[0].modified_by.as_deref(), Some("Priya Nair"));
+        // Sparse versions default size 0, no author (never fatal).
+        assert_eq!(vs[1].size, 0);
+        assert_eq!(vs[1].modified_by, None);
+        assert_eq!(vs[2].id, "1.0");
+        assert_eq!(vs[2].modified_by, None);
     }
 
     #[test]

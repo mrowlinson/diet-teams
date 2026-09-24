@@ -20,7 +20,7 @@ pub use chat::{
     ChatInfo, MessageInfo, MessagesPage, ReactionCount, ReadReceipt, REACTION_EMOJI,
 };
 pub use calendar::{JoinTarget, LobbyEvent, LobbyState, MeetingInfo};
-pub use files::SharedFile;
+pub use files::{FileVersion, SharedFile};
 pub use me::UserInfo;
 pub use notes::{NotePage, NotebookInfo, PageInfo, SectionInfo};
 pub use presence::PresenceInfo;
@@ -50,8 +50,9 @@ pub use calendar::{
     parse_join_url,
 };
 pub use files::{
-    create_link_data, download_file_data, folder_children_path, list_chat_files_data,
-    list_chat_files_data_opts, list_folder_children_data, upload_file_data,
+    create_link_data, download_file_data, download_file_version_data, folder_children_path,
+    list_chat_files_data, list_chat_files_data_opts, list_file_versions_data,
+    list_folder_children_data, restore_file_version_data, upload_file_data,
 };
 pub use media::{fetch_media_data, MediaBytes, MAX_BYTES};
 pub use me::whoami_data;

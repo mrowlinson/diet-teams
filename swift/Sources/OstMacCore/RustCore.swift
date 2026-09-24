@@ -295,6 +295,48 @@ public enum RustCore {
         }
     }
 
+    /// Version history for one driveItem, newest first (blocking FFI +
+    /// network: call off the main thread).
+    public static func fileVersions(driveID: String, itemID: String) throws -> FileVersionsResponse {
+        try driveID.withCString { dPtr in
+            try itemID.withCString { iPtr in
+                try call(ostmac_file_versions(dPtr, iPtr), as: FileVersionsResponse.self)
+            }
+        }
+    }
+
+    /// Restore one version as current (blocking FFI + network).
+    public static func fileVersionRestore(
+        driveID: String, itemID: String, versionID: String
+    ) throws -> FileVersionRestoreResponse {
+        try driveID.withCString { dPtr in
+            try itemID.withCString { iPtr in
+                try versionID.withCString { vPtr in
+                    try call(
+                        ostmac_file_version_restore(dPtr, iPtr, vPtr),
+                        as: FileVersionRestoreResponse.self)
+                }
+            }
+        }
+    }
+
+    /// Download one old version's content to dest (blocking FFI + network).
+    public static func fileVersionDownload(
+        driveID: String, itemID: String, versionID: String, dest: String
+    ) throws -> SharedFileDownloadResponse {
+        try driveID.withCString { dPtr in
+            try itemID.withCString { iPtr in
+                try versionID.withCString { vPtr in
+                    try dest.withCString { destPtr in
+                        try call(
+                            ostmac_file_version_download(dPtr, iPtr, vPtr, destPtr),
+                            as: SharedFileDownloadResponse.self)
+                    }
+                }
+            }
+        }
+    }
+
     public static func presence() throws -> PresenceResponse {
         try call(ostmac_presence(), as: PresenceResponse.self)
     }
