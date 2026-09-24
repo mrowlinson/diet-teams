@@ -1,0 +1,112 @@
+// NcDelivery.swift — om-nc-delivery: Notification Center banner mapping.
+//
+// Single pure layer between the rules engine (ChatFilter.Decision) and the
+// UNUserNotificationCenter backends (Notifier + SystemNotificationCenter):
+// - decision-to-banner: only .notify decisions banner; every .skip reason
+//   (mute, own, type, edit, noisy, keyword-block, …) suppresses.
+// - grouping: every banner's threadIdentifier is its chatID, so banners
+//   stack per thread in Notification Center.
+// - redact: when the screen is locked the banner carries generic
+//   title/body — never sender, chat name, or message text.
+// - routing: one pure action->route map tolerant of both userInfo keys
+//   (om-notif "chatID" and om-rules "OMChatID"); both delegates share it
+//   so click opens the chat and Reply sends no matter which backend
+//   posted or which delegate is installed.
+import CoreGraphics
+import Foundation
+import UserNotifications
+
+public enum NcDelivery {
+    /// Generic lock-screen title/body: no sender, chat, or text leaks.
+    public static let redactedTitle = "New message"
+    public static let redactedBody = "Unlock to view the message."
+    /// Empty-text fallback (matches Notifier's direct-post behavior).
+    public static let emptyBody = "(no text content)"
+
+    /// One banner to post: the decision mapped to NC content fields.
+    /// `threadIdentifier` is always the chatID (group by thread).
+    public struct Banner: Sendable, Equatable {
+        public let id: String // msgId (UN request identifier)
+        public let chatID: String
+        public let title: String
+        public let body: String
+        public let threadIdentifier: String
+
+        public init(id: String, chatID: String, title: String, body: String) {
+            self.id = id
+            self.chatID = chatID
+            self.title = title
+            self.body = body
+            threadIdentifier = chatID
+        }
+    }
+
+    /// Map one rules decision to a banner. Nil = suppressed (any .skip).
+    /// Meeting-starting decisions synthesize their body (raw beacons/blobs
+    /// never shown); `screenLocked` redacts title+body to generics.
+    public static func makeBanner(
+        for msg: RealtimeMessage, chatName: String,
+        decision: ChatFilter.Decision, screenLocked: Bool
+    ) -> Banner? {
+        guard case .notify(let reason) = decision else { return nil }
+        let title: String
+        let body: String
+        if reason == ChatFilter.meetingStartingReason {
+            if chatName.isEmpty || chatName == msg.chatID {
+                title = "Teams meeting"
+                body = "Meeting starting"
+            } else {
+                title = chatName
+                body = "Meeting starting: \(chatName)"
+            }
+        } else if chatName.isEmpty || chatName == msg.chatID {
+            title = msg.sender.isEmpty ? "Teams message" : msg.sender
+            body = msg.text.isEmpty ? emptyBody : msg.text
+        } else {
+            title = msg.sender.isEmpty ? chatName : "\(msg.sender) in \(chatName)"
+            body = msg.text.isEmpty ? emptyBody : msg.text
+        }
+        if screenLocked {
+            return Banner(id: msg.msgId, chatID: msg.chatID, title: redactedTitle, body: redactedBody)
+        }
+        return Banner(id: msg.msgId, chatID: msg.chatID, title: title, body: body)
+    }
+
+    /// Chat id from banner userInfo: accepts both backend keys (om-notif
+    /// "chatID", om-rules "OMChatID"). Blank/missing = nil.
+    public static func chatID(from userInfo: [AnyHashable: Any]) -> String? {
+        for key in [SystemNotificationCenter.chatIDKey, OmReplyInfo.chatIDKey] {
+            if let id = userInfo[key] as? String, !id.isEmpty { return id }
+        }
+        return nil
+    }
+
+    /// Pure action->route map shared by both center delegates:
+    /// Reply (+ non-empty text) sends, banner click / Open-chat opens,
+    /// dismiss and unknown actions route nowhere.
+    public static func route(
+        actionID: String, userInfo: [AnyHashable: Any], replyText: String? = nil
+    ) -> NotificationRoute {
+        guard let chat = chatID(from: userInfo) else { return .none }
+        if actionID == SystemNotificationCenter.replyActionID,
+           let text = replyText, !text.isEmpty
+        {
+            return .reply(chatID: chat, text: text)
+        }
+        if actionID == UNNotificationDefaultActionIdentifier
+            || actionID == OmReplyInfo.openActionID
+        {
+            return .open(chatID: chat)
+        }
+        return .none
+    }
+
+    /// True while the login session is screen-locked (CGSession flag).
+    /// Never throws: any unreadable state reads unlocked (banner shows).
+    public static func isScreenLocked() -> Bool {
+        guard let dict = CGSessionCopyCurrentDictionary() as? [String: Any] else {
+            return false
+        }
+        return (dict["CGSSessionScreenIsLocked"] as? Bool) ?? false
+    }
+}

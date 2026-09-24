@@ -1,10 +1,12 @@
 // Notifier.swift — om-rules lane: native notification delivery.
 //
 // Port of TeamsNotifier's Notifier (title/body/sound, Reply + Open chat
-// actions, click-copies-body), adapted for OstMac:
+// actions), adapted for OstMac:
 // - Category ids are OM_* (no TeamsNotifier overlap on shared machines).
 // - Two categories: with Reply (when onReply is wired) and open-only
 //   (when it is not) — an unwired Reply button never shows.
+// - Click opens the chat (om-nc-delivery); only chat-less system/test
+//   notifs keep the TeamsNotifier click-copies-body behavior.
 // - No logging (observability skipped): post failures are silent.
 import AppKit
 import Foundation
@@ -31,17 +33,19 @@ public enum OmReplyInfo {
         [chatIDKey: chatID]
     }
 
+    /// Tolerant read: this backend's key plus om-notif's "chatID",
+    /// so banners route whichever backend posted them.
     public static func chatID(from userInfo: [AnyHashable: Any]) -> String? {
-        guard let id = userInfo[chatIDKey] as? String, !id.isEmpty else { return nil }
-        return id
+        NcDelivery.chatID(from: userInfo)
     }
 }
 
 /// Native notifications. Title = "sender in chat" (or sender when the chat
-/// has no better name). Body = full message text. Sound on. Click = copy
-/// body to clipboard. Message notifications carry Reply (text-input, posts
-/// via onReply) and Open chat (foregrounds the chat via onOpenChat);
-/// when onReply is nil the banner offers Open chat only.
+/// has no better name). Body = full message text. Sound on. Banners group
+/// by thread (threadIdentifier = chatID) and redact to generic text while
+/// the screen is locked. Click / Open chat foregrounds the chat via
+/// onOpenChat; Reply (text-input) posts via onReply. When onReply is nil
+/// the banner offers Open chat only.
 /// Sticky banners: owner sets Alerts style in System Settings > Notifications.
 public final class Notifier: NSObject, @unchecked Sendable {
     public static let shared = Notifier()
@@ -54,6 +58,10 @@ public final class Notifier: NSObject, @unchecked Sendable {
 
     /// Open-chat handler, wired by the app.
     public var onOpenChat: (@Sendable (String) async -> Void)?
+
+    /// Screen-lock probe (om-nc-delivery). Nil = live CGSession read;
+    /// tests inject a stub. Locked message banners redact title+body.
+    public var lockCheck: (@Sendable () -> Bool)?
 
     private override init() {
         super.init()
@@ -104,8 +112,9 @@ public final class Notifier: NSObject, @unchecked Sendable {
         await center.notificationSettings()
     }
 
-    /// chatID attaches the message actions + thread id. Nil (system/test
-    /// notifs) posts a plain notification with no action.
+    /// chatID attaches the message actions + thread grouping (banners
+    /// stack per thread). Locked message banners redact to generic text.
+    /// Nil (system/test notifs) posts a plain notification with no action.
     public func post(title: String, body: String, id: String? = nil, chatID: String? = nil) {
         let content = UNMutableNotificationContent()
         content.title = title
@@ -114,6 +123,11 @@ public final class Notifier: NSObject, @unchecked Sendable {
         if let chatID, !chatID.isEmpty {
             content.categoryIdentifier = onReply == nil ? OmReplyInfo.categoryNoReplyID : OmReplyInfo.categoryID
             content.userInfo = OmReplyInfo.userInfo(chatID: chatID)
+            content.threadIdentifier = chatID
+            if lockCheck?() ?? NcDelivery.isScreenLocked() {
+                content.title = NcDelivery.redactedTitle
+                content.body = NcDelivery.redactedBody
+            }
         }
         let req = UNNotificationRequest(
             identifier: id ?? UUID().uuidString,
@@ -133,23 +147,28 @@ extension Notifier: UNUserNotificationCenterDelegate {
         _ center: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse
     ) async {
-        // Reply action: POST the text to the thread. Silent on success,
-        // loud system notification on failure. Never copies.
-        if response.actionIdentifier == OmReplyInfo.replyActionID,
-           let textResponse = response as? UNTextInputNotificationResponse
+        // Shared route: Reply posts, banner click / Open-chat opens.
+        let text = (response as? UNTextInputNotificationResponse)?.userText
+        switch NcDelivery.route(
+            actionID: response.actionIdentifier,
+            userInfo: response.notification.request.content.userInfo,
+            replyText: text)
         {
-            await handleReply(textResponse)
-            return
-        }
-        // Open-chat action: show (or focus) the chat. Never copies.
-        if response.actionIdentifier == OmReplyInfo.openActionID {
-            let info = response.notification.request.content.userInfo
-            if let chatID = OmReplyInfo.chatID(from: info) {
-                await onOpenChat?(chatID)
+        case .reply(let chatID, _):
+            if let textResponse = response as? UNTextInputNotificationResponse {
+                await handleReply(textResponse, chatID: chatID)
             }
             return
+        case .open(let chatID):
+            await onOpenChat?(chatID)
+            return
+        case .none:
+            break
         }
-        // Any other click/dismiss-with-action copies the body (unchanged).
+        // Unrouted clicks on system/test notifs (no chat) copy the body;
+        // message banners never copy (click opens, dismiss is silent).
+        let info = response.notification.request.content.userInfo
+        guard OmReplyInfo.chatID(from: info) == nil else { return }
         let body = response.notification.request.content.body
         guard !body.isEmpty else { return }
         await MainActor.run {
@@ -159,9 +178,7 @@ extension Notifier: UNUserNotificationCenterDelegate {
         }
     }
 
-    private func handleReply(_ response: UNTextInputNotificationResponse) async {
-        let info = response.notification.request.content.userInfo
-        guard let chatID = OmReplyInfo.chatID(from: info) else { return }
+    private func handleReply(_ response: UNTextInputNotificationResponse, chatID: String) async {
         let text = response.userText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         guard let onReply else { return }

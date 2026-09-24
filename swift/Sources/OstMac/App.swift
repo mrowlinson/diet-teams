@@ -724,14 +724,8 @@ final class AppState: ObservableObject {
         typing.noteMessage(
             chatID: msg.chatID, sender: msg.sender, senderID: msg.senderID)
         chats.ingest(realtime: msg)
-        // om-notif: banner for non-open, non-own, non-edit events.
-        Task {
-            await notifs.handle(
-                msg,
-                chatName: chats.chats.first(where: { $0.id == msg.chatID })?.name,
-                openChatID: openChatID,
-                ownDisplayName: conv.ownDisplayName)
-        }
+        // om-nc-delivery: the rules decision below owns the single banner
+        // (maybeNotify); no second post here — one event, one banner max.
         if let mri = msg.senderID,
            msg.sender != conv.ownDisplayName,
            chats.chats.first(where: { $0.id == msg.chatID })?.is_group == false
@@ -780,33 +774,20 @@ final class AppState: ObservableObject {
             rules: cfg, meetingDedup: &meetingDedup, now: Date())
     }
 
-    /// Rules-based banner for one live event (om-rules: TN ChatFilter
-    /// port). Posts through Notifier only on .notify. Respects the
-    /// Settings banner toggle (om-settings-trim) so OFF is really off.
+    /// Rules-based banner for one live event (om-nc-delivery: the rules
+    /// decision maps to a banner via NcDelivery — skips suppress, meeting
+    /// signals synthesize their body, locked screens redact). Posts through
+    /// Notifier (thread-grouped, inline Reply). Respects the Settings
+    /// banner toggle (om-settings-trim) so OFF is really off.
     private func maybeNotify(_ msg: RealtimeMessage, chatName: String, decision: ChatFilter.Decision) {
         guard notifs.enabled else { return }
-        guard case .notify(let reason) = decision else { return }
-        let title: String
-        let body: String
-        if reason == ChatFilter.meetingStartingReason {
-            // Synthesized body (raw beacons/blobs never shown).
-            if chatName.isEmpty || chatName == msg.chatID {
-                title = "Teams meeting"
-                body = "Meeting starting"
-            } else {
-                title = chatName
-                body = "Meeting starting: \(chatName)"
-            }
-        } else if chatName.isEmpty || chatName == msg.chatID {
-            title = msg.sender.isEmpty ? "Teams message" : msg.sender
-            body = msg.text
-        } else {
-            title = msg.sender.isEmpty ? chatName : "\(msg.sender) in \(chatName)"
-            body = msg.text
-        }
+        guard let banner = NcDelivery.makeBanner(
+            for: msg, chatName: chatName,
+            decision: decision, screenLocked: NcDelivery.isScreenLocked())
+        else { return }
         Notifier.shared.post(
-            title: title, body: body,
-            id: msg.msgId.isEmpty ? nil : msg.msgId, chatID: msg.chatID)
+            title: banner.title, body: banner.body,
+            id: banner.id.isEmpty ? nil : banner.id, chatID: banner.chatID)
     }
 
     /// Wire the notifier: Reply posts through core send, Open chat jumps.
