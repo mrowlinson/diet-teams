@@ -99,6 +99,28 @@ final class NcDeliveryTests: XCTestCase {
         XCTAssertEqual(b?.body, NcDelivery.emptyBody)
     }
 
+    func testDirectChatCollapseAgreesWithOracle() {
+        // 1:1 chat: chat name is the sender — banner reads "X", never "X in X".
+        let direct = msg()
+        let banner = NcDelivery.makeBanner(
+            for: direct, chatName: "Priya Nair",
+            decision: .notify(reason: "chat-message"), screenLocked: false)
+        XCTAssertEqual(banner?.title, "Priya Nair")
+        let oracle = MessageNotifications.makeRulesNote(
+            for: direct, chatName: "Priya Nair", reason: "chat-message")
+        XCTAssertEqual(banner?.title, oracle.title)
+        XCTAssertEqual(banner?.body, oracle.body)
+        // Group chat: "sender in chat" on both paths.
+        let group = NcDelivery.makeBanner(
+            for: direct, chatName: "Design Sync",
+            decision: .notify(reason: "chat-message"), screenLocked: false)
+        let groupOracle = MessageNotifications.makeRulesNote(
+            for: direct, chatName: "Design Sync", reason: "chat-message")
+        XCTAssertEqual(group?.title, "Priya Nair in Design Sync")
+        XCTAssertEqual(group?.title, groupOracle.title)
+        XCTAssertEqual(group?.body, groupOracle.body)
+    }
+
     func testPerChatDecisionsDriveBanners() {
         // Same event, two threads: noisy chat without a mention stays
         // silent, the normal chat banners (real rules engine, per chat).

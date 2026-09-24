@@ -80,8 +80,15 @@ public enum NcDelivery {
         } else if chatName.isEmpty || chatName == msg.chatID {
             title = msg.sender.isEmpty ? "Teams message" : msg.sender
             body = msg.text.isEmpty ? emptyBody : msg.text
+        } else if msg.sender.isEmpty {
+            title = chatName
+            body = msg.text.isEmpty ? emptyBody : msg.text
+        } else if chatName == msg.sender {
+            // 1:1 chat: the chat name IS the sender — no "X in X".
+            title = msg.sender
+            body = msg.text.isEmpty ? emptyBody : msg.text
         } else {
-            title = msg.sender.isEmpty ? chatName : "\(msg.sender) in \(chatName)"
+            title = "\(msg.sender) in \(chatName)"
             body = msg.text.isEmpty ? emptyBody : msg.text
         }
         if screenLocked {
