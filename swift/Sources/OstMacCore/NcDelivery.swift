@@ -8,6 +8,8 @@
 //   stack per thread in Notification Center.
 // - redact: when the screen is locked the banner carries generic
 //   title/body — never sender, chat name, or message text.
+// - settings: preview-off hides message text (meeting bodies stay),
+//   sound-off posts silent — both flow through this one banner home.
 // - routing: one pure action->route map tolerant of both userInfo keys
 //   (om-notif "chatID" and om-rules "OMChatID"); both delegates share it
 //   so click opens the chat and Reply sends no matter which backend
@@ -31,26 +33,32 @@ public enum NcDelivery {
         public let title: String
         public let body: String
         public let threadIdentifier: String
+        /// Play the banner sound. False = silent post (Settings → Sound).
+        public let sound: Bool
 
-        public init(id: String, chatID: String, title: String, body: String) {
+        public init(id: String, chatID: String, title: String, body: String, sound: Bool = true) {
             self.id = id
             self.chatID = chatID
             self.title = title
             self.body = body
             threadIdentifier = chatID
+            self.sound = sound
         }
     }
 
     /// Map one rules decision to a banner. Nil = suppressed (any .skip).
     /// Meeting-starting decisions synthesize their body (raw beacons/blobs
     /// never shown); `screenLocked` redacts title+body to generics.
+    /// `showPreview` false hides message text (synthesized meeting bodies
+    /// are not message content, so they stay); `sound` false posts silent.
     public static func makeBanner(
         for msg: RealtimeMessage, chatName: String,
-        decision: ChatFilter.Decision, screenLocked: Bool
+        decision: ChatFilter.Decision, screenLocked: Bool,
+        showPreview: Bool = true, sound: Bool = true
     ) -> Banner? {
         guard case .notify(let reason) = decision else { return nil }
         let title: String
-        let body: String
+        var body: String
         if reason == ChatFilter.meetingStartingReason {
             if chatName.isEmpty || chatName == msg.chatID {
                 title = "Teams meeting"
@@ -67,9 +75,12 @@ public enum NcDelivery {
             body = msg.text.isEmpty ? emptyBody : msg.text
         }
         if screenLocked {
-            return Banner(id: msg.msgId, chatID: msg.chatID, title: redactedTitle, body: redactedBody)
+            return Banner(id: msg.msgId, chatID: msg.chatID, title: redactedTitle, body: redactedBody, sound: sound)
         }
-        return Banner(id: msg.msgId, chatID: msg.chatID, title: title, body: body)
+        if !showPreview, reason != ChatFilter.meetingStartingReason {
+            body = MessageNotifications.hiddenPreviewBody
+        }
+        return Banner(id: msg.msgId, chatID: msg.chatID, title: title, body: body, sound: sound)
     }
 
     /// Chat id from banner userInfo: accepts both backend keys (om-notif

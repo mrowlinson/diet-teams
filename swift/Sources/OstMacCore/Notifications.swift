@@ -26,14 +26,18 @@ public struct PostedNotification: Sendable, Equatable {
     public let chatID: String
     public let title: String
     public let body: String
+    /// `threadIdentifier` groups banners per thread (defaults to the chatID).
     public let threadIdentifier: String
+    /// Play the banner sound. False = silent post (Settings → Sound).
+    public let sound: Bool
 
-    public init(id: String, chatID: String, title: String, body: String, threadIdentifier: String? = nil) {
+    public init(id: String, chatID: String, title: String, body: String, threadIdentifier: String? = nil, sound: Bool = true) {
         self.id = id
         self.chatID = chatID
         self.title = title
         self.body = body
         self.threadIdentifier = threadIdentifier ?? chatID
+        self.sound = sound
     }
 }
 
@@ -72,6 +76,7 @@ public final class SystemNotificationCenter: NotificationPosting, @unchecked Sen
         let content = UNMutableNotificationContent()
         content.title = note.title
         content.body = note.body
+        content.sound = note.sound ? .default : nil
         content.categoryIdentifier = Self.categoryID
         content.threadIdentifier = note.threadIdentifier
         content.userInfo = [
@@ -129,6 +134,12 @@ public final class MessageNotifications: ObservableObject {
     /// UserDefaults key for the persisted banner toggle (Settings →
     /// Notifications). Absent = first launch = on.
     public static let enabledKey = "notif.enabled"
+    /// Persisted message-preview toggle. Absent = first launch = on.
+    public static let previewKey = "notif.preview"
+    /// Persisted banner-sound toggle. Absent = first launch = on.
+    public static let soundKey = "notif.sound"
+    /// Body shown when previews are off (never message content).
+    public static let hiddenPreviewBody = "New message"
 
     private let backend: any NotificationPosting
     private let delegate = MessageNotificationDelegate()
@@ -138,6 +149,16 @@ public final class MessageNotifications: ObservableObject {
     /// AppState's rules path checks it too, so OFF silences all banners.
     @Published public var enabled = true {
         didSet { defaults.set(enabled, forKey: Self.enabledKey) }
+    }
+    /// Preview toggle (Settings binds here; persisted). Off = banners
+    /// show who wrote, never the text.
+    @Published public var showPreview = true {
+        didSet { defaults.set(showPreview, forKey: Self.previewKey) }
+    }
+    /// Sound toggle (Settings binds here; persisted). Off = banners
+    /// post silent (both banner paths read this).
+    @Published public var sound = true {
+        didSet { defaults.set(sound, forKey: Self.soundKey) }
     }
 
     /// Nonisolated so views can take a default `MessageNotifications()`
@@ -152,7 +173,17 @@ public final class MessageNotifications: ObservableObject {
         if defaults.object(forKey: Self.enabledKey) != nil {
             enabled = defaults.bool(forKey: Self.enabledKey)
         }
+        var showPreview = true
+        if defaults.object(forKey: Self.previewKey) != nil {
+            showPreview = defaults.bool(forKey: Self.previewKey)
+        }
+        var sound = true
+        if defaults.object(forKey: Self.soundKey) != nil {
+            sound = defaults.bool(forKey: Self.soundKey)
+        }
         _enabled = Published(initialValue: enabled)
+        _showPreview = Published(initialValue: showPreview)
+        _sound = Published(initialValue: sound)
         _authorized = Published(initialValue: nil)
     }
 
@@ -167,28 +198,34 @@ public final class MessageNotifications: ObservableObject {
     }
 
     /// One realtime event: gate, then post. Never throws — a failed
-    /// post is invisible (the bubble/list already updated).
+    /// post is invisible (the bubble/list already updated). Muted chats
+    /// (Settings per-chat overrides) never post here either — the
+    /// rules path skips them via ChatFilter, this path via the set.
     public func handle(
         _ msg: RealtimeMessage, chatName: String? = nil,
         openChatID: String? = nil, ownDisplayName: String? = nil,
-        screenLocked: Bool = false
+        screenLocked: Bool = false, mutedChatIDs: Set<String> = []
     ) async {
         guard enabled else { return }
+        guard !mutedChatIDs.contains(msg.chatID) else { return }
         guard let note = Self.makeNotification(
             for: msg, chatName: chatName,
             openChatID: openChatID, ownDisplayName: ownDisplayName,
-            screenLocked: screenLocked)
+            screenLocked: screenLocked, showPreview: showPreview)
         else { return }
-        await backend.post(note)
+        await backend.post(PostedNotification(
+            id: note.id, chatID: note.chatID, title: note.title,
+            body: note.body, threadIdentifier: note.threadIdentifier, sound: sound))
     }
 
     /// Pure gate + format. Nil = suppressed (edit, own message, or the
     /// chat is already open — its bubbles updated in place instead).
     /// Locked screens redact to generic title/body (no sender/text leak).
+    /// `showPreview` false hides the text (title still names who/where).
     nonisolated public static func makeNotification(
         for msg: RealtimeMessage, chatName: String? = nil,
         openChatID: String? = nil, ownDisplayName: String? = nil,
-        screenLocked: Bool = false
+        screenLocked: Bool = false, showPreview: Bool = true
     ) -> PostedNotification? {
         if msg.isEdit { return nil }
         if let own = ownDisplayName, msg.sender == own { return nil }
@@ -205,7 +242,8 @@ public final class MessageNotifications: ObservableObject {
             title = msg.sender
         }
         return PostedNotification(
-            id: msg.msgId, chatID: msg.chatID, title: title, body: msg.text)
+            id: msg.msgId, chatID: msg.chatID, title: title,
+            body: showPreview ? msg.text : hiddenPreviewBody)
     }
 
     /// Delivered-log readback (banner proof in the app, assertions in tests).

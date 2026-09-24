@@ -115,11 +115,12 @@ public final class Notifier: NSObject, @unchecked Sendable {
     /// chatID attaches the message actions + thread grouping (banners
     /// stack per thread). Locked message banners redact to generic text.
     /// Nil (system/test notifs) posts a plain notification with no action.
-    public func post(title: String, body: String, id: String? = nil, chatID: String? = nil) {
+    /// `sound` false posts silent (Settings → Sound, via the caller).
+    public func post(title: String, body: String, id: String? = nil, chatID: String? = nil, sound: Bool = true) {
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body.isEmpty ? "(no text content)" : body
-        content.sound = .default
+        content.sound = sound ? .default : nil
         if let chatID, !chatID.isEmpty {
             content.categoryIdentifier = onReply == nil ? OmReplyInfo.categoryNoReplyID : OmReplyInfo.categoryID
             content.userInfo = OmReplyInfo.userInfo(chatID: chatID)

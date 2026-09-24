@@ -178,7 +178,9 @@ struct OstMacAppMain: App {
         }
         .defaultSize(width: 720, height: 480)
         Settings {
-            SettingsView(auth: state.auth, catchUp: state.catchUp, notifs: state.notifs)
+            SettingsView(
+                auth: state.auth, catchUp: state.catchUp, notifs: state.notifs,
+                rules: state.rules, chats: state.chats.chats)
         }
         .commands { OstMacCommands() }
     }
@@ -280,11 +282,12 @@ final class AppState: ObservableObject {
     private var stateTimer: Timer?
     private var started = false
     private var contentOpened = false
-    // om-rules: notify/skip rules over the live feed (file-loaded once at
-    // launch; edits need a relaunch). meetingDedup collapses meeting
-    // bursts; ownerMRI is learned async (name backup covers the gap).
+    // om-rules: notify/skip rules over the live feed (RulesStore loads
+    // rules.json once; Settings mute edits apply live, no relaunch).
+    // meetingDedup collapses meeting bursts; ownerMRI is learned async
+    // (name backup covers the gap).
     private var meetingDedup = MeetingStartDedup()
-    private var rulesConfig = RulesConfig.loadBestEffort()
+    let rules = RulesStore()
     private var ownerMRI: String?
 
     init(args: [String]) {
@@ -741,7 +744,9 @@ final class AppState: ObservableObject {
         mentions.ingest(
             realtime: msg, ownName: conv.ownDisplayName,
             ownerMRI: resolvedOwnerMRI, openChatID: openChatID)
-        maybeNotify(msg, chatName: chatName, decision: decision)
+        maybeNotify(
+            msg, chatName: chatName, decision: decision,
+            mutedChatIDs: rules.config.mutedChatIDs)
         // om-meet-chat: meeting-thread events adopt the meeting panel
         // (any meeting thread, not just the open chat). The panel owns
         // its thread; the chat list is untouched by this path.
@@ -760,14 +765,14 @@ final class AppState: ObservableObject {
     /// backup covers the gap). Shared by the rules decision and the
     /// mention tracker so both gates see the same identity.
     private var resolvedOwnerMRI: String? {
-        rulesConfig.owner.mri.isEmpty ? ownerMRI : rulesConfig.owner.mri
+        rules.config.owner.mri.isEmpty ? ownerMRI : rules.config.owner.mri
     }
 
     /// One rules decision for a live event (owns the meeting-start
     /// window claim). Owner identity prefers configured/learned MRI with
     /// a live display-name backup.
     private func rulesDecision(for msg: RealtimeMessage, chatName: String) -> ChatFilter.Decision {
-        var cfg = rulesConfig
+        var cfg = rules.config
         if let own = conv.ownDisplayName, !own.isEmpty { cfg.owner.displayName = own }
         return ChatFilter.decide(
             message: msg, chatDisplayName: chatName, ownerMRI: resolvedOwnerMRI,
@@ -778,16 +783,24 @@ final class AppState: ObservableObject {
     /// decision maps to a banner via NcDelivery — skips suppress, meeting
     /// signals synthesize their body, locked screens redact). Posts through
     /// Notifier (thread-grouped, inline Reply). Respects the Settings
-    /// banner toggle (om-settings-trim) so OFF is really off.
-    private func maybeNotify(_ msg: RealtimeMessage, chatName: String, decision: ChatFilter.Decision) {
+    /// banner toggle (om-settings-trim) so OFF is really off, the per-chat
+    /// mute set (defense in depth — the rules engine already skips muted
+    /// chats), and the preview/sound toggles via the one banner home.
+    private func maybeNotify(
+        _ msg: RealtimeMessage, chatName: String,
+        decision: ChatFilter.Decision, mutedChatIDs: Set<String>
+    ) {
         guard notifs.enabled else { return }
+        guard !mutedChatIDs.contains(msg.chatID) else { return }
         guard let banner = NcDelivery.makeBanner(
             for: msg, chatName: chatName,
-            decision: decision, screenLocked: NcDelivery.isScreenLocked())
+            decision: decision, screenLocked: NcDelivery.isScreenLocked(),
+            showPreview: notifs.showPreview, sound: notifs.sound)
         else { return }
         Notifier.shared.post(
             title: banner.title, body: banner.body,
-            id: banner.id.isEmpty ? nil : banner.id, chatID: banner.chatID)
+            id: banner.id.isEmpty ? nil : banner.id, chatID: banner.chatID,
+            sound: banner.sound)
     }
 
     /// Wire the notifier: Reply posts through core send, Open chat jumps.

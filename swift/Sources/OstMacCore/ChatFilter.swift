@@ -21,8 +21,12 @@ import Foundation
 /// - Teams per-chat mute: chats muted in the Teams client skip with
 ///   reason "teams-muted". Beats everything below (keywords, meeting
 ///   signals, mentions); only the global mute above keeps its reason.
-///   (OstMac passes an empty set today — no per-chat mute source yet;
-///   the gate is ready for one.)
+///   (OstMac passes an empty set today — no Teams-side source yet.)
+/// - OstMac per-chat mute: chats muted in Settings skip with reason
+///   "chat-muted". Same level as the Teams mute (which keeps its
+///   reason when both apply): beats keywords, meeting signals and
+///   mentions; a muted skip claims no meeting window, so unmuting
+///   later still fires meeting-starting for that meeting.
 /// - Keyword block: a block word in the message plain text forces SKIP
 ///   (reason "keyword-block"), through any filter notify. Checked first
 ///   after mute, so it beats the keyword allow below.
@@ -71,6 +75,11 @@ public enum ChatFilter {
     /// below the global mute, including meeting-starting and
     /// keyword-allow.
     public static let teamsMutedReason = "teams-muted"
+
+    /// Skip reason for chats muted in OstMac Settings. Same level as
+    /// the Teams mute (checked just after it, so a chat muted on both
+    /// sides reports "teams-muted").
+    public static let chatMutedReason = "chat-muted"
 
     /// Notify reason for the meeting-start gate. The caller posts the
     /// synthesized "Meeting starting: <chat>" body for this reason,
@@ -139,6 +148,12 @@ public enum ChatFilter {
         // still fires meeting-starting for that meeting.
         if teamsMutedChatIDs.contains(message.chatID) {
             return .skip(reason: teamsMutedReason)
+        }
+        // OstMac per-chat mute (Settings): same level as the Teams
+        // mute — beats keywords, meeting signals and mentions, claims
+        // no meeting window.
+        if eff.mutedChatIDs.contains(message.chatID) {
+            return .skip(reason: chatMutedReason)
         }
         // Keyword block beats everything below (keeps its reason even
         // on structural/meeting bodies).
