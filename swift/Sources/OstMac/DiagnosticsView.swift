@@ -45,6 +45,12 @@ struct DiagnosticsView: View {
                         polls: state.feedPolls, resyncs: state.feedResyncs))
                     .textSelection(.enabled)
                 TypingDiagRow(store: state.typing, events: state.feedTyping)
+                NotificationsDiagRow(
+                    unread: state.unread, mentions: state.mentions,
+                    quiet: state.quiet,
+                    breakthroughs: state.mentionBreakthroughs,
+                    dnd: state.mentionDNDSuppressions,
+                    quietSuppressions: state.mentionQuietSuppressions)
                 if let err = state.feedError {
                     LabeledContent("Last error") {
                         Text(err)
@@ -230,6 +236,43 @@ struct PreloadDiagRow: View {
             value: DiagnosticsFormat.preloadLine(
                 prefetched: store.stats.prefetched, hits: store.stats.hits,
                 cancelled: store.stats.cancelled, inFlight: store.stats.inFlight))
+            .textSelection(.enabled)
+    }
+}
+
+/// Notification counters row (om-mention-alerts): mention threads
+/// (the Mentions row filter source, also the Dock number), unread
+/// totals, breakthrough/suppression counts, quiet-hours state. The only
+/// place these numbers appear — banners never show counts.
+struct NotificationsDiagRow: View {
+    @ObservedObject var unread: UnreadStore
+    @ObservedObject var mentions: MentionStore
+    @ObservedObject var quiet: QuietHoursStore
+    let breakthroughs: Int
+    let dnd: Int
+    let quietSuppressions: Int
+
+    var body: some View {
+        LabeledContent(
+            "Mentions",
+            value: DiagnosticsFormat.mentionsLine(count: mentions.count))
+            .textSelection(.enabled)
+        LabeledContent(
+            "Unread",
+            value: DiagnosticsFormat.unreadLine(
+                total: unread.total, chats: unread.counts.count))
+            .textSelection(.enabled)
+        LabeledContent(
+            "Alerts",
+            value: DiagnosticsFormat.mentionAlertsLine(
+                breakthroughs: breakthroughs, dnd: dnd,
+                quiet: quietSuppressions))
+            .textSelection(.enabled)
+        LabeledContent(
+            "Quiet",
+            value: DiagnosticsFormat.quietLine(
+                summary: quiet.hours.summary,
+                active: quiet.isActiveNow()))
             .textSelection(.enabled)
     }
 }

@@ -97,4 +97,30 @@ public enum DiagnosticsFormat {
     public static func preloadLine(prefetched: Int, hits: Int, cancelled: Int, inFlight: Int) -> String {
         "\(prefetched) prefetched · \(hits) hits · \(cancelled) cancelled · \(inFlight) in flight"
     }
+
+    /// Mention-row one-liner (om-mention-alerts): unreviewed mentioning
+    /// threads (the Mentions row filter source). Diagnostics mirrors the
+    /// row count; the Dock tile shows the same number.
+    public static func mentionsLine(count: Int) -> String {
+        "\(count) threads"
+    }
+
+    /// Unread one-liner (om-mention-alerts): total messages + chats with
+    /// unread. Sidebar rows badge per chat; the totals live here only.
+    public static func unreadLine(total: Int, chats: Int) -> String {
+        "\(total) messages · \(chats) chats"
+    }
+
+    /// Mention-alert one-liner (om-mention-alerts): breakthroughs
+    /// through mute + DND/quiet suppressions. Banners/sounds are the
+    /// only interruption; the counts live here only.
+    public static func mentionAlertsLine(breakthroughs: Int, dnd: Int, quiet: Int) -> String {
+        "\(breakthroughs) breakthroughs · \(dnd) DND · \(quiet) quiet"
+    }
+
+    /// Quiet-hours one-liner (om-mention-alerts): schedule summary plus
+    /// the live state ("off" when disabled, "· active" when firing).
+    public static func quietLine(summary: String, active: Bool) -> String {
+        active ? "\(summary) · active" : summary
+    }
 }

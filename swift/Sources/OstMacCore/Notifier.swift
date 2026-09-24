@@ -83,7 +83,15 @@ public final class Notifier: NSObject, @unchecked Sendable {
         let messageNoReply = UNNotificationCategory(
             identifier: OmReplyInfo.categoryNoReplyID, actions: [open],
             intentIdentifiers: [], options: [])
-        center.setNotificationCategories([message, messageNoReply])
+        // Elevated mention banners (om-mention-alerts): same actions,
+        // distinct category so the style + sound stay separable.
+        let mention = UNNotificationCategory(
+            identifier: MentionAlert.categoryID, actions: [reply, open],
+            intentIdentifiers: [], options: [])
+        let mentionNoReply = UNNotificationCategory(
+            identifier: MentionAlert.categoryNoReplyID, actions: [open],
+            intentIdentifiers: [], options: [])
+        center.setNotificationCategories([message, messageNoReply, mention, mentionNoReply])
     }
 
     public func requestAuthorization() async -> Bool {
@@ -105,14 +113,23 @@ public final class Notifier: NSObject, @unchecked Sendable {
     }
 
     /// chatID attaches the message actions + thread id. Nil (system/test
-    /// notifs) posts a plain notification with no action.
-    public func post(title: String, body: String, id: String? = nil, chatID: String? = nil) {
+    /// notifs) posts a plain notification with no action. Elevated
+    /// mentions (om-mention-alerts) take the OM_MENTION category, the
+    /// critical sound, and the mention subtitle.
+    public func post(title: String, body: String, id: String? = nil, chatID: String? = nil, isMention: Bool = false, subtitle: String? = nil) {
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body.isEmpty ? "(no text content)" : body
-        content.sound = .default
+        content.sound = MentionAlert.sound(isMention: isMention).unSound
+        if let subtitle, !subtitle.isEmpty {
+            content.subtitle = subtitle
+        }
         if let chatID, !chatID.isEmpty {
-            content.categoryIdentifier = onReply == nil ? OmReplyInfo.categoryNoReplyID : OmReplyInfo.categoryID
+            if isMention {
+                content.categoryIdentifier = onReply == nil ? MentionAlert.categoryNoReplyID : MentionAlert.categoryID
+            } else {
+                content.categoryIdentifier = onReply == nil ? OmReplyInfo.categoryNoReplyID : OmReplyInfo.categoryID
+            }
             content.userInfo = OmReplyInfo.userInfo(chatID: chatID)
         }
         let req = UNNotificationRequest(

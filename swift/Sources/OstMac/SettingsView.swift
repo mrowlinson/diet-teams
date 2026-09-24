@@ -14,6 +14,7 @@ struct SettingsView: View {
     @ObservedObject private var auth: AuthViewModel
     @ObservedObject private var catchUp: CatchUpStore
     @ObservedObject private var notifs: MessageNotifications
+    @ObservedObject private var quiet: QuietHoursStore
     @AppStorage("tenorAPIKey") private var tenorAPIKey = ""
     private let fixedAccount: AccountInfo?
 
@@ -21,11 +22,13 @@ struct SettingsView: View {
     init(
         auth: AuthViewModel,
         catchUp: CatchUpStore = CatchUpStore(),
-        notifs: MessageNotifications = MessageNotifications()
+        notifs: MessageNotifications = MessageNotifications(),
+        quiet: QuietHoursStore = QuietHoursStore()
     ) {
         _auth = ObservedObject(wrappedValue: auth)
         _catchUp = ObservedObject(wrappedValue: catchUp)
         _notifs = ObservedObject(wrappedValue: notifs)
+        _quiet = ObservedObject(wrappedValue: quiet)
         fixedAccount = nil
     }
 
@@ -35,6 +38,7 @@ struct SettingsView: View {
         _auth = ObservedObject(wrappedValue: .demo(.signedOut))
         _catchUp = ObservedObject(wrappedValue: CatchUpStore())
         _notifs = ObservedObject(wrappedValue: MessageNotifications())
+        _quiet = ObservedObject(wrappedValue: QuietHoursStore())
         fixedAccount = account
     }
 
@@ -54,6 +58,19 @@ struct SettingsView: View {
                     Toggle("Message banners", isOn: $notifs.enabled)
                         .help("When off, no chat banners are posted")
                     LabeledContent("System permission", value: permissionText)
+                    Toggle("Quiet hours", isOn: $quiet.hours.enabled)
+                        .help("When on, no banners or sounds post inside the window — mentions included")
+                    DatePicker(
+                        "Starts", selection: startBinding,
+                        displayedComponents: .hourAndMinute)
+                        .disabled(!quiet.hours.enabled)
+                    DatePicker(
+                        "Ends", selection: endBinding,
+                        displayedComponents: .hourAndMinute)
+                        .disabled(!quiet.hours.enabled)
+                    Text("Quiet hours silence every banner and sound, including @me/@team mentions (which otherwise break through mute). The Mentions row still tracks threads for review; DND follows your Teams presence instead.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 Section("GIFs (Tenor)") {
                     SecureField("Tenor API key", text: $tenorAPIKey)
@@ -72,6 +89,19 @@ struct SettingsView: View {
             guard fixedAccount == nil else { return }
             await auth.refreshStatus()
         }
+    }
+
+    /// Quiet window edges as wall-clock pickers (stored as minutes).
+    private var startBinding: Binding<Date> {
+        Binding(
+            get: { QuietHours.date(forMinutes: quiet.hours.startMinutes) },
+            set: { quiet.hours.startMinutes = QuietHours.minutesOfDay($0) })
+    }
+
+    private var endBinding: Binding<Date> {
+        Binding(
+            get: { QuietHours.date(forMinutes: quiet.hours.endMinutes) },
+            set: { quiet.hours.endMinutes = QuietHours.minutesOfDay($0) })
     }
 
     private var account: AccountInfo {
