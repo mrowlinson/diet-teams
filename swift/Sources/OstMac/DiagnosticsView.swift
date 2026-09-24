@@ -45,6 +45,12 @@ struct DiagnosticsView: View {
                         polls: state.feedPolls, resyncs: state.feedResyncs))
                     .textSelection(.enabled)
                 TypingDiagRow(store: state.typing, events: state.feedTyping)
+                LabeledContent(
+                    "Notifications",
+                    value: DiagnosticsFormat.notifLine(
+                        posted: state.notifPosted, skipped: state.notifSkipped,
+                        lastReason: state.notifLastReason))
+                    .textSelection(.enabled)
                 if let err = state.feedError {
                     LabeledContent("Last error") {
                         Text(err)

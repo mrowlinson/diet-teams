@@ -1,10 +1,13 @@
 // Notifications.swift — om-notif: macOS user notifications for realtime chat.
 //
-// Pipeline: AppState.handleRealtime forwards every live event; the pure
-// gate (edits, own messages, open chat) decides, and the backend posts
-// through UNUserNotificationCenter. Click returns to the chat via
-// NotificationCenter (.omNotifOpenChat); the message category carries
-// an inline reply action (.omNotifReply → core send).
+// Pipeline: AppState.handleRealtime runs every live event through the
+// rules engine (ChatFilter) and posts .notify decisions via Notifier;
+// this type owns the banner toggle + authorization + the single shared
+// response delegate. Click returns to the chat via NotificationCenter
+// (.omNotifOpenChat); the message category carries an inline reply
+// action (.omNotifReply → core send). The handle() gate below (edits,
+// own messages, open chat) is the injectable-backend path tests use;
+// live posts go through makeRulesNote + Notifier instead.
 //
 // The backend is injectable: SystemNotificationCenter (real UNUser
 // center) in the app, FakeNotificationCenter (in-memory log) in tests.
@@ -200,12 +203,18 @@ public final class MessageNotifications: ObservableObject {
     }
 
     /// Map a center response to a route + Foundation broadcast.
-    /// Returns the route (tests assert it directly).
+    /// Returns the route (tests assert it directly). Routes both banner
+    /// families the app posts: MessageNotifications banners (`chatID`)
+    /// and rules-posted Notifier banners (`OMChatID`) — the app hosts
+    /// this delegate alone, so both must resolve here or clicks die.
     @discardableResult
     nonisolated public static func dispatch(
         actionID: String, userInfo: [AnyHashable: Any], replyText: String? = nil
     ) -> NotificationRoute {
-        guard let chat = userInfo[SystemNotificationCenter.chatIDKey] as? String else {
+        let chat = [SystemNotificationCenter.chatIDKey, OmReplyInfo.chatIDKey]
+            .compactMap { userInfo[$0] as? String }
+            .first(where: { !$0.isEmpty })
+        guard let chat else {
             return .none
         }
         if actionID == SystemNotificationCenter.replyActionID,
@@ -216,12 +225,50 @@ public final class MessageNotifications: ObservableObject {
                 userInfo: ["chatID": chat, "text": text])
             return .reply(chatID: chat, text: text)
         }
-        if actionID == UNNotificationDefaultActionIdentifier {
+        if actionID == UNNotificationDefaultActionIdentifier
+            || actionID == OmReplyInfo.openActionID
+        {
             NotificationCenter.default.post(
                 name: .omNotifOpenChat, object: nil, userInfo: ["chatID": chat])
             return .open(chatID: chat)
         }
         return .none
+    }
+
+    /// Rules-posted banner content. Pure: the live rules path (AppState
+    /// maybeNotify) and tests share it. Meeting-start reasons synthesize
+    /// "Meeting starting: <chat>" (raw beacons/blobs never shown);
+    /// otherwise "sender in chat" (sender alone when the chat has no
+    /// better name).
+    nonisolated public static func makeRulesNote(
+        for msg: RealtimeMessage, chatName: String, reason: String
+    ) -> PostedNotification {
+        let title: String
+        let body: String
+        if reason == ChatFilter.meetingStartingReason {
+            if chatName.isEmpty || chatName == msg.chatID {
+                title = "Teams meeting"
+                body = "Meeting starting"
+            } else {
+                title = chatName
+                body = "Meeting starting: \(chatName)"
+            }
+        } else if chatName.isEmpty || chatName == msg.chatID {
+            title = msg.sender.isEmpty ? "Teams message" : msg.sender
+            body = msg.text
+        } else if msg.sender.isEmpty {
+            title = chatName
+            body = msg.text
+        } else if chatName == msg.sender {
+            // 1:1 chat: the chat name IS the sender — no "X in X".
+            title = msg.sender
+            body = msg.text
+        } else {
+            title = "\(msg.sender) in \(chatName)"
+            body = msg.text
+        }
+        return PostedNotification(
+            id: msg.msgId, chatID: msg.chatID, title: title, body: body)
     }
 }
 

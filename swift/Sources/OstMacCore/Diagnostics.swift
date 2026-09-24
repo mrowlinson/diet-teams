@@ -97,4 +97,11 @@ public enum DiagnosticsFormat {
     public static func preloadLine(prefetched: Int, hits: Int, cancelled: Int, inFlight: Int) -> String {
         "\(prefetched) prefetched · \(hits) hits · \(cancelled) cancelled · \(inFlight) in flight"
     }
+
+    /// Notification counters (om-notif-live): rules notify/skip
+    /// decisions this session + the last decision reason. Diagnostics
+    /// window only — banners carry no counts.
+    public static func notifLine(posted: Int, skipped: Int, lastReason: String) -> String {
+        "\(posted) posted · \(skipped) skipped · last \(lastReason.isEmpty ? "—" : lastReason)"
+    }
 }
