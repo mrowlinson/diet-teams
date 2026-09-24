@@ -9,6 +9,7 @@ mod me;
 pub mod media;
 mod notes;
 mod presence;
+mod search;
 mod tabs;
 mod teams;
 mod todo;
@@ -24,6 +25,7 @@ pub use files::{FileVersion, SharedFile};
 pub use me::UserInfo;
 pub use notes::{NotePage, NotebookInfo, PageInfo, SectionInfo};
 pub use presence::PresenceInfo;
+pub use search::{clamp_size, next_from, parse_search_response, search_body, search_messages_data, SearchHitInfo, SearchPage, SEARCH_MAX_SIZE};
 pub use tabs::TabInfo;
 pub use teams::TeamInfo;
 pub use teams::TeamMemberInfo;
@@ -208,4 +210,9 @@ pub async fn notes(
     append: Option<&str>,
 ) -> Result<()> {
     notes::notes(group_id, notebook, page, append).await
+}
+
+/// Search Teams messages (Graph `/search/query`, first window)
+pub async fn search_messages(query: &str, limit: usize) -> Result<()> {
+    search::search_messages(query, limit).await
 }

@@ -82,6 +82,14 @@ char *ostmac_messages(const char *chat_id, int limit);
 // Caller frees.
 char *ostmac_messages_page(const char *chat_id, const char *page_token, int limit);
 
+// Teams message search (Graph /search/query, one from/size window):
+// {ok,query,from,size,total?,more,next_from?,hits:[{message_id,chat_id,
+// team_id?,channel_id?,sender,timestamp,preview,subject?}]}. chat_id is
+// the conversation to open (channel id for channel hits). Empty query
+// is rejected pre-network; size clamps to 1..=25 (<=0 means 25).
+// Requires sign-in. Caller frees.
+char *ostmac_search(const char *query, int from, int size);
+
 // Post one message to a chat. Caller frees.
 char *ostmac_send(const char *chat_id, const char *text);
 

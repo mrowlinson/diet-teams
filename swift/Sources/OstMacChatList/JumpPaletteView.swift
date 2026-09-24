@@ -1,6 +1,9 @@
 // JumpPaletteView.swift — om-cmdk lane: Cmd+K fuzzy jump-to sheet.
 // Search field + ranked rows; Up/Down moves, Return jumps, Esc closes.
+// om-ja-search: optional Messages scope (Graph message search hits +
+// jump-to-message) behind `searchStore` + `onPickMessage`.
 import DietDesign
+import OstMacCore
 import SwiftUI
 
 /// Fuzzy jump-to palette. `targets` is the full row set (chats, channels,
@@ -8,26 +11,62 @@ import SwiftUI
 /// with the chosen target's open id + name; the host dismisses + opens.
 /// `verb` retitles the Return hint when the palette is re-targeted
 /// (om-msgactions forwards through this same view).
+///
+/// Messages scope: when `searchStore` + `onPickMessage` are both present,
+/// a Chats/Messages scope chip appears; the Messages scope debounces the
+/// query into `MessageSearchStore` and `onPickMessage` fires with the
+/// picked hit (the host opens the chat + seeks the bubble).
+/// `chatNameFor` resolves hit subtitles (nil = sender + time only).
 public struct JumpPaletteView: View {
+    private enum Scope: String {
+        case chats
+        case messages
+    }
+
     private let targets: [JumpTarget]
     private let onPick: (String, String) -> Void
     private let verb: String
+    private let searchStore: MessageSearchStore?
+    private let chatNameFor: ((String) -> String?)?
+    private let onPickMessage: ((SearchHit) -> Void)?
     @State private var query = ""
     @State private var highlight = 0
+    @State private var scope: Scope = .chats
     @FocusState private var fieldFocused: Bool
 
     public init(
         targets: [JumpTarget], initialQuery: String = "", verb: String = "jump",
+        searchStore: MessageSearchStore? = nil,
+        chatNameFor: ((String) -> String?)? = nil,
+        onPickMessage: ((SearchHit) -> Void)? = nil,
         onPick: @escaping (String, String) -> Void
     ) {
         self.targets = targets
         _query = State(initialValue: initialQuery)
         self.verb = verb
+        self.searchStore = searchStore
+        self.chatNameFor = chatNameFor
+        self.onPickMessage = onPickMessage
         self.onPick = onPick
     }
 
     private var matches: [JumpTarget] {
         FuzzyMatch.ranked(targets, query: query)
+    }
+
+    /// Messages scope is live only when the host wires both halves;
+    /// the forward sheet (no store) stays chats-only.
+    private var searchEnabled: Bool {
+        searchStore != nil && onPickMessage != nil
+    }
+
+    private var inMessages: Bool {
+        searchEnabled && scope == .messages
+    }
+
+    /// Debounce key: any keystroke or scope flip restarts the task.
+    private var messagesQueryKey: String {
+        "\(scope.rawValue)\n\(query)"
     }
 
     /// Results height: one sidebar row per match + breathing room,
@@ -42,20 +81,44 @@ public struct JumpPaletteView: View {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: DietSize.iconMD))
                     .foregroundStyle(DietColor.textTertiaryColor)
-                TextField("Jump to chat, channel, or team", text: $query)
+                TextField(
+                    inMessages ? "Search all messages" : "Jump to chat, channel, or team",
+                    text: $query)
                     .textFieldStyle(.plain)
                     .font(DietType.title3)
                     .foregroundStyle(DietColor.textPrimaryColor)
                     .focused($fieldFocused)
-                    .onSubmit { pick(highlight) }
-                    .onChange(of: query) { highlight = 0 }
+                    .onSubmit { submit() }
+                    .onChange(of: query) {
+                        highlight = 0
+                        if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            // Blank clears immediately (no debounce):
+                            // stale hits never linger under an empty field.
+                            searchStore?.clear()
+                        }
+                    }
                     // Deferred: at launch the sheet appears before the
                     // window is key, which eats a synchronous focus grab.
                     .onAppear { DispatchQueue.main.async { fieldFocused = true } }
             }
             .padding(DietSpace.md)
+            if searchEnabled {
+                Picker("Scope", selection: $scope) {
+                    Text("Chats").tag(Scope.chats)
+                    Text("Messages").tag(Scope.messages)
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, DietSpace.md)
+                .padding(.bottom, DietSpace.sm)
+                .onChange(of: scope) { highlight = 0 }
+            }
             DietDividerH()
-            if matches.isEmpty {
+            if inMessages, let store = searchStore {
+                MessageResultsView(
+                    search: store, query: query,
+                    highlight: $highlight, chatNameFor: chatNameFor,
+                    onPickMessage: { pickMessage($0, in: store) })
+            } else if matches.isEmpty {
                 DietEmptyState(
                     systemImage: "magnifyingglass",
                     title: "No matches",
@@ -115,6 +178,16 @@ public struct JumpPaletteView: View {
             if !query.isEmpty { query = ""; return .handled }
             return .ignored
         }
+        // Debounced message search: any keystroke restarts the wait;
+        // blank queries clear via onChange above (never searched).
+        .task(id: messagesQueryKey) {
+            guard let store = searchStore, inMessages else { return }
+            let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !q.isEmpty else { return }
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            guard !Task.isCancelled else { return }
+            await store.search(query: q)
+        }
     }
 
     private var emptyMessage: String {
@@ -124,13 +197,35 @@ public struct JumpPaletteView: View {
     }
 
     private func move(_ delta: Int) {
-        guard !matches.isEmpty else { return }
-        highlight = min(max(highlight + delta, 0), matches.count - 1)
+        let count = inMessages ? (searchStore?.hits.count ?? 0) : matches.count
+        guard count > 0 else { return }
+        highlight = min(max(highlight + delta, 0), count - 1)
+    }
+
+    /// Return: chats pick immediately; messages search first when the
+    /// query outruns the debounce, else pick the highlighted hit.
+    private func submit() {
+        guard inMessages, let store = searchStore else {
+            pick(highlight)
+            return
+        }
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty else { return }
+        if q != store.lastQuery || store.isSearching {
+            Task { await store.search(query: q) }
+        } else {
+            pickMessage(highlight, in: store)
+        }
     }
 
     private func pick(_ i: Int) {
         guard matches.indices.contains(i), let id = matches[i].openID else { return }
         onPick(id, matches[i].openName)
+    }
+
+    private func pickMessage(_ i: Int, in store: MessageSearchStore) {
+        guard store.hits.indices.contains(i) else { return }
+        onPickMessage?(store.hits[i])
     }
 
     private func icon(for kind: JumpTarget.Kind) -> String {
@@ -139,5 +234,134 @@ public struct JumpPaletteView: View {
         case .channel: "number"
         case .team: "person.3.fill"
         }
+    }
+}
+
+/// Messages-scope results (om-ja-search): server-ranked hit rows +
+/// paging footer. Owned by the palette; the host passes its store.
+private struct MessageResultsView: View {
+    @ObservedObject var search: MessageSearchStore
+    let query: String
+    @Binding var highlight: Int
+    let chatNameFor: ((String) -> String?)?
+    let onPickMessage: (Int) -> Void
+
+    var body: some View {
+        if search.isSearching, search.hits.isEmpty {
+            HStack {
+                Spacer()
+                ProgressView().controlSize(.small)
+                Text("Searching messages…")
+                    .font(DietType.caption1)
+                    .foregroundStyle(DietColor.textSecondaryColor)
+                Spacer()
+            }
+            .padding(.vertical, DietSpace.xl)
+            .frame(minHeight: 160)
+        } else if let err = search.error, search.hits.isEmpty {
+            DietEmptyState(
+                systemImage: "wifi.exclamationmark",
+                title: "Couldn't search messages",
+                message: err,
+                actionLabel: "Try Again",
+                action: { search.retry() })
+                .frame(minHeight: 160)
+        } else if search.hits.isEmpty {
+            DietEmptyState(
+                systemImage: "magnifyingglass",
+                title: query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? "Search messages" : "No matches",
+                message: query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? "Type above to search every chat and channel."
+                    : "Nothing matches \"\(query)\". Try fewer words.")
+                .frame(minHeight: 160)
+        } else {
+            VStack(spacing: 0) {
+                List(0 ..< search.hits.count, id: \.self) { i in
+                    let hit = search.hits[i]
+                    Button {
+                        onPickMessage(i)
+                    } label: {
+                        HStack(spacing: DietSpace.sm) {
+                            Image(systemName: "text.bubble")
+                                .font(.system(size: DietSize.iconMD))
+                                .foregroundStyle(DietColor.textSecondaryColor)
+                                .frame(width: DietSize.iconLG)
+                            VStack(alignment: .leading, spacing: DietSpace.xxs) {
+                                Text(hit.preview.isEmpty ? "(attachment)" : hit.preview)
+                                    .font(DietType.body)
+                                    .foregroundStyle(DietColor.textPrimaryColor)
+                                    .lineLimit(2)
+                                Text(subtitle(for: hit))
+                                    .font(DietType.caption1)
+                                    .foregroundStyle(DietColor.textSecondaryColor)
+                                    .lineLimit(1)
+                            }
+                            Spacer(minLength: DietSpace.sm)
+                        }
+                        .padding(.vertical, DietSpace.xs)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .listRowBackground(
+                        i == highlight
+                            ? Color(nsColor: DietColor.accent).opacity(0.15)
+                            : Color.clear)
+                }
+                .listStyle(.plain)
+                .frame(height: JumpPaletteView.listHeight(for: search.hits.count))
+                if search.total != nil || search.more || search.loadingMore {
+                    HStack(spacing: DietSpace.sm) {
+                        if let total = search.total {
+                            Text("\(search.hits.count) of \(total)")
+                                .font(DietType.caption1)
+                                .foregroundStyle(DietColor.textSecondaryColor)
+                        }
+                        Spacer(minLength: DietSpace.sm)
+                        if search.loadingMore {
+                            ProgressView().controlSize(.small)
+                        } else if search.canLoadMore {
+                            Button("Load more") {
+                                Task { await search.loadMore() }
+                            }
+                            .buttonStyle(.link)
+                            .font(DietType.caption1)
+                        }
+                    }
+                    .padding(.horizontal, DietSpace.md)
+                    .padding(.vertical, DietSpace.xs)
+                }
+                // Mid-chain failure keeps the loaded hits; the error
+                // surfaces inline with a retry for the same window.
+                if let err = search.error {
+                    HStack(spacing: DietSpace.sm) {
+                        Text(err)
+                            .font(DietType.caption1)
+                            .foregroundStyle(Color(nsColor: DietColor.danger))
+                            .lineLimit(1)
+                        Spacer(minLength: DietSpace.sm)
+                        Button("Retry") {
+                            Task { await search.loadMore() }
+                        }
+                        .buttonStyle(.link)
+                        .font(DietType.caption1)
+                    }
+                    .padding(.horizontal, DietSpace.md)
+                    .padding(.vertical, DietSpace.xs)
+                }
+            }
+        }
+    }
+
+    private func subtitle(for hit: SearchHit) -> String {
+        var parts: [String] = []
+        if !hit.sender.isEmpty { parts.append(hit.sender) }
+        if let name = chatNameFor?(hit.chatID)?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !name.isEmpty
+        {
+            parts.append(name)
+        }
+        parts.append(hit.displayTime)
+        return parts.joined(separator: " · ")
     }
 }

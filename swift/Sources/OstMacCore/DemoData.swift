@@ -282,6 +282,46 @@ public enum DemoData {
         chatID == richID ? ["rich-fail"] : []
     }
 
+    /// Canned message-search index for `--demo` (om-ja-search lane):
+    /// literal rows (no date formatting, safe to run off-main) over the
+    /// static threads. Substring match on sender + preview; blank
+    /// returns every row. Ids mirror the real demo bubbles, so
+    /// jump-to-message lands in-memory (no paging) in demo.
+    public static func messageSearchResponse(for query: String) -> SearchResponse {
+        let rows: [SearchHit] = [
+            SearchHit(
+                messageID: "ava-1", chatID: avaID, sender: "Ava Lindqvist",
+                timestamp: "2026-09-22T08:41:02Z",
+                preview: "Morning! Can you review the empty-states mock when you get a chance?"),
+            SearchHit(
+                messageID: "ava-3", chatID: avaID, sender: "Ava Lindqvist",
+                timestamp: "2026-09-22T08:47:33Z",
+                preview: "Standup moved to 10 — see you there."),
+            SearchHit(
+                messageID: "standup-2", chatID: standupID, sender: "Tom Becker",
+                timestamp: "2026-09-21T16:20:11Z",
+                preview: "Build is green, packaging lane is next."),
+            SearchHit(
+                messageID: "rep-2", chatID: repliesID, sender: "Tom Becker",
+                timestamp: "2026-09-22T09:05:00Z",
+                preview: "First one: is the empty-state illustration final, or still placeholder?"),
+            SearchHit(
+                messageID: "chan-m2", chatID: "demo-chan-general",
+                teamID: "demo-team-eng", channelID: "demo-chan-general",
+                sender: "Tom Becker", timestamp: "2026-09-22T09:10:44Z",
+                preview: "Build is green, packaging lane is next."),
+        ]
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let hits = q.isEmpty
+            ? rows
+            : rows.filter {
+                $0.preview.lowercased().contains(q) || $0.sender.lowercased().contains(q)
+            }
+        return SearchResponse(
+            ok: true, query: query, from: 0, size: hits.count,
+            total: hits.count, more: false, next_from: nil, hits: hits)
+    }
+
     /// Demo threads flagging an owner mention (om-mentions): the rich
     /// thread's edited bubble mines `@Me` from its `<at>` tag, and the
     /// showcase kickoff does the same. Adopted by the app's MentionStore

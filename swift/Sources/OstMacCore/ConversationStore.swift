@@ -29,6 +29,11 @@ public final class ConversationStore: ObservableObject {
     /// action, cleared by send/cancel/chat-switch. `send(text:)` posts
     /// through the reply path while set.
     @Published public private(set) var replyTarget: ChatMessage?
+    /// Armed jump target (om-ja-search): the timeline scrolls to this
+    /// bubble id, then consumes it via `clearJumpTarget`. Set by
+    /// `open(seekMessageID:)` / `seek(messageID:)` once the id is
+    /// loaded; cleared by open/close/chat-switch.
+    @Published public private(set) var jumpTargetID: String?
     public private(set) var chatID: String?
     public private(set) var chatName: String?
     /// Header title: the resolved chat name, else the generic label —
@@ -64,6 +69,10 @@ public final class ConversationStore: ObservableObject {
     /// back on scroll.
     public nonisolated static let openMaxPages = 3
     public nonisolated static let dayLoadMaxPages = 4
+    /// Seek bound (om-ja-search): a jump-to-message never pages back
+    /// more than this looking for its bubble (open-chain extra +
+    /// already-open `seek` share the cap).
+    public nonisolated static let seekMaxPages = 8
 
     /// Shared stamp parsers (om-s6-renderparse): one static set replaces
     /// the per-call allocs (same options, same results).
@@ -126,7 +135,10 @@ public final class ConversationStore: ObservableObject {
     /// fast chat-switching always lands on the newest selection. The
     /// previous thread is cleared up front: a failed open shows the
     /// error with retry, never stale bubbles under a new name.
-    public func open(chatID: String, chatName: String? = nil, limit: Int32 = 50) {
+    /// `seekMessageID` (om-ja-search) pages back past the window until
+    /// that bubble loads (bounded by `seekMaxPages`), then arms
+    /// `jumpTargetID` so the timeline lands on it.
+    public func open(chatID: String, chatName: String? = nil, limit: Int32 = 50, seekMessageID: String? = nil) {
         self.chatID = chatID
         if let n = chatName { self.chatName = n }
         messages = []
@@ -135,8 +147,13 @@ public final class ConversationStore: ObservableObject {
         loadingMore = false
         error = nil
         replyTarget = nil
+        jumpTargetID = nil
         openGeneration += 1
         let gen = openGeneration
+        let seek: String? = {
+            let t = (seekMessageID ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            return t.isEmpty ? nil : t
+        }()
         Task {
             // Best-effort identity (core-cached after first call); a stale
             // stored name still stamps when refresh fails.
@@ -177,7 +194,45 @@ public final class ConversationStore: ObservableObject {
                         break
                     }
                 }
+                // Seek-to-message (om-ja-search): page back past the
+                // window until the target bubble loads (bounded).
+                // Unfound targets simply leave the window in place
+                // (plain open, no jump).
+                var seekFound = false
+                if let seek, gen == self.openGeneration {
+                    var extra = 0
+                    while gen == self.openGeneration,
+                          !self.messages.contains(where: { $0.id == seek }),
+                          self.pageToken != nil,
+                          extra < Self.seekMaxPages
+                    {
+                        guard let tok = self.pageToken else { break }
+                        do {
+                            let next = try await Task.detached {
+                                try RustCore.messagesPage(chatID: chatID, pageToken: tok, limit: limit)
+                            }.value
+                            guard gen == self.openGeneration else { return }
+                            self.messages = Self.prepend(
+                                Self.stampOwnership(next.messages, ownName: self.ownDisplayName),
+                                to: self.messages)
+                            self.pageToken = next.page_token
+                            extra += 1
+                        } catch {
+                            guard gen == self.openGeneration else { return }
+                            self.error = String(describing: error)
+                            break
+                        }
+                    }
+                    seekFound = gen == self.openGeneration
+                        && self.messages.contains(where: { $0.id == seek })
+                }
                 if gen == self.openGeneration { self.loading = false }
+                // Arm after the loading flip: the loading-change tail
+                // land runs first, then the jump owns the viewport (its
+                // onChange cancels the settle + scrolls to the bubble).
+                if let seek, seekFound, gen == self.openGeneration {
+                    self.jumpTargetID = seek
+                }
             } catch {
                 guard gen == self.openGeneration else { return }
                 self.loading = false
@@ -209,6 +264,60 @@ public final class ConversationStore: ObservableObject {
         didLoad = false
         failedIDs = []
         replyTarget = nil
+        jumpTargetID = nil
+    }
+
+    /// Jump to one bubble in the OPEN chat (om-ja-search): when the id is
+    /// already loaded, arm the timeline jump immediately; otherwise page
+    /// back (bounded by `seekMaxPages`) until it loads. Blank ids, no
+    /// open chat, and unfound ids with no cursor are a silent no-op; a
+    /// mid-seek failure surfaces `error` like `loadMore`.
+    public func seek(messageID: String, limit: Int32 = 50) {
+        let id = messageID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !id.isEmpty, chatID != nil else { return }
+        if messages.contains(where: { $0.id == id }) {
+            jumpTargetID = id
+            return
+        }
+        guard canLoadMore, let chat = chatID else { return }
+        loadingMore = true
+        error = nil
+        let gen = openGeneration
+        Task {
+            var pages = 0
+            var lastError: Error?
+            while pages < Self.seekMaxPages, self.pageToken != nil {
+                guard let tok = self.pageToken else { break }
+                do {
+                    let resp = try await Task.detached {
+                        try RustCore.messagesPage(chatID: chat, pageToken: tok, limit: limit)
+                    }.value
+                    guard gen == self.openGeneration else { return } // superseded
+                    self.messages = Self.prepend(
+                        Self.stampOwnership(resp.messages, ownName: self.ownDisplayName),
+                        to: self.messages)
+                    self.pageToken = resp.page_token
+                    pages += 1
+                    if self.messages.contains(where: { $0.id == id }) { break }
+                } catch {
+                    guard gen == self.openGeneration else { return } // superseded
+                    lastError = error
+                    break
+                }
+            }
+            guard gen == self.openGeneration else { return } // superseded
+            self.loadingMore = false
+            if let e = lastError {
+                self.error = String(describing: e)
+            } else if self.messages.contains(where: { $0.id == id }) {
+                self.jumpTargetID = id
+            }
+        }
+    }
+
+    /// Consume the armed jump (the timeline calls this after scrolling).
+    public func clearJumpTarget() {
+        jumpTargetID = nil
     }
 
     /// Shot hook: surface a canned fetch error in demo mode only.
@@ -349,6 +458,7 @@ public final class ConversationStore: ObservableObject {
         self.messages = messages
         failedIDs = failed
         replyTarget = nil
+        jumpTargetID = nil
         isDemo = true
         loading = false
         error = nil

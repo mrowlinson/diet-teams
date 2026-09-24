@@ -145,6 +145,14 @@ struct ChatTimelineView: View {
                 .defaultScrollAnchor(.bottom)
                 .onChange(of: store.messages.count) { handleMessagesChanged(proxy) }
                 .onChange(of: store.loading) { handleLoadingChanged(proxy) }
+                // Jump-to-message (om-ja-search): the armed bubble id lands
+                // the scroll, then consumes so later mail never yanks.
+                .onChange(of: store.jumpTargetID) {
+                    guard let target = store.jumpTargetID else { return }
+                    scroll.cancelSettle()
+                    withAnimation { proxy.scrollTo(target, anchor: .center) }
+                    store.clearJumpTarget()
+                }
                 .onAppear {
                     store.openIfNeeded()
                     scroll.lastSeenID = store.messages.last?.id
@@ -341,6 +349,10 @@ struct ChatTimelineView: View {
     private func handleLoadingChanged(_ proxy: ScrollViewProxy) {
         if !store.loading {
             scroll.lastSeenID = store.messages.last?.id
+            // Jump-to-message (om-ja-search): an armed target owns the
+            // land — the jumpTargetID onChange scrolls to it; the tail
+            // land below would yank right back to latest.
+            guard store.jumpTargetID == nil else { return }
             scroll.jumpToLatest(tailID: store.messages.last?.id)
             settleToBottom(proxy)
             sendReadPositionIfViewingLatest()
