@@ -97,6 +97,9 @@ struct DiagnosticsView: View {
             Section("Quiet hours") {
                 QuietHoursDiagRow(store: state.quietHours)
             }
+            Section("Leave & block") {
+                LeaveBlockDiagRow(chats: state.chats, blocked: state.blocked)
+            }
             Section("Call") {
                 callRow
                 LabeledContent(
@@ -313,6 +316,31 @@ struct QuietHoursDiagRow: View {
             .textSelection(.enabled)
         LabeledContent("Do Not Disturb", value: store.dndStatus())
             .textSelection(.enabled)
+    }
+}
+
+/// Leave/block counters row (om-leave-block): observes both stores
+/// so the counts tick as chats leave and users block/unblock. The only
+/// place these numbers appear — the sidebar and Settings never show them.
+struct LeaveBlockDiagRow: View {
+    @ObservedObject var chats: ChatListViewModel
+    @ObservedObject var blocked: BlockedStore
+
+    var body: some View {
+        LabeledContent(
+            "Threads",
+            value: DiagnosticsFormat.leaveBlockLine(
+                leaves: chats.leavesCompleted, blocks: blocked.count,
+                failed: chats.leaveFailures))
+            .textSelection(.enabled)
+        if let err = chats.leaveError {
+            LabeledContent("Last error") {
+                Text(err)
+                    .font(DietType.caption1)
+                    .foregroundStyle(Color(nsColor: DietColor.danger))
+                    .textSelection(.enabled)
+            }
+        }
     }
 }
 

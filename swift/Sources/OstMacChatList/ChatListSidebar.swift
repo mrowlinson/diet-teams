@@ -12,6 +12,11 @@ public struct ChatListSidebar: View {
     @ObservedObject private var mentions: MentionStore
     @State private var searchText = ""
     @State private var mentionsOnly = false
+    /// Leave/block confirm targets (om-leave-block, native alerts below).
+    @State private var pendingLeave: ChatItem?
+    @State private var pendingBlock: ChatItem?
+    /// Last leave attempt (error-alert Retry re-runs it).
+    @State private var lastLeaveID: String?
 
     public init(
         model: ChatListViewModel, presence: PresenceStore = PresenceStore(),
@@ -60,6 +65,82 @@ public struct ChatListSidebar: View {
         // System-default crossfade between content states (the loaded
         // list lands softly instead of popping). Standard SwiftUI only.
         .animation(.default, value: model.state)
+        // Native leave confirmation (om-leave-block).
+        .alert(
+            "Leave “\(pendingLeave?.name ?? "this chat")”?",
+            isPresented: leaveConfirmShown, presenting: pendingLeave
+        ) { chat in
+            Button("Leave Chat", role: .destructive) { confirmLeave(chat) }
+            Button("Cancel", role: .cancel) { pendingLeave = nil }
+        } message: { _ in
+            Text("You’ll stop receiving messages from this chat. You can’t rejoin on your own.")
+        }
+        // Native block confirmation (om-leave-block).
+        .alert(
+            "Block “\(pendingBlock?.name ?? "this user")”?",
+            isPresented: blockConfirmShown, presenting: pendingBlock
+        ) { chat in
+            Button("Block User", role: .destructive) { confirmBlock(chat) }
+            Button("Cancel", role: .cancel) { pendingBlock = nil }
+        } message: { _ in
+            Text("You won’t receive messages or notifications from this user. Manage blocked users in Settings.")
+        }
+        // Leave failure (om-leave-block): Retry re-runs, Cancel clears.
+        .alert("Couldn’t Leave Chat", isPresented: leaveErrorShown) {
+            Button("Retry") { retryLeave() }
+            Button("Cancel", role: .cancel) { dismissLeaveError() }
+        } message: {
+            Text(model.leaveError ?? "Unknown error")
+        }
+    }
+
+    /// Confirm bindings: shown while a target is armed.
+    private var leaveConfirmShown: Binding<Bool> {
+        Binding(
+            get: { pendingLeave != nil },
+            set: { if !$0 { pendingLeave = nil } })
+    }
+
+    private var blockConfirmShown: Binding<Bool> {
+        Binding(
+            get: { pendingBlock != nil },
+            set: { if !$0 { pendingBlock = nil } })
+    }
+
+    /// Error alert binding: shown while the model holds a leave error.
+    private var leaveErrorShown: Binding<Bool> {
+        Binding(
+            get: { model.leaveError != nil },
+            set: { if !$0 { dismissLeaveError() } })
+    }
+
+    /// Confirmed leave: run the model's flow (row drops on success,
+    /// error alert on failure — never a list refresh).
+    private func confirmLeave(_ chat: ChatItem) {
+        pendingLeave = nil
+        lastLeaveID = chat.id
+        Task { await model.leave(chatID: chat.id) }
+    }
+
+    /// Confirmed block: record + drop the row (synchronous, local-only).
+    private func confirmBlock(_ chat: ChatItem) {
+        pendingBlock = nil
+        model.block(chatID: chat.id)
+    }
+
+    /// Re-run the failed leave (keeps the alert up on repeat failure).
+    private func retryLeave() {
+        guard let id = lastLeaveID else {
+            dismissLeaveError()
+            return
+        }
+        Task { await model.leave(chatID: id) }
+    }
+
+    /// Dismiss the leave error.
+    private func dismissLeaveError() {
+        model.clearLeaveError()
+        lastLeaveID = nil
     }
 
     private var loadedList: some View {
@@ -99,10 +180,14 @@ public struct ChatListSidebar: View {
                     ForEach(visible, id: \.id) { chat in
                         ChatRow(
                             chat: chat,
-                            peerAvailability: chat.is_group ? nil : .some(presence.availabilityForChat(chat.id))
+                            peerAvailability: chat.is_group ? nil : .some(presence.availabilityForChat(chat.id)),
+                            leaving: model.leavingIDs.contains(chat.id)
                         )
                         .tag(chat.id)
                         .unreadBadge(unread.count(for: chat.id))
+                        .modifier(ChatRowLeaveBlockMenu(
+                            model: model, chat: chat,
+                            pendingLeave: $pendingLeave, pendingBlock: $pendingBlock))
                     }
                 }
                 .listStyle(.sidebar)
@@ -149,11 +234,38 @@ public struct ChatListSidebar: View {
     }
 }
 
+/// Row right-click menu (om-leave-block): one top-level item — group
+/// chats offer Leave, 1:1 chats offer Block. Synthetic rows (Mentions,
+/// Notifications) get no menu. In-flight leaves disable their item.
+private struct ChatRowLeaveBlockMenu: ViewModifier {
+    @ObservedObject var model: ChatListViewModel
+    let chat: ChatItem
+    @Binding var pendingLeave: ChatItem?
+    @Binding var pendingBlock: ChatItem?
+
+    func body(content: Content) -> some View {
+        if PinnedChats.isSynthetic(chat.id) {
+            content
+        } else {
+            content.contextMenu {
+                if chat.is_group {
+                    Button("Leave Chat…") { pendingLeave = chat }
+                        .disabled(model.leavingIDs.contains(chat.id))
+                } else {
+                    Button("Block User…") { pendingBlock = chat }
+                }
+            }
+        }
+    }
+}
+
 struct ChatRow: View {
     let chat: ChatItem
     /// Chatmate availability for 1:1 chats. Outer nil = group (no dot);
     /// inner nil = unknown (no dot, fail closed).
     var peerAvailability: String?? = nil
+    /// Leave call in flight: a spinner replaces the preview time.
+    var leaving: Bool = false
 
     private var dietPresence: DietPresence? {
         guard let outer = peerAvailability else { return nil }
@@ -172,9 +284,15 @@ struct ChatRow: View {
                         .foregroundStyle(DietColor.textPrimaryColor)
                         .lineLimit(1)
                     Spacer()
-                    Text(ChatListFormat.previewTime(chat.last_message_time))
-                        .font(DietType.captionMono)
-                        .foregroundStyle(DietColor.textTertiaryColor)
+                    if leaving {
+                        ProgressView()
+                            .controlSize(.small)
+                            .accessibilityLabel("Leaving chat")
+                    } else {
+                        Text(ChatListFormat.previewTime(chat.last_message_time))
+                            .font(DietType.captionMono)
+                            .foregroundStyle(DietColor.textTertiaryColor)
+                    }
                 }
                 Text(previewText)
                     .font(DietType.subheadline)

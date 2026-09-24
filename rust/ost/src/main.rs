@@ -116,6 +116,13 @@ enum Commands {
         message_id: String,
     },
 
+    /// Leave a group chat (remove self from the thread roster)
+    Leave {
+        /// Chat thread ID (from `chats` output)
+        #[arg(short, long)]
+        to: String,
+    },
+
     /// List joined teams and their channels
     Teams,
 
@@ -354,6 +361,10 @@ async fn main() -> Result<()> {
         Commands::Delete { to, message_id } => {
             tracing::info!("Deleting message...");
             api::delete_message(&to, &message_id).await?;
+        }
+        Commands::Leave { to } => {
+            tracing::info!("Leaving chat...");
+            api::leave_chat(&to).await?;
         }
         Commands::Trouter => {
             trouter::connect_and_run().await?;
