@@ -182,4 +182,10 @@ final class TypingTests: XCTestCase {
         XCTAssertEqual(TypingDots.opacity(date: t1, index: 1), 1.0)
         XCTAssertEqual(TypingDots.opacity(date: t1, index: 0), 0.3)
     }
+
+    func testDotsStillFrameIsUniform() {
+        // Reduce Motion still frame: one shared opacity for every dot,
+        // fully lit — no wave, no dim phase.
+        XCTAssertEqual(TypingDots.stillOpacity, 1.0)
+    }
 }

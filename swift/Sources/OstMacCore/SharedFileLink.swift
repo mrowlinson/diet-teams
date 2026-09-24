@@ -7,6 +7,7 @@
 // renders state, so previews and tests never touch FFI or pasteboard.
 //
 //   SharedFileLinkButton(linking: false, linked: true) { store.shareLink(file) }
+import DietDesign
 import SwiftUI
 
 /// Copy-link helpers. No view or FFI code.
@@ -38,7 +39,7 @@ public struct SharedFileLinkButton: View {
                 Label("Copy link", systemImage: linked ? "checkmark" : "link")
             }
             .buttonStyle(.link)
-            .font(.caption)
+            .font(DietType.caption1)
             .help(linked
                 ? "Copy the sharing link again"
                 : "Create a view-only sharing link and copy it")

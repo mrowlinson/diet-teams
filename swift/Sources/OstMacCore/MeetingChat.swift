@@ -582,6 +582,8 @@ public struct MeetingChatPanel: View {
     @State private var draft = ""
     @FocusState private var boxFocused: Bool
     @StateObject private var scroll = ChatScrollModel()
+    /// Reduce Motion (om-a1-motion): scrollToBottom lands instantly.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     public init(chat: MeetingChatStore) {
         self.chat = chat
@@ -785,8 +787,9 @@ public struct MeetingChatPanel: View {
     /// end), never the tail bubble. Empty thread → no-op.
     private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool = true) {
         guard let target = Self.landingTarget(tailID: chat.messages.last?.id) else { return }
+        let animate = DietMotion.scrollAnimated(requested: animated, reduceMotion: reduceMotion)
         DispatchQueue.main.async {
-            if animated {
+            if animate {
                 withAnimation { proxy.scrollTo(target, anchor: .bottom) }
             } else {
                 proxy.scrollTo(target, anchor: .bottom)

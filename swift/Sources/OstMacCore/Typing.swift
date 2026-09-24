@@ -177,20 +177,39 @@ public struct TypingIndicatorView: View {
 }
 
 /// Three-dot bounce (one bright dot cycling, native caption styling).
+/// Reduce Motion renders the same dots as a still frame (no TimelineView
+/// tick) — the "who is typing" line beside them carries the meaning.
 struct TypingDots: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 3.0)) { context in
+        if reduceMotion {
             HStack(spacing: 2) {
-                ForEach(0..<3, id: \.self) { i in
+                ForEach(0..<3, id: \.self) { _ in
                     Circle()
                         .fill(DietColor.textSecondaryColor)
                         .frame(width: 4, height: 4)
-                        .opacity(Self.opacity(
-                            date: context.date, index: i))
+                        .opacity(Self.stillOpacity)
+                }
+            }
+        } else {
+            TimelineView(.animation(minimumInterval: 1.0 / 3.0)) { context in
+                HStack(spacing: 2) {
+                    ForEach(0..<3, id: \.self) { i in
+                        Circle()
+                            .fill(DietColor.textSecondaryColor)
+                            .frame(width: 4, height: 4)
+                            .opacity(Self.opacity(
+                                date: context.date, index: i))
+                    }
                 }
             }
         }
     }
+
+    /// Still-frame dot opacity under Reduce Motion: every dot identical,
+    /// so the indicator never waves. Pure seam so tests pin it.
+    static let stillOpacity = 1.0
 
     /// Wave phase from wall time: the bright dot advances 3×/second.
     static func opacity(date: Date, index: Int) -> Double {

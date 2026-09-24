@@ -229,11 +229,23 @@ final class ReactionMenuAnchorView: NSView {
     /// Retained while open (NSPopover is not retained by `show`).
     private var picker: NSPopover?
 
+    /// Test seam: true while the more-picker popover is shown.
+    var isPickerShown: Bool { picker?.isShown == true }
+
     /// More-picker popover above the bubble: search + recents +
     /// categories. Transient (click-outside dismisses); one pick reacts
     /// and closes. Called on the next runloop after the menu closes so
     /// menu teardown never fights popover presentation.
     func showPicker() {
+        // P0 (om-p0-pickercrash): NSPopover throws
+        // NSInvalidArgumentException ("view has no window") when the
+        // anchor is not in a window yet — the --show-picker note can
+        // land before SwiftUI attaches the view. No-op here; the
+        // shot-hook retry re-fires once the window exists.
+        guard window != nil else { return }
+        // The shot driver re-posts until its tries run out; only the
+        // first post opens the picker.
+        guard picker?.isShown != true else { return }
         let pop = NSPopover()
         pop.behavior = .transient
         pop.animates = true

@@ -25,6 +25,8 @@ public struct TeamsBrowser: View {
     /// Join-sheet visibility + the typed team id.
     @State private var showJoin = false
     @State private var joinTeamID = ""
+    /// Reduce Motion (om-a1-motion): state + filter changes land instantly.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     public init(
         model: TeamsViewModel, openChatID: String? = nil,
@@ -99,8 +101,9 @@ public struct TeamsBrowser: View {
             }
         }
         // System-default crossfade between content states (load lands
-        // softly instead of popping). Standard SwiftUI only.
-        .animation(.default, value: model.state)
+        // softly instead of popping; instant under Reduce Motion).
+        // Standard SwiftUI only.
+        .animation(DietMotion.gated(reduceMotion: reduceMotion), value: model.state)
         .sheet(isPresented: $showJoin) {
             JoinTeamSheet(
                 teamID: $joinTeamID,
@@ -220,8 +223,9 @@ public struct TeamsBrowser: View {
                 // any animation here can only slide, never fade — stepped
                 // is the no-slide fix. Filter keystrokes keep the
                 // system-default animation (rows match/unmatch plus
-                // pinned-open expansion). Standard SwiftUI only.
-                .animation(.default, value: searchText)
+                // pinned-open expansion; instant under Reduce Motion).
+                // Standard SwiftUI only.
+                .animation(DietMotion.gated(reduceMotion: reduceMotion), value: searchText)
             }
         }
         .sheet(isPresented: $showCreate) {
