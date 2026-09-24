@@ -9,6 +9,7 @@ mod me;
 pub mod media;
 mod notes;
 mod presence;
+mod tabs;
 mod teams;
 mod todo;
 
@@ -23,6 +24,7 @@ pub use files::SharedFile;
 pub use me::UserInfo;
 pub use notes::{NotePage, NotebookInfo, PageInfo, SectionInfo};
 pub use presence::PresenceInfo;
+pub use tabs::TabInfo;
 pub use teams::TeamInfo;
 pub use todo::{TodoListInfo, TodoTaskInfo};
 
@@ -54,6 +56,7 @@ pub use notes::{
     read_note_page_data,
 };
 pub use presence::get_presence_data;
+pub use tabs::list_tabs_data;
 pub use teams::list_teams_data;
 pub use todo::{
     complete_todo_task_data, create_todo_task_data, list_todo_lists_data,
@@ -123,6 +126,11 @@ pub async fn list_teams() -> Result<()> {
 /// List shared files in a chat or channel
 pub async fn list_files(chat_id: &str, limit: usize) -> Result<()> {
     files::list_files(chat_id, limit).await
+}
+
+/// List a channel's pinned tabs (read-only)
+pub async fn list_tabs(channel_id: &str) -> Result<()> {
+    tabs::list_tabs(channel_id).await
 }
 
 /// List upcoming meetings (Graph calendarView, next 7 days)

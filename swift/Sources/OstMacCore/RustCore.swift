@@ -67,6 +67,14 @@ public enum RustCore {
         try call(ostmac_teams(), as: TeamsResponse.self)
     }
 
+    /// One channel's pinned tabs, read-only (blocking FFI + network:
+    /// call off the main thread).
+    public static func tabs(channelID: String) throws -> TabsResponse {
+        try channelID.withCString { ptr in
+            try call(ostmac_tabs(ptr), as: TabsResponse.self)
+        }
+    }
+
     public static func messages(chatID: String, limit: Int32 = 50) throws -> MessagesResponse {
         try chatID.withCString { ptr in
             try call(ostmac_messages(ptr, limit), as: MessagesResponse.self)

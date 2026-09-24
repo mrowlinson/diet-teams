@@ -46,6 +46,9 @@ char *ostmac_chats(int limit);
 // Joined teams + channels JSON (requires sign-in). Caller frees.
 char *ostmac_teams(void);
 
+// One channel's pinned tabs JSON, read-only: {ok, channel_id, tabs}. Caller frees.
+char *ostmac_tabs(const char *channel_id);
+
 // Message history JSON for one chat (requires sign-in). Caller frees.
 char *ostmac_messages(const char *chat_id, int limit);
 

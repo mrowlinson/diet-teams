@@ -15,6 +15,9 @@ public struct ConversationView: View {
     @ObservedObject public var call: CallStore
     @ObservedObject public var shared: SharedFilesStore
     @ObservedObject public var notes: NotesStore
+    /// Pinned channel tabs (om-h4-tabs): row above the timeline for
+    /// channel ids only; taps deep-link into Chat/Shared/Notes/browser.
+    @ObservedObject public var tabs: ChannelTabsStore
     @ObservedObject public var catchUp: CatchUpStore
     /// Live typing indicators (om-typing): passed to the timeline tail.
     @ObservedObject public var typing: TypingStore
@@ -57,7 +60,8 @@ public struct ConversationView: View {
     public init(
         store: ConversationStore, presence: PresenceStore = PresenceStore(),
         call: CallStore = CallStore(), shared: SharedFilesStore = SharedFilesStore(),
-        notes: NotesStore = NotesStore(), catchUp: CatchUpStore = CatchUpStore(),
+        notes: NotesStore = NotesStore(), tabs: ChannelTabsStore = ChannelTabsStore(),
+        catchUp: CatchUpStore = CatchUpStore(),
         typing: TypingStore = TypingStore(),
         receipts: ReceiptStore = ReceiptStore(),
         attachments: ComposeAttachmentsStore = ComposeAttachmentsStore(),
@@ -72,6 +76,7 @@ public struct ConversationView: View {
         self.call = call
         self.shared = shared
         self.notes = notes
+        self.tabs = tabs
         self.catchUp = catchUp
         self.typing = typing
         self.receipts = receipts
@@ -108,6 +113,11 @@ public struct ConversationView: View {
             .padding(.horizontal, DietSpace.sm)
             .padding(.vertical, DietSpace.sm)
             .onChange(of: tab) { syncShared() }
+            // Channel tabs row (om-h4-tabs): channels only; taps
+            // deep-link into this picker's tabs (or the browser).
+            if ChannelTabsStore.isChannelID(store.chatID ?? "") {
+                TeamsTabsView(store: tabs, selected: tabTarget) { selectTabTarget($0) }
+            }
             DietSeamH()
             if tab == 0 {
                 // Per-chat identity: fresh scroll model/sentinel/settle per
@@ -132,8 +142,9 @@ public struct ConversationView: View {
         }
         .frame(minWidth: 380, minHeight: 480)
         .background(DietColor.windowColor)
-        .onChange(of: store.chatID) { syncShared() }
+        .onChange(of: store.chatID) { syncShared(); syncTabs() }
         .onChange(of: store.messages.count) { syncShared() }
+        .onAppear { syncTabs() }
         // om-catchup-sheet-dismiss: popover, not a window-modal sheet —
         // only a popover dismisses on click-outside. Done → dismissViaDone,
         // Esc → dismissViaEscape (explicit, works from any focus), and the
@@ -253,6 +264,39 @@ public struct ConversationView: View {
             shared.showDemo(chatID: id, files: DemoData.sharedFiles(for: id))
         } else {
             shared.open(chatID: id)
+        }
+    }
+
+    /// Channel tabs follow the open conversation (om-h4-tabs). Channels
+    /// fetch once per id; plain chats reset the row to idle (no fetch).
+    private func syncTabs() {
+        guard let id = store.chatID else { return }
+        if ChannelTabsStore.isChannelID(id) {
+            guard tabs.channelID != id else { return }
+            tabs.open(channelID: id)
+        } else if tabs.channelID != nil || !tabs.tabs.isEmpty {
+            tabs.open(channelID: id) // non-channel: reset, no network
+        }
+    }
+
+    /// Picker tab as a tab target (highlights the matching chip).
+    private var tabTarget: ChannelTabTarget {
+        switch tab {
+        case 1: .shared
+        case 2: .notes
+        default: .chat
+        }
+    }
+
+    /// Chip tap: well-known tabs switch this picker's tab (tab change
+    /// drives syncShared); website tabs open in the browser.
+    private func selectTabTarget(_ target: ChannelTabTarget) {
+        switch target {
+        case .chat: tab = 0
+        case .shared: tab = 1
+        case .notes: tab = 2
+        case let .web(url): onOpenLink(url)
+        case .none: break
         }
     }
 

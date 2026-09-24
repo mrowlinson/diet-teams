@@ -197,6 +197,84 @@ public struct TeamsResponse: Decodable, Sendable {
     }
 }
 
+// MARK: - Channel tabs (om-h4-tabs lane)
+
+/// Where one channel tab deep-links. Posts/Files/Notes land in the
+/// conversation view's own Chat/Shared/Notes tabs; website tabs open in
+/// the browser; unknown tabs with no URL go nowhere (rendered dimmed).
+public enum ChannelTabTarget: Equatable, Sendable {
+    case chat
+    case shared
+    case notes
+    case web(URL)
+    case none
+}
+
+/// One pinned channel tab from core `ostmac_tabs` (Graph tabs
+/// projection): identity + link-out targets only. No content renderers —
+/// `target` maps well-known tabs to host views, the rest to the browser.
+public struct ChannelTab: Decodable, Sendable, Identifiable, Equatable {
+    public let id: String
+    public let name: String
+    public let appID: String?
+    public let contentURL: String?
+    public let websiteURL: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, name
+        case appID = "app_id"
+        case contentURL = "content_url"
+        case websiteURL = "website_url"
+    }
+
+    /// Teams Files-tab app id (SharePoint file browser).
+    public static let filesAppID = "com.microsoft.teamspace.tab.files.sharepoint"
+    /// Teams OneNote-tab app id (channel notebook).
+    public static let notesAppID = "0d820ecd-def2-4297-a09a-912c7e06f45b"
+
+    /// Host-side construction (demo data, previews, mock fetchers).
+    /// Wire decoding is untouched.
+    public init(
+        id: String, name: String, appID: String? = nil,
+        contentURL: String? = nil, websiteURL: String? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.appID = appID
+        self.contentURL = contentURL
+        self.websiteURL = websiteURL
+    }
+
+    /// Deep-link target: well-known tabs by app id (name fallback for
+    /// tenants that omit it), then content/website URL, else nowhere.
+    public var target: ChannelTabTarget {
+        let n = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if n == "posts" { return .chat }
+        if appID == Self.filesAppID || n == "files" { return .shared }
+        if appID == Self.notesAppID || n == "notes" { return .notes }
+        if let s = contentURL ?? websiteURL,
+           let url = URL(string: s), url.scheme != nil
+        {
+            return .web(url)
+        }
+        return .none
+    }
+}
+
+public struct TabsResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let channel_id: String?
+    public let tabs: [ChannelTab]
+
+    /// Host-side construction (demo data, previews, mock fetchers).
+    /// Wire decoding is untouched.
+    public init(ok: Bool, channel_id: String? = nil, tabs: [ChannelTab]) {
+        self.ok = ok
+        self.channel_id = channel_id
+        self.tabs = tabs
+    }
+}
+
 public struct TrouterPoll: Decodable, Sendable {
     public let ok: Bool
     public let events: [AnyJSON]
