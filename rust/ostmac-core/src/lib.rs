@@ -621,6 +621,105 @@ pub fn tabs_json(channel_id: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Team roster (om-h5-members: members + owners)
+// ---------------------------------------------------------------------------
+
+fn team_member_to_json(m: &ost::api::TeamMemberInfo) -> serde_json::Value {
+    json!({
+        "id": m.id,
+        "display_name": m.display_name,
+        "user_id": m.user_id,
+        "email": m.email,
+        "roles": m.roles,
+        "is_owner": m.is_owner,
+    })
+}
+
+/// One team's roster as JSON. Requires sign-in; unsigned yields
+/// `{ok:false}`. Empty `team_id` is rejected before any network.
+/// `{ok:true, team_id, members:[{id, display_name, user_id|null,
+/// email|null, roles, is_owner}]}`.
+pub fn team_members_json(team_id: &str) -> String {
+    if team_id.trim().is_empty() {
+        return err_json("arg", "empty team_id");
+    }
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let members = ost::api::list_team_members_data(&client, team_id)
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let items: Vec<_> = members.iter().map(team_member_to_json).collect();
+            Ok(json!({"ok": true, "team_id": team_id.trim(), "members": items}).to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("team_members", e),
+    }
+}
+
+/// Add one user to a team (`owner` grants the owner role).
+/// `{ok:true, member}` or `{ok:false}`. Empty args are rejected
+/// before any network.
+pub fn team_member_add_json(team_id: &str, user: &str, owner: bool) -> String {
+    if team_id.trim().is_empty() {
+        return err_json("arg", "empty team_id");
+    }
+    if user.trim().is_empty() {
+        return err_json("arg", "empty user");
+    }
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let m = ost::api::add_team_member_data(&client, team_id, user, owner)
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            Ok(json!({"ok": true, "member": team_member_to_json(&m)}).to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("team_member_add", e),
+    }
+}
+
+/// Remove one membership from a team. `member_id` is the roster
+/// membership id, not the user id. `{ok:true, team_id, member_id}`
+/// or `{ok:false}`. Empty args are rejected before any network.
+pub fn team_member_remove_json(team_id: &str, member_id: &str) -> String {
+    if team_id.trim().is_empty() {
+        return err_json("arg", "empty team_id");
+    }
+    if member_id.trim().is_empty() {
+        return err_json("arg", "empty member_id");
+    }
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            ost::api::remove_team_member_data(&client, team_id, member_id)
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            Ok(json!({"ok": true, "team_id": team_id.trim(), "member_id": member_id.trim()})
+                .to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("team_member_remove", e),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Messages (one chat: history + send)
 // ---------------------------------------------------------------------------
 
@@ -1996,11 +2095,54 @@ pub extern "C" fn ostmac_team_join(team_id: *const c_char) -> *mut c_char {
     }
 }
 
+/// One team's roster JSON (requires sign-in). See [`team_members_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_team_members(team_id: *const c_char) -> *mut c_char {
+    match cstr_to_string(team_id) {
+        Ok(t) => string_to_c(team_members_json(&t)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
 /// One channel's pinned tabs JSON (read-only). See [`tabs_json`].
 #[no_mangle]
 pub extern "C" fn ostmac_tabs(channel_id: *const c_char) -> *mut c_char {
     match cstr_to_string(channel_id) {
         Ok(id) => string_to_c(tabs_json(&id)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
+/// Add one user to a team. See [`team_member_add_json`].
+/// `owner` nonzero grants the owner role.
+#[no_mangle]
+pub extern "C" fn ostmac_team_member_add(
+    team_id: *const c_char,
+    user: *const c_char,
+    owner: c_int,
+) -> *mut c_char {
+    let team = match cstr_to_string(team_id) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    match cstr_to_string(user) {
+        Ok(u) => string_to_c(team_member_add_json(&team, &u, owner != 0)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
+/// Remove one membership from a team. See [`team_member_remove_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_team_member_remove(
+    team_id: *const c_char,
+    member_id: *const c_char,
+) -> *mut c_char {
+    let team = match cstr_to_string(team_id) {
+        Ok(s) => s,
+        Err(e) => return string_to_c(err_json("arg", e)),
+    };
+    match cstr_to_string(member_id) {
+        Ok(m) => string_to_c(team_member_remove_json(&team, &m)),
         Err(e) => string_to_c(err_json("arg", e)),
     }
 }
@@ -2659,6 +2801,63 @@ mod tests {
     }
 
     #[test]
+    fn team_member_json_shape() {
+        let m = ost::api::TeamMemberInfo {
+            id: "M1".to_string(),
+            display_name: "Doe, Jane".to_string(),
+            user_id: Some("oid-1".to_string()),
+            email: Some("j@x.example".to_string()),
+            roles: vec!["owner".to_string()],
+            is_owner: true,
+        };
+        let v = team_member_to_json(&m);
+        assert_eq!(v["id"], "M1");
+        assert_eq!(v["display_name"], "Doe, Jane");
+        assert_eq!(v["user_id"], "oid-1");
+        assert_eq!(v["email"], "j@x.example");
+        assert_eq!(v["roles"], serde_json::json!(["owner"]));
+        assert_eq!(v["is_owner"], true);
+    }
+
+    #[test]
+    fn team_member_json_null_optionals() {
+        let m = ost::api::TeamMemberInfo {
+            id: "M3".to_string(),
+            display_name: "M3".to_string(),
+            user_id: None,
+            email: None,
+            roles: vec![],
+            is_owner: false,
+        };
+        let v = team_member_to_json(&m);
+        assert!(v["user_id"].is_null());
+        assert!(v["email"].is_null());
+        assert_eq!(v["is_owner"], false);
+    }
+
+    #[test]
+    fn team_roster_empty_args_is_error() {
+        for bad in ["", "   "] {
+            let v: serde_json::Value =
+                serde_json::from_str(&team_members_json(bad)).unwrap();
+            assert_eq!(v["ok"], false, "team={:?}", bad);
+            assert_eq!(v["error"], "arg");
+            let v: serde_json::Value =
+                serde_json::from_str(&team_member_add_json(bad, "u", false)).unwrap();
+            assert_eq!(v["error"], "arg");
+            let v: serde_json::Value =
+                serde_json::from_str(&team_member_add_json("t", bad, false)).unwrap();
+            assert_eq!(v["error"], "arg");
+            let v: serde_json::Value =
+                serde_json::from_str(&team_member_remove_json(bad, "m")).unwrap();
+            assert_eq!(v["error"], "arg");
+            let v: serde_json::Value =
+                serde_json::from_str(&team_member_remove_json("t", bad)).unwrap();
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
     fn channel_create_envelope_shape() {
         let c = ost::api::ChannelInfo {
             id: "19:new@thread.tacv2".to_string(),
@@ -2667,6 +2866,34 @@ mod tests {
         let v = channel_to_json(&c);
         assert_eq!(v["id"], "19:new@thread.tacv2");
         assert_eq!(v["name"], "New room");
+    }
+
+    #[test]
+    fn ffi_team_roster_null_is_arg_error() {
+        unsafe {
+            let p = ostmac_team_members(std::ptr::null());
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["ok"], false);
+            assert_eq!(v["error"], "arg");
+
+            let team = CString::new("t1").unwrap();
+            let p = ostmac_team_member_add(team.as_ptr(), std::ptr::null(), 0);
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["error"], "arg");
+
+            let p = ostmac_team_member_remove(team.as_ptr(), std::ptr::null());
+            assert!(!p.is_null());
+            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+            ostmac_free(p);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["error"], "arg");
+        }
     }
 
     #[test]

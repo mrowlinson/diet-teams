@@ -314,6 +314,92 @@ public struct TabsResponse: Decodable, Sendable {
     }
 }
 
+// MARK: - Team roster (om-h5-members lane)
+
+/// One roster entry from core `ostmac_team_members`.
+/// `id` is the Graph membership id (the remove target), NOT the user
+/// id. `isOwner` mirrors `roles.contains("owner")` (pinned in ost).
+public struct TeamMember: Decodable, Sendable, Identifiable, Equatable {
+    public let id: String
+    public let displayName: String
+    public let userId: String?
+    public let email: String?
+    public let roles: [String]
+    public let isOwner: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case displayName = "display_name"
+        case userId = "user_id"
+        case email, roles
+        case isOwner = "is_owner"
+    }
+
+    /// Host-side construction (demo data, previews). Wire decoding is untouched.
+    public init(id: String, displayName: String, userId: String? = nil, email: String? = nil, roles: [String] = [], isOwner: Bool = false) {
+        self.id = id
+        self.displayName = displayName
+        self.userId = userId
+        self.email = email
+        self.roles = roles
+        self.isOwner = isOwner
+    }
+}
+
+/// One team's roster. Wire format from core `ostmac_team_members`:
+/// `{"ok","team_id","members":[...]}`.
+public struct TeamMembersResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let teamId: String
+    public let members: [TeamMember]
+
+    enum CodingKeys: String, CodingKey {
+        case ok
+        case teamId = "team_id"
+        case members
+    }
+
+    /// Host-side construction (demo data, previews). Wire decoding is untouched.
+    public init(ok: Bool, teamId: String, members: [TeamMember]) {
+        self.ok = ok
+        self.teamId = teamId
+        self.members = members
+    }
+}
+
+/// Add result from core `ostmac_team_member_add`: `{"ok","member"}`.
+public struct TeamMemberAddResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let member: TeamMember
+
+    /// Host-side construction (mock fetchers).
+    public init(ok: Bool, member: TeamMember) {
+        self.ok = ok
+        self.member = member
+    }
+}
+
+/// Remove result from core `ostmac_team_member_remove`:
+/// `{"ok","team_id","member_id"}`.
+public struct TeamMemberRemoveResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let teamId: String
+    public let memberId: String
+
+    enum CodingKeys: String, CodingKey {
+        case ok
+        case teamId = "team_id"
+        case memberId = "member_id"
+    }
+
+    /// Host-side construction (mock fetchers).
+    public init(ok: Bool, teamId: String, memberId: String) {
+        self.ok = ok
+        self.teamId = teamId
+        self.memberId = memberId
+    }
+}
+
 public struct TrouterPoll: Decodable, Sendable {
     public let ok: Bool
     public let events: [AnyJSON]

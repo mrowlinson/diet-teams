@@ -132,6 +132,31 @@ enum Commands {
         channel_id: String,
     },
 
+    /// Team roster (Graph /teams/{id}/members).
+    /// Bare: list members + owners. --owners: owners only.
+    /// --add <user-id-or-upn> [--owner]: add. --remove <membership-id>: remove.
+    Members {
+        /// Team id (from `teams` output)
+        #[arg(long)]
+        team: String,
+
+        /// Show owners only (list mode)
+        #[arg(long)]
+        owners: bool,
+
+        /// Add this user id or UPN to the team
+        #[arg(long)]
+        add: Option<String>,
+
+        /// Grant the owner role with --add
+        #[arg(long)]
+        owner: bool,
+
+        /// Remove this membership id (from list output) from the team
+        #[arg(long)]
+        remove: Option<String>,
+    },
+
     /// List shared files in a chat or channel
     Files {
         /// Chat or channel ID (from `chats` / `teams` output)
@@ -305,6 +330,26 @@ async fn main() -> Result<()> {
         Commands::Tabs { channel_id } => {
             tracing::info!("Fetching channel tabs...");
             api::list_tabs(&channel_id).await?;
+        }
+        Commands::Members {
+            team,
+            owners,
+            add,
+            owner,
+            remove,
+        } => {
+            if let Some(user) = add {
+                if remove.is_some() {
+                    anyhow::bail!("--add and --remove are exclusive");
+                }
+                tracing::info!("Adding team member...");
+                api::add_team_member(&team, &user, owner).await?;
+            } else if let Some(member) = remove {
+                tracing::info!("Removing team member...");
+                api::remove_team_member(&team, &member).await?;
+            } else {
+                api::list_team_members(&team, owners).await?;
+            }
         }
         Commands::Files { chat_id, limit } => {
             tracing::info!("Fetching shared files...");

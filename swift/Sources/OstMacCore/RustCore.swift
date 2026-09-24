@@ -83,6 +83,20 @@ public enum RustCore {
         }
     }
 
+    public static func teamMembers(teamID: String) throws -> TeamMembersResponse {
+        try teamID.withCString { ptr in
+            try call(ostmac_team_members(ptr), as: TeamMembersResponse.self)
+        }
+    }
+
+    public static func teamMemberAdd(teamID: String, user: String, owner: Bool = false) throws -> TeamMemberAddResponse {
+        try teamID.withCString { teamPtr in
+            try user.withCString { userPtr in
+                try call(ostmac_team_member_add(teamPtr, userPtr, owner ? 1 : 0), as: TeamMemberAddResponse.self)
+            }
+        }
+    }
+
     /// Join one team by id (self-enroll, blocking FFI: call off main thread).
     public static func teamJoin(teamID: String) throws -> TeamJoinResponse {
         try teamID.withCString { ptr in
@@ -95,6 +109,14 @@ public enum RustCore {
     public static func tabs(channelID: String) throws -> TabsResponse {
         try channelID.withCString { ptr in
             try call(ostmac_tabs(ptr), as: TabsResponse.self)
+        }
+    }
+
+    public static func teamMemberRemove(teamID: String, memberID: String) throws -> TeamMemberRemoveResponse {
+        try teamID.withCString { teamPtr in
+            try memberID.withCString { memberPtr in
+                try call(ostmac_team_member_remove(teamPtr, memberPtr), as: TeamMemberRemoveResponse.self)
+            }
         }
     }
 
