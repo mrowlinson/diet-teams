@@ -289,7 +289,7 @@ struct ShowcaseRoot: View {
             VStack(alignment: .leading, spacing: DietSpace.sm) {
                 HStack(spacing: DietSpace.sm) {
                     DietAvatar(
-                        "Priya Nair", presence: .available,
+                        "Megan Harper", presence: .available,
                         size: DietSize.avatarLG)
                     DietAvatar(
                         "Tom Becker", presence: .busy,

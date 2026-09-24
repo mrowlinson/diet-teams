@@ -10,7 +10,7 @@ final class MentionsTests: XCTestCase {
     // MARK: - helpers
 
     static func bubble(
-        id: String = "m", sender: String = "Priya Nair",
+        id: String = "m", sender: String = "Megan Harper",
         content: String, raw: String? = nil
     ) -> ChatMessage {
         ChatMessage(
@@ -20,8 +20,8 @@ final class MentionsTests: XCTestCase {
 
     func event(
         chatID: String = "19:chat@thread.v2",
-        sender: String = "Priya Nair",
-        senderID: String? = "8:orgid:priya",
+        sender: String = "Megan Harper",
+        senderID: String? = "8:orgid:megan",
         text: String = "hello",
         raw: String? = nil
     ) -> RealtimeMessage {
@@ -35,29 +35,29 @@ final class MentionsTests: XCTestCase {
 
     func testRosterRecentFirstDistinct() {
         let msgs = [
-            Self.bubble(id: "1", sender: "Priya Nair", content: "a"),
+            Self.bubble(id: "1", sender: "Megan Harper", content: "a"),
             Self.bubble(id: "2", sender: "Tom Becker", content: "b"),
-            Self.bubble(id: "3", sender: "Priya Nair", content: "c"),
+            Self.bubble(id: "3", sender: "Megan Harper", content: "c"),
             Self.bubble(id: "4", sender: "Me", content: "d"),
             Self.bubble(id: "5", sender: "  ", content: "blank sender dropped"),
         ]
         XCTAssertEqual(
             MentionCompose.roster(from: msgs),
-            ["Me", "Priya Nair", "Tom Becker"])
+            ["Me", "Megan Harper", "Tom Becker"])
     }
 
     func testRosterExcludesSelf() {
         let msgs = [
-            Self.bubble(id: "1", sender: "Priya Nair", content: "a"),
+            Self.bubble(id: "1", sender: "Megan Harper", content: "a"),
             Self.bubble(id: "2", sender: "Me", content: "b"),
         ]
         XCTAssertEqual(
             MentionCompose.roster(from: msgs, excluding: "me"),
-            ["Priya Nair"])
+            ["Megan Harper"])
         // Whitespace-tolerant, case-insensitive.
         XCTAssertEqual(
             MentionCompose.roster(from: msgs, excluding: "  ME  "),
-            ["Priya Nair"])
+            ["Megan Harper"])
         // Nil exclusion keeps everyone.
         XCTAssertEqual(MentionCompose.roster(from: msgs).count, 2)
         XCTAssertTrue(MentionCompose.roster(from: []).isEmpty)
@@ -65,18 +65,18 @@ final class MentionsTests: XCTestCase {
 
     func testRosterDedupesCaseInsensitively() {
         let msgs = [
-            Self.bubble(id: "1", sender: "priya nair", content: "a"),
-            Self.bubble(id: "2", sender: "Priya Nair", content: "b"),
+            Self.bubble(id: "1", sender: "megan harper", content: "a"),
+            Self.bubble(id: "2", sender: "Megan Harper", content: "b"),
         ]
         // Reverse walk: the later spelling wins, single entry.
-        XCTAssertEqual(MentionCompose.roster(from: msgs), ["Priya Nair"])
+        XCTAssertEqual(MentionCompose.roster(from: msgs), ["Megan Harper"])
     }
 
     // MARK: - picker: query filter
 
     func testFilteredQuery() {
-        let roster = ["Me", "Priya Nair", "Tom Becker"]
-        XCTAssertEqual(MentionCompose.filtered(roster, query: "pri"), ["Priya Nair"])
+        let roster = ["Me", "Megan Harper", "Tom Becker"]
+        XCTAssertEqual(MentionCompose.filtered(roster, query: "meg"), ["Megan Harper"])
         XCTAssertEqual(
             MentionCompose.filtered(roster, query: "  TOM "),
             ["Tom Becker"])

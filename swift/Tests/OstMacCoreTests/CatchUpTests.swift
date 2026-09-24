@@ -107,7 +107,7 @@ final class CatchUpTests: XCTestCase {
         let (store, _) = store(transport: mock, cliTransport: cliMock)
         store.adopt(CatchUpConfig(provider: .openAICompatible, enabled: true, apiKey: "k"))
         let msgs = [
-            ChatMessage(id: "m1", sender: "Priya", timestamp: "t", content: "ship the picker"),
+            ChatMessage(id: "m1", sender: "Megan", timestamp: "t", content: "ship the picker"),
             ChatMessage(id: "m2", sender: "Tom", timestamp: "t", content: "on it\nsecond line"),
         ]
         await store.summarize(messages: msgs)
@@ -117,7 +117,7 @@ final class CatchUpTests: XCTestCase {
         XCTAssertTrue(prompt.contains("TL;DR"))
         XCTAssertTrue(prompt.contains("Key points"))
         XCTAssertTrue(prompt.contains("Action items"))
-        XCTAssertTrue(prompt.contains("Priya: ship the picker"))
+        XCTAssertTrue(prompt.contains("Megan: ship the picker"))
         // Multiline content collapses to one transcript line.
         XCTAssertTrue(prompt.contains("Tom: on it second line"))
     }

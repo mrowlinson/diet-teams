@@ -449,14 +449,14 @@ public enum MeetingDemo {
     public static let threadName = "Demo — Design Sync (meeting)"
 
     public static let participants = [
-        MeetingParticipant(id: "8:orgid:priya", name: "Priya Nair", speaking: true),
+        MeetingParticipant(id: "8:orgid:megan", name: "Megan Harper", speaking: true),
         MeetingParticipant(id: "8:orgid:tom", name: "Tom Becker", muted: true),
         MeetingParticipant(id: "8:orgid:me", name: "Me"),
     ]
 
     public static let messages = [
         ChatMessage(
-            id: "meet-1", sender: "Priya Nair",
+            id: "meet-1", sender: "Megan Harper",
             timestamp: "2026-09-22T09:02:11Z",
             content: "Morning! Design sync in 10. Dropping the agenda here."),
         ChatMessage(

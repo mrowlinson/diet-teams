@@ -9,8 +9,8 @@ final class RulesTests: XCTestCase {
     func msg(
         chatID: String = "19:chat@thread.v2",
         msgId: String = "m1",
-        sender: String = "Priya",
-        senderID: String? = "8:orgid:priya",
+        sender: String = "Megan",
+        senderID: String? = "8:orgid:megan",
         text: String = "hello",
         time: String = "2026-09-23T10:00:00Z",
         isEdit: Bool = false,
@@ -274,7 +274,7 @@ final class RulesTests: XCTestCase {
         XCTAssertEqual(
             MeetingSignal.classify(
                 text: "StandupPlay", content: "StandupPlay",
-                chatID: "19:chat@thread.v2", senderName: "Priya",
+                chatID: "19:chat@thread.v2", senderName: "Megan",
                 chatDisplayName: "Standup"),
             .normal)
     }

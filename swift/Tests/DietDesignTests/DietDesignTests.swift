@@ -98,15 +98,15 @@ final class DietAvatarTests: XCTestCase {
     func testInitials() {
         XCTAssertEqual(DietAvatar.initials(for: ""), "?")
         XCTAssertEqual(DietAvatar.initials(for: "Jo"), "JO")
-        XCTAssertEqual(DietAvatar.initials(for: "Priya Nair"), "PN")
+        XCTAssertEqual(DietAvatar.initials(for: "Megan Harper"), "MH")
         XCTAssertEqual(DietAvatar.initials(for: "a b c"), "AB")
         XCTAssertEqual(
             DietAvatar.initials(for: "  Ava   Lindqvist "), "AL")
     }
 
     func testHueDeterministic() {
-        let first = DietAvatar.hue(for: "Priya Nair")
-        XCTAssertEqual(first, DietAvatar.hue(for: "Priya Nair"))
+        let first = DietAvatar.hue(for: "Megan Harper")
+        XCTAssertEqual(first, DietAvatar.hue(for: "Megan Harper"))
         XCTAssertGreaterThanOrEqual(first, 0)
         XCTAssertLessThan(first, 1)
     }
