@@ -60,18 +60,14 @@ public struct NotesView: View {
             .pickerStyle(.menu)
             .frame(maxWidth: 200)
             Spacer()
+            // No DEMO badge here: the conversation header already shows it
+            // (this tab doubled it — the only tab that did).
             if store.groupID != nil {
                 Text("team notes")
                     .font(DietType.caption2)
                     .foregroundStyle(DietColor.textSecondaryColor)
                     .padding(.horizontal, DietSpace.xs).padding(.vertical, DietSpace.xxs)
                     .background(Color.blue.opacity(0.12))
-                    .clipShape(Capsule())
-            } else if store.isDemo {
-                Text("DEMO")
-                    .font(DietType.caption2).bold()
-                    .padding(.horizontal, DietSpace.xs).padding(.vertical, DietSpace.xxs)
-                    .background(.orange.opacity(0.2))
                     .clipShape(Capsule())
             }
         }

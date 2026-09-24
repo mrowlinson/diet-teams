@@ -130,7 +130,8 @@ public struct MentionPickerView: View {
                 }
             }
         }
-        .frame(width: 280, height: 300)
+        // Minimums, not fixed: the popover grows with larger text.
+        .frame(minWidth: 280, minHeight: 300)
         .onChange(of: query) { highlight = 0 }
         .onKeyPress(.upArrow) {
             highlight = GridNav.move(

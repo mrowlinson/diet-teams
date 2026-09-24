@@ -290,6 +290,30 @@ public enum MessageRender {
         return out
     }
 
+    /// Tick-stripped text + the code ranges in the STRIPPED coordinates.
+    /// Only valid spans (per `backtickSpans`) lose their ticks; stray
+    /// ticks (unbalanced, empty, newline-spanning) stay literal so the
+    /// bubble never eats user text. The styled builder runs every span
+    /// miner on `clean`, so ticks vanish from display while plain-text
+    /// paths (copy, quote previews) keep the source untouched.
+    public static func stripBackticks(_ text: String) -> (clean: String, spans: [Range<String.Index>]) {
+        let inners = backtickSpans(in: text)
+        guard !inners.isEmpty else { return (text, []) }
+        var clean = ""
+        clean.reserveCapacity(text.count)
+        var spans: [Range<String.Index>] = []
+        var cursor = text.startIndex
+        for inner in inners {
+            clean += text[cursor ..< text.index(before: inner.lowerBound)]
+            let start = clean.endIndex
+            clean += text[inner]
+            spans.append(start ..< clean.endIndex)
+            cursor = text.index(after: inner.upperBound)
+        }
+        clean += text[cursor...]
+        return (clean, spans)
+    }
+
     // MARK: - AttributedString builder
 
     /// Styled body: mention names bold, code blocks + `spans` monospaced,
@@ -345,18 +369,22 @@ public enum MessageRender {
         types: NSTextCheckingResult.CheckingType.link.rawValue)
 
     static func attributedBodyUncached(text: String, raw: String?, highlighting ownName: String? = nil) -> AttributedString {
-        var a = AttributedString(text)
+        // Backticks are markup, not content: every miner below runs on
+        // the tick-stripped text, so `code` renders mono without ticks.
+        let stripped = stripBackticks(text)
+        let clean = stripped.clean
+        var a = AttributedString(clean)
         func convert(_ r: Range<String.Index>) -> Range<AttributedString.Index>? {
             Range(r, in: a)
         }
         // Mentions (<at> tags + Mention spans; fall back to @token scan).
         var names = mentions(fromRaw: raw)
         if names.isEmpty {
-            names = mentionTokens(in: text)
+            names = mentionTokens(in: clean)
         }
         for n in names {
             let mine = isOwnerMention(n, ownName: ownName)
-            for r in ranges(of: n, in: text) {
+            for r in ranges(of: n, in: clean) {
                 guard let ar = convert(r) else { continue }
                 a[ar].font = .body.bold()
                 if mine { a[ar].backgroundColor = mineHighlight }
@@ -364,21 +392,21 @@ public enum MessageRender {
         }
         // Code blocks from <pre> + backtick spans.
         for b in codeBlocks(fromRaw: raw) {
-            for r in ranges(of: b, in: text) {
+            for r in ranges(of: b, in: clean) {
                 guard let ar = convert(r) else { continue }
                 a[ar].font = .body.monospaced()
             }
         }
-        for r in backtickSpans(in: text) {
+        for r in stripped.spans {
             guard let ar = convert(r) else { continue }
             a[ar].font = .body.monospaced()
         }
         // URLs.
         if let det = Self.sharedLinkDetector {
-            let ns = text as NSString
-            for m in det.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
+            let ns = clean as NSString
+            for m in det.matches(in: clean, range: NSRange(location: 0, length: ns.length)) {
                 guard let url = m.url,
-                      let r = Range(m.range, in: text),
+                      let r = Range(m.range, in: clean),
                       let ar = convert(r)
                 else { continue }
                 a[ar].link = url

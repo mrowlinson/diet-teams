@@ -84,7 +84,7 @@ struct ReactionPickerView: View {
                             ForEach(Array(current.enumerated()), id: \.offset) { i, e in
                                 Button { onPick(e.emoji) } label: {
                                     Text(e.emoji)
-                                        .font(.system(size: 22))
+                                        .font(.system(size: DietSize.emojiMD))
                                         .frame(width: 34, height: 34)
                                 }
                                 .buttonStyle(.plain)
