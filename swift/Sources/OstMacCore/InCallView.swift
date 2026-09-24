@@ -152,6 +152,7 @@ public struct InCallView: View {
         .frame(minWidth: 380)
         .navigationTitle("Call")
         .onAppear {
+            call.callWindowOpen = true // media surface up (1s stats loop)
             call.refreshSpeakers()
             call.cameraHook = { [weak camera] on in
                 Task { @MainActor [weak camera] in
@@ -163,6 +164,7 @@ public struct InCallView: View {
             if call.cameraOn { call.cameraHook?(true) }
         }
         .onDisappear {
+            call.callWindowOpen = false // media surface down
             call.cameraHook = nil
             // Window closed after the call: stop capture. Mid-call it
             // keeps running (reopen to adjust).

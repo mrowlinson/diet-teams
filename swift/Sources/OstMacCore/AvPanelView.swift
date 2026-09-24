@@ -931,7 +931,11 @@ public struct AvPanelView: View {
                 model.runLiveLoopback()
             }
         }
+        .onAppear {
+            call.callWindowOpen = true // media surface up (1s stats loop)
+        }
         .onDisappear {
+            call.callWindowOpen = false // media surface down
             model.stopLevelPolling()
             camera.stop()
             share.stop()
