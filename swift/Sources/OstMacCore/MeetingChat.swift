@@ -572,6 +572,7 @@ struct MeetingBubbleRow: View {
                 message.content,
                 direction: message.isOwn ? .outgoing : .incoming)
         }
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -606,6 +607,7 @@ public struct MeetingChatPanel: View {
                             in: Capsule())
                         .foregroundStyle(chat.meetingActive
                             ? .white : DietColor.textSecondaryColor)
+                        .accessibilityElement(children: .combine)
                         .accessibilityLabel(chat.meetingActive ? "Meeting live" : "Meeting ended")
                     Spacer(minLength: DietSpace.sm)
                     if chat.loading { ProgressView().controlSize(.small) }
@@ -676,6 +678,9 @@ public struct MeetingChatPanel: View {
                                     .shadow(color: .black.opacity(0.2), radius: 2, y: 1)
                                 }
                                 .buttonStyle(.plain)
+                                .accessibilityElement(children: .combine)
+                                .accessibilityLabel(A11yLabels.jumpPill(title: title))
+                                .plainFocusRing(radius: 14)
                                 .help("Jump to latest messages")
                                 .padding(.bottom, DietSpace.sm)
                             case .jump:
@@ -695,6 +700,9 @@ public struct MeetingChatPanel: View {
                                     .shadow(color: .black.opacity(0.15), radius: 2, y: 1)
                                 }
                                 .buttonStyle(.plain)
+                                .accessibilityElement(children: .combine)
+                                .accessibilityLabel(A11yLabels.jumpPill(title: nil))
+                                .plainFocusRing(radius: 14)
                                 .help("Jump to latest messages")
                                 .padding(.bottom, DietSpace.sm)
                             }

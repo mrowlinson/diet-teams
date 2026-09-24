@@ -196,6 +196,9 @@ struct ChatTimelineView: View {
                             .shadow(color: .black.opacity(0.2), radius: 2, y: 1)
                         }
                         .buttonStyle(.plain)
+                        .accessibilityElement(children: .combine)
+                        .accessibilityLabel(A11yLabels.jumpPill(title: title))
+                        .plainFocusRing(radius: 14)
                         .help("Jump to latest messages")
                         .padding(.bottom, DietSpace.sm)
                     case .jump:
@@ -215,6 +218,9 @@ struct ChatTimelineView: View {
                             .shadow(color: .black.opacity(0.15), radius: 2, y: 1)
                         }
                         .buttonStyle(.plain)
+                        .accessibilityElement(children: .combine)
+                        .accessibilityLabel(A11yLabels.jumpPill(title: nil))
+                        .plainFocusRing(radius: 14)
                         .help("Jump to latest messages")
                         .padding(.bottom, DietSpace.sm)
                     }

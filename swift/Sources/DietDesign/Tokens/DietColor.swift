@@ -48,8 +48,12 @@ public enum DietColor {
         light: (0.00, 0.00, 0.00, 0.85), dark: (1.00, 1.00, 1.00, 0.92))
     public static let textSecondary = dynamic(
         light: (0.00, 0.00, 0.00, 0.55), dark: (1.00, 1.00, 1.00, 0.60))
+    /// Supplementary/icon ink only (glyphs, dismiss icons,
+    /// separators) — pinned to the WCAG non-text floor 3:1 on every
+    /// surface, both appearances (DietContrastTests). Real text uses
+    /// secondary/primary.
     public static let textTertiary = dynamic(
-        light: (0.00, 0.00, 0.00, 0.35), dark: (1.00, 1.00, 1.00, 0.38))
+        light: (0.00, 0.00, 0.00, 0.46), dark: (1.00, 1.00, 1.00, 0.52))
 
     // MARK: - Accent + messaging
 

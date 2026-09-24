@@ -84,6 +84,47 @@ public struct DietAvatar: View {
         return Double(abs(hash) % 360) / 360.0
     }
 
+    /// Avatar fill saturation/brightness (hue derives from the name).
+    public static let fillSaturation = 0.45
+    public static let fillBrightness = 0.72
+
+    /// sRGB fill for a hue (mirrors the body's Color(hue:...)).
+    public static func fillRGB(forHue hue: Double) -> (
+        r: CGFloat, g: CGFloat, b: CGFloat
+    ) {
+        let h = (hue.truncatingRemainder(dividingBy: 1) + 1)
+            .truncatingRemainder(dividingBy: 1) * 6
+        let s = CGFloat(fillSaturation)
+        let v = CGFloat(fillBrightness)
+        let c = v * s
+        let x = c * (1 - abs((h.truncatingRemainder(dividingBy: 2)) - 1))
+        let m = v - c
+        let (r, g, b): (CGFloat, CGFloat, CGFloat)
+        switch Int(h) {
+        case 0: (r, g, b) = (c, x, 0)
+        case 1: (r, g, b) = (x, c, 0)
+        case 2: (r, g, b) = (0, c, x)
+        case 3: (r, g, b) = (0, x, c)
+        case 4: (r, g, b) = (x, 0, c)
+        default: (r, g, b) = (c, 0, x)
+        }
+        return (r + m, g + m, b + m)
+    }
+
+    /// Dark initials on light fills so initials hold 4.5:1
+    /// everywhere. Flips when the white ratio drops below 4.6 — past
+    /// that crossover black always clears 4.5 with margin.
+    public static func useDarkInitials(forHue hue: Double) -> Bool {
+        let f = fillRGB(forHue: hue)
+        let lum = 0.2126 * linear(f.r) + 0.7152 * linear(f.g)
+            + 0.0722 * linear(f.b)
+        return (1.05 / (lum + 0.05)) < 4.6
+    }
+
+    private static func linear(_ c: CGFloat) -> CGFloat {
+        c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4)
+    }
+
     /// 1–2 uppercase initials (tests pin edge cases).
     public static func initials(for name: String) -> String {
         let parts = name.split(separator: " ").filter { !$0.isEmpty }
@@ -101,13 +142,17 @@ public struct DietAvatar: View {
             Circle()
                 .fill(Color(
                     hue: Self.hue(for: displayName),
-                    saturation: 0.45, brightness: 0.72))
+                    saturation: Self.fillSaturation,
+                    brightness: Self.fillBrightness))
                 .frame(width: size, height: size)
                 .overlay(
                     Text(Self.initials(for: displayName))
                         .font(.system(
                             size: size * 0.38, weight: .semibold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(
+                            Self.useDarkInitials(
+                                forHue: Self.hue(for: displayName))
+                                ? .black : .white)
                 )
             if let presence {
                 DietPresenceDot(presence)

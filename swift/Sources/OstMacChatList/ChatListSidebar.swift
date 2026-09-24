@@ -279,6 +279,7 @@ public struct ChatListSidebar: View {
         .buttonStyle(.plain)
         .id("mentions")
         .accessibilityIdentifier("mentions")
+        .plainFocusRing()
         .help("Show only threads that mention you")
     }
 
@@ -309,6 +310,7 @@ public struct ChatListSidebar: View {
         .buttonStyle(.plain)
         .id("show-hidden")
         .accessibilityIdentifier("show-hidden")
+        .plainFocusRing()
         .help("Show hidden threads to restore them")
     }
 }
@@ -356,7 +358,7 @@ struct ChatRow: View {
                     } else {
                         Text(ChatListFormat.previewTime(chat.last_message_time))
                             .font(DietType.captionMono)
-                            .foregroundStyle(DietColor.textTertiaryColor)
+                            .foregroundStyle(DietColor.textSecondaryColor)
                     }
                 }
                 Text(previewText)
@@ -366,6 +368,7 @@ struct ChatRow: View {
             }
         }
         .padding(.vertical, DietSpace.xs)
+        .accessibilityElement(children: .combine)
     }
 
     private var previewText: String {

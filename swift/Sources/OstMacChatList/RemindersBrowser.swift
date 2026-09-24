@@ -149,6 +149,10 @@ struct TaskRow: View {
             }
             .buttonStyle(.plain)
             .disabled(task.completed)
+            .accessibilityLabel(
+                A11yLabels.reminderComplete(
+                    title: task.title, completed: task.completed))
+            .plainFocusRing(radius: 14)
             .help(task.completed ? "Completed" : "Mark done")
             VStack(alignment: .leading, spacing: DietSpace.xxs) {
                 Text(task.title)
@@ -170,6 +174,7 @@ struct TaskRow: View {
                 Image(systemName: "exclamationmark.circle.fill")
                     .font(.system(size: DietSize.iconMD))
                     .foregroundStyle(Color(nsColor: DietColor.danger))
+                    .accessibilityLabel("High importance")
                     .help("High importance")
             }
         }
