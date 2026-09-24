@@ -107,8 +107,16 @@ public enum PinnedMessages {
     public static func rows(
         pins: [PinnedMessage], messages: [ChatMessage]
     ) -> [StripRow] {
+        rows(pins: pins, messages: messages, index: MessageIndex(messages))
+    }
+
+    /// Indexed strip rows (om-s6-renderparse): same rows, O(pins)
+    /// against a body-eval `MessageIndex` (no per-pin scan).
+    public static func rows(
+        pins: [PinnedMessage], messages: [ChatMessage], index: MessageIndex
+    ) -> [StripRow] {
         pins.sorted { $0.pinnedAt < $1.pinnedAt }.map { pin in
-            if let live = messages.first(where: { $0.id == pin.messageID }) {
+            if let live = index.byID[pin.messageID] {
                 return StripRow(
                     messageID: pin.messageID, sender: live.sender,
                     preview: preview(for: live), timestamp: live.timestamp,
@@ -264,6 +272,14 @@ public final class PinnedMessageStore: ObservableObject {
     /// Strip rows for the open thread (live window resolves jumps).
     public func rows(for chatID: String?, messages: [ChatMessage]) -> [PinnedMessages.StripRow] {
         PinnedMessages.rows(pins: pins(for: chatID), messages: messages)
+    }
+
+    /// Indexed strip rows (om-s6-renderparse): same rows against a
+    /// body-eval `MessageIndex` (no per-pin scan).
+    public func rows(
+        for chatID: String?, messages: [ChatMessage], index: MessageIndex
+    ) -> [PinnedMessages.StripRow] {
+        PinnedMessages.rows(pins: pins(for: chatID), messages: messages, index: index)
     }
 
     /// Adopt one thread's pins wholesale (demo seeding + tests).

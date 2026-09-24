@@ -677,12 +677,7 @@ public struct ChatMessage: Codable, Sendable, Identifiable, Equatable {
             let end = trimmed.index(idx, offsetBy: 5, limitedBy: trimmed.endIndex)
             return end.map { String(trimmed[idx ..< $0]) } ?? String(trimmed.dropFirst(11).prefix(5))
         }()
-        let today: String = {
-            let f = DateFormatter()
-            f.dateFormat = "yyyy-MM-dd"
-            f.timeZone = TimeZone.current
-            return f.string(from: Date())
-        }()
+        let today: String = MessageRender.todayKey()
         if datePart == today { return clockPart }
         let monthDay: String = {
             let parts = datePart.split(separator: "-")
@@ -695,6 +690,30 @@ public struct ChatMessage: Codable, Sendable, Identifiable, Equatable {
             return "\(Int(parts[2]) ?? 0) \(m)"
         }()
         return "\(clockPart) \(monthDay)"
+    }
+}
+
+/// O(n) id indexes over one thread (om-s6-renderparse). The timeline
+/// builds one per body-eval and shares it across its quote, receipt,
+/// and strip lookups instead of scanning per bubble. First id wins,
+/// matching `first(where:)` / `firstIndex(where:)` on duplicate ids.
+public struct MessageIndex: Sendable {
+    public let byID: [String: ChatMessage]
+    public let position: [String: Int]
+
+    public init(_ messages: [ChatMessage]) {
+        var by: [String: ChatMessage] = [:]
+        var pos: [String: Int] = [:]
+        by.reserveCapacity(messages.count)
+        pos.reserveCapacity(messages.count)
+        for (i, m) in messages.enumerated() {
+            if by[m.id] == nil {
+                by[m.id] = m
+                pos[m.id] = i
+            }
+        }
+        self.byID = by
+        self.position = pos
     }
 }
 

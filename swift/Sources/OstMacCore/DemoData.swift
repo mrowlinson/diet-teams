@@ -6,6 +6,13 @@
 import Foundation
 
 public enum DemoData {
+    /// Shared demo stamp formatter (om-s6-renderparse): demo builders
+    /// stamp every message through this instead of per-call allocs.
+    private static let demoISO: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
     public static let demoID = "demo"
     public static let avaID = "demo-2"
     public static let standupID = "demo-3"
@@ -344,11 +351,7 @@ public enum DemoData {
     /// failure, and an emoticon-sized reply. Fully offline (`demo://`
     /// fixtures). Timestamps float off now (Today).
     public static func mediaMessages(now: Date = Date()) -> [ChatMessage] {
-        func iso(_ d: Date) -> String {
-            let f = ISO8601DateFormatter()
-            f.formatOptions = [.withInternetDateTime]
-            return f.string(from: d)
-        }
+        func iso(_ d: Date) -> String { demoISO.string(from: d) }
         func at(h: Int, m: Int) -> Date {
             var cal = Calendar.current
             cal.timeZone = TimeZone.current
@@ -393,11 +396,7 @@ public enum DemoData {
     /// counts), one bare bubble for the picker shot. Fully offline.
     /// Timestamps float off now (Today).
     public static func reactionsMessages(now: Date = Date()) -> [ChatMessage] {
-        func iso(_ d: Date) -> String {
-            let f = ISO8601DateFormatter()
-            f.formatOptions = [.withInternetDateTime]
-            return f.string(from: d)
-        }
+        func iso(_ d: Date) -> String { demoISO.string(from: d) }
         func at(h: Int, m: Int) -> Date {
             var cal = Calendar.current
             cal.timeZone = TimeZone.current
@@ -430,11 +429,7 @@ public enum DemoData {
     /// of history (evicted-parent fallback). Fully offline. Timestamps
     /// float off now (Today). `raw` mirrors the core quote-block format.
     public static func repliesMessages(now: Date = Date()) -> [ChatMessage] {
-        func iso(_ d: Date) -> String {
-            let f = ISO8601DateFormatter()
-            f.formatOptions = [.withInternetDateTime]
-            return f.string(from: d)
-        }
+        func iso(_ d: Date) -> String { demoISO.string(from: d) }
         func at(h: Int, m: Int) -> Date {
             var cal = Calendar.current
             cal.timeZone = TimeZone.current
@@ -482,11 +477,7 @@ public enum DemoData {
     /// scroll state. Fully offline. Timestamps float off now so the
     /// separators always read <date>/Yesterday/Today.
     public static func historyMessages(now: Date = Date()) -> [ChatMessage] {
-        func iso(_ d: Date) -> String {
-            let f = ISO8601DateFormatter()
-            f.formatOptions = [.withInternetDateTime]
-            return f.string(from: d)
-        }
+        func iso(_ d: Date) -> String { demoISO.string(from: d) }
         func at(dayOffset: Int, h: Int, m: Int) -> Date {
             var cal = Calendar.current
             cal.timeZone = TimeZone.current
@@ -549,11 +540,7 @@ public enum DemoData {
     /// offline. Timestamps float off now (Today). `content` mirrors
     /// core strip semantics (tags removed, no spaces added).
     public static func botPostsMessages(now: Date = Date()) -> [ChatMessage] {
-        func iso(_ d: Date) -> String {
-            let f = ISO8601DateFormatter()
-            f.formatOptions = [.withInternetDateTime]
-            return f.string(from: d)
-        }
+        func iso(_ d: Date) -> String { demoISO.string(from: d) }
         func at(h: Int, m: Int) -> Date {
             var cal = Calendar.current
             cal.timeZone = TimeZone.current
@@ -596,11 +583,7 @@ public enum DemoData {
     /// resolve fully offline. Timestamps float off now (Today). `content`
     /// mirrors core strip semantics (attachment tags remove cleanly).
     public static func docsMessages(now: Date = Date()) -> [ChatMessage] {
-        func iso(_ d: Date) -> String {
-            let f = ISO8601DateFormatter()
-            f.formatOptions = [.withInternetDateTime]
-            return f.string(from: d)
-        }
+        func iso(_ d: Date) -> String { demoISO.string(from: d) }
         func at(h: Int, m: Int) -> Date {
             var cal = Calendar.current
             cal.timeZone = TimeZone.current
@@ -636,11 +619,7 @@ public enum DemoData {
     /// Fully offline. Timestamps float off now. Zero real data: the same
     /// fictional crew as every other demo thread.
     public static func showcaseMessages(now: Date = Date()) -> [ChatMessage] {
-        func iso(_ d: Date) -> String {
-            let f = ISO8601DateFormatter()
-            f.formatOptions = [.withInternetDateTime]
-            return f.string(from: d)
-        }
+        func iso(_ d: Date) -> String { demoISO.string(from: d) }
         func at(dayOffset: Int, h: Int, m: Int) -> Date {
             var cal = Calendar.current
             cal.timeZone = TimeZone.current
@@ -729,11 +708,7 @@ public enum DemoData {
     /// Bigger than every initial-load cap (open 3×50, day-load 4×50,
     /// 72h window), so window math always has older pages waiting.
     public static func longChannelMessages(now: Date = Date()) -> [ChatMessage] {
-        func iso(_ d: Date) -> String {
-            let f = ISO8601DateFormatter()
-            f.formatOptions = [.withInternetDateTime]
-            return f.string(from: d)
-        }
+        func iso(_ d: Date) -> String { demoISO.string(from: d) }
         func at(dayOffset: Int, minutes: Int) -> Date {
             var cal = Calendar.current
             cal.timeZone = TimeZone.current

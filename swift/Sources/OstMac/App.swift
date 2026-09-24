@@ -502,7 +502,7 @@ final class AppState: ObservableObject {
         ) { [weak self] note in
             guard let id = note.userInfo?["chatID"] as? String else { return }
             Task { @MainActor [weak self] in
-                let name = self?.chats.chats.first(where: { $0.id == id })?.name
+                let name = self?.chats.chat(id: id)?.name
                 self?.jump(chatID: id, chatName: name ?? "Conversation")
             }
         }
@@ -699,7 +699,7 @@ final class AppState: ObservableObject {
             return
         }
         guard id != openChatID else { return } // already open (direct --chat path)
-        let name = chats.chats.first(where: { $0.id == id })?.name ?? preselectName
+        let name = chats.chat(id: id)?.name ?? preselectName
         open(chatID: id, chatName: name)
     }
 
@@ -886,7 +886,7 @@ final class AppState: ObservableObject {
         // unread, mentions, banners) — counted as a skip in Diagnostics.
         // Unknown threads default to 1:1, so a new thread from a blocked
         // mate still matches by name.
-        let threadGroup = chats.chats.first(where: { $0.id == msg.chatID })?.is_group ?? false
+        let threadGroup = chats.chat(id: msg.chatID)?.is_group ?? false
         if blocked.isBlocked(chatID: msg.chatID, senderName: msg.sender, isGroup: threadGroup) {
             notifSkipped += 1
             notifLastReason = "blocked-user"
@@ -903,7 +903,7 @@ final class AppState: ObservableObject {
         let quiet = quietHours.isQuietNow
         if let mri = msg.senderID,
            msg.sender != conv.ownDisplayName,
-           chats.chats.first(where: { $0.id == msg.chatID })?.is_group == false
+           chats.chat(id: msg.chatID)?.is_group == false
         {
             Task { await presence.refreshChatPeerMri(chatID: msg.chatID, mri: mri) }
         }
@@ -913,7 +913,7 @@ final class AppState: ObservableObject {
         // — TN parity), the unread counts (skips and the open chat never
         // accrue), and the alert stats. Quiet ALSO gates the banner path
         // below (defense in depth + suppressed counting).
-        let chatName = chats.chats.first(where: { $0.id == msg.chatID })?.name ?? ""
+        let chatName = chats.chat(id: msg.chatID)?.name ?? ""
         let decision = rulesDecision(for: msg, chatName: chatName)
         noteAlertStats(decision: decision)
         switch decision {
@@ -1067,7 +1067,7 @@ final class AppState: ObservableObject {
         Notifier.shared.onOpenChat = { [weak self] chatID in
             guard let strongSelf = self else { return }
             await MainActor.run {
-                let name = strongSelf.chats.chats.first(where: { $0.id == chatID })?.name ?? "Conversation"
+                let name = strongSelf.chats.chat(id: chatID)?.name ?? "Conversation"
                 strongSelf.jump(chatID: chatID, chatName: name)
             }
         }

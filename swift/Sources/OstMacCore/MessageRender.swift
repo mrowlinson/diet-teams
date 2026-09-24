@@ -122,16 +122,20 @@ public enum MessageRender {
 
     /// "2026-09-22" -> "Today" / "Yesterday" / "22 Sep 2026".
     public static func dayLabel(_ key: String) -> String {
-        let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd"
-        f.timeZone = TimeZone.current
         let cal = Calendar.current
-        guard let d = f.date(from: key) else { return key.isEmpty ? "Unknown date" : key }
+        guard let d = dayFormats.date(from: key) else { return key.isEmpty ? "Unknown date" : key }
         if cal.isDateInToday(d) { return "Today" }
         if cal.isDateInYesterday(d) { return "Yesterday" }
-        f.dateFormat = "d MMM yyyy"
-        return f.string(from: d)
+        return dayFormats.print(d)
     }
+
+    /// Today's "yyyy-MM-dd" for bubble timestamps (ChatMessage.shortTime).
+    static func todayKey() -> String { dayFormats.today() }
+
+    /// Shared day formatters (om-s6-renderparse): one locked pair replaces
+    /// the per-call allocs. Timezone refreshes per call (travel-safe);
+    /// locale stays default (same strings as before).
+    private static let dayFormats = DayFormatBox()
 
     public struct DaySection: Sendable {
         public let key: String
@@ -139,19 +143,123 @@ public enum MessageRender {
         public let messages: [ChatMessage]
     }
 
-    /// Chronological messages -> day groups, order preserved.
+    /// Chronological messages -> day groups, order preserved. Memoized on
+    /// the last input: repeat body-evals with unchanged messages reuse the
+    /// previous sections (same values, no recompute).
     public static func daySections(_ messages: [ChatMessage]) -> [DaySection] {
-        var out: [DaySection] = []
+        renderLock.lock()
+        if let prev = sectionsInput, prev == messages {
+            let hit = sectionsOutput
+            renderLock.unlock()
+            return hit
+        }
+        renderLock.unlock()
+        let out = daySectionsUncached(messages)
+        renderLock.lock()
+        sectionComputes += 1
+        sectionsInput = messages
+        sectionsOutput = out
+        renderLock.unlock()
+        return out
+    }
+
+    /// O(n) grouping: one pass into per-day buckets, one label per day.
+    /// Same output as the old copy-per-append loop (labels are pure).
+    static func daySectionsUncached(_ messages: [ChatMessage]) -> [DaySection] {
+        var keys: [String] = []
+        var buckets: [[ChatMessage]] = []
         for m in messages {
             let k = dayKey(m.timestamp)
-            if out.last?.key == k {
-                let last = out.removeLast()
-                out.append(DaySection(key: k, label: last.label, messages: last.messages + [m]))
+            if keys.last == k {
+                buckets[buckets.count - 1].append(m)
             } else {
-                out.append(DaySection(key: k, label: dayLabel(k), messages: [m]))
+                keys.append(k)
+                buckets.append([m])
             }
         }
-        return out
+        return zip(keys, buckets).map { key, msgs in
+            DaySection(key: key, label: dayLabel(key), messages: msgs)
+        }
+    }
+
+    // MARK: - Render-parse memo (om-s6-renderparse)
+
+    /// Cap across the parse dicts (bubble text, images, bot posts, styled
+    /// bodies). Overflow drops everything (cheap rebuild, bounded memory).
+    static let maxRenderCacheEntries = 1000
+
+    private static let renderLock = NSLock()
+    private struct TextEntry {
+        let content: String
+        let raw: String?
+        let text: String
+    }
+
+    private struct StyledKey: Hashable {
+        let text: String
+        let raw: String?
+        let own: String?
+    }
+
+    private static var bubbleTextCache: [String: TextEntry] = [:]
+    private static var imagesCache: [String: [RichImage]] = [:]
+    private static var botPostsCache: [String: [BotPost]] = [:]
+    private static var styledCache: [StyledKey: AttributedString] = [:]
+    private static var sectionsInput: [ChatMessage]?
+    private static var sectionsOutput: [DaySection] = []
+
+    /// Actual computes, excluding cache hits (perf-guard tests only).
+    static var bubbleTextComputes = 0
+    static var imagesComputes = 0
+    static var botPostsComputes = 0
+    static var styledComputes = 0
+    static var sectionComputes = 0
+
+    /// (text, images, posts, styled, sections) compute counts.
+    static func renderStats() -> (Int, Int, Int, Int, Int) {
+        renderLock.lock()
+        defer { renderLock.unlock() }
+        return (
+            bubbleTextComputes, imagesComputes, botPostsComputes,
+            styledComputes, sectionComputes)
+    }
+
+    /// Entries held across the parse dicts (cap-guard tests only).
+    static func renderCacheCount() -> Int {
+        renderLock.lock()
+        defer { renderLock.unlock() }
+        return bubbleTextCache.count + imagesCache.count
+            + botPostsCache.count + styledCache.count
+    }
+
+    /// Drop every cached parse + zero the counters (tests only).
+    static func resetRenderCaches() {
+        renderLock.lock()
+        defer { renderLock.unlock() }
+        bubbleTextCache.removeAll()
+        imagesCache.removeAll()
+        botPostsCache.removeAll()
+        styledCache.removeAll()
+        sectionsInput = nil
+        sectionsOutput = []
+        bubbleTextComputes = 0
+        imagesComputes = 0
+        botPostsComputes = 0
+        styledComputes = 0
+        sectionComputes = 0
+    }
+
+    /// Caller holds `renderLock`. Overflow clears all (sections included).
+    private static func evictRenderCachesLocked() {
+        let n = bubbleTextCache.count + imagesCache.count
+            + botPostsCache.count + styledCache.count
+        guard n >= maxRenderCacheEntries else { return }
+        bubbleTextCache.removeAll()
+        imagesCache.removeAll()
+        botPostsCache.removeAll()
+        styledCache.removeAll()
+        sectionsInput = nil
+        sectionsOutput = []
     }
 
     // MARK: - Span ranges over plain content
@@ -212,8 +320,31 @@ public enum MessageRender {
 
     /// Styled body over explicit text. The bubble passes `bubbleText`
     /// (bot posts drop attachment-block prose), so spans land on what
-    /// the bubble shows; miners still read `raw`.
+    /// the bubble shows; miners still read `raw`. Memoized on the full
+    /// inputs: repeat body-evals reuse the styled value.
     static func attributedBody(text: String, raw: String?, highlighting ownName: String? = nil) -> AttributedString {
+        let key = StyledKey(text: text, raw: raw, own: ownName)
+        renderLock.lock()
+        if let hit = styledCache[key] {
+            renderLock.unlock()
+            return hit
+        }
+        renderLock.unlock()
+        let out = attributedBodyUncached(text: text, raw: raw, highlighting: ownName)
+        renderLock.lock()
+        styledComputes += 1
+        evictRenderCachesLocked()
+        styledCache[key] = out
+        renderLock.unlock()
+        return out
+    }
+
+    /// One shared link detector (NSRegularExpression matching is
+    /// thread-safe; construction is the expensive part).
+    private static let sharedLinkDetector: NSDataDetector? = try? NSDataDetector(
+        types: NSTextCheckingResult.CheckingType.link.rawValue)
+
+    static func attributedBodyUncached(text: String, raw: String?, highlighting ownName: String? = nil) -> AttributedString {
         var a = AttributedString(text)
         func convert(_ r: Range<String.Index>) -> Range<AttributedString.Index>? {
             Range(r, in: a)
@@ -243,7 +374,7 @@ public enum MessageRender {
             a[ar].font = .body.monospaced()
         }
         // URLs.
-        if let det = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) {
+        if let det = Self.sharedLinkDetector {
             let ns = text as NSString
             for m in det.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
                 guard let url = m.url,
@@ -280,7 +411,23 @@ public enum MessageRender {
     /// single-quoted, or bare. `alt` is entity-decoded.
     public static func images(fromRaw raw: String?) -> [RichImage] {
         guard let raw else { return [] }
-        return imgTags(in: raw).compactMap { tag in
+        renderLock.lock()
+        if let hit = imagesCache[raw] {
+            renderLock.unlock()
+            return hit
+        }
+        renderLock.unlock()
+        let out = imagesUncached(fromRaw: raw)
+        renderLock.lock()
+        imagesComputes += 1
+        evictRenderCachesLocked()
+        imagesCache[raw] = out
+        renderLock.unlock()
+        return out
+    }
+
+    static func imagesUncached(fromRaw raw: String) -> [RichImage] {
+        imgTags(in: raw).compactMap { tag in
             let attrs = attributes(of: tag)
             guard let src = attrs["src"]?.trimmingCharacters(in: .whitespacesAndNewlines),
                   !src.isEmpty
@@ -502,6 +649,22 @@ public enum MessageRender {
         guard let raw,
               !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else { return [] }
+        renderLock.lock()
+        if let hit = botPostsCache[raw] {
+            renderLock.unlock()
+            return hit
+        }
+        renderLock.unlock()
+        let out = botPostsUncached(fromRaw: raw)
+        renderLock.lock()
+        botPostsComputes += 1
+        evictRenderCachesLocked()
+        botPostsCache[raw] = out
+        renderLock.unlock()
+        return out
+    }
+
+    static func botPostsUncached(fromRaw raw: String) -> [BotPost] {
         let blocks = innerTexts(of: "attachment", in: raw)
         if !blocks.isEmpty {
             return blocks.compactMap(postFromAttachment).prefix(maxBotRows).map { $0 }
@@ -586,6 +749,25 @@ public enum MessageRender {
     /// and suppressed JSON shows nothing. Replies keep `renderText`
     /// (the quote block owns attribution; never rewrite reply bodies).
     public static func bubbleText(for message: ChatMessage) -> String {
+        renderLock.lock()
+        if let e = bubbleTextCache[message.id],
+           e.content == message.content, e.raw == message.raw
+        {
+            renderLock.unlock()
+            return e.text
+        }
+        renderLock.unlock()
+        let text = bubbleTextUncached(for: message)
+        renderLock.lock()
+        bubbleTextComputes += 1
+        evictRenderCachesLocked()
+        bubbleTextCache[message.id] = TextEntry(
+            content: message.content, raw: message.raw, text: text)
+        renderLock.unlock()
+        return text
+    }
+
+    static func bubbleTextUncached(for message: ChatMessage) -> String {
         let posts = botPosts(fromRaw: message.raw ?? message.content)
         if suppressText(content: message.content, posts: posts) { return "" }
         guard !posts.isEmpty, message.reply_to == nil, let raw = message.raw else {
@@ -763,5 +945,44 @@ public enum MessageRender {
         }
         let url = String(text[start ..< end])
         return URL(string: url) == nil ? nil : url
+    }
+}
+
+/// Shared day formatters (om-s6-renderparse). DateFormatter is not
+/// thread-safe, so every use runs under the lock with a refreshed
+/// timezone (same strings as a fresh formatter, none of the allocs).
+private final class DayFormatBox {
+    private let lock = NSLock()
+    private let parse: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        return f
+    }()
+
+    private let label: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "d MMM yyyy"
+        return f
+    }()
+
+    func date(from key: String) -> Date? {
+        lock.lock()
+        defer { lock.unlock() }
+        parse.timeZone = TimeZone.current
+        return parse.date(from: key)
+    }
+
+    func print(_ date: Date) -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        label.timeZone = TimeZone.current
+        return label.string(from: date)
+    }
+
+    func today() -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        parse.timeZone = TimeZone.current
+        return parse.string(from: Date())
     }
 }

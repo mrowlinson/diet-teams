@@ -57,23 +57,29 @@ public final class TypingStore: ObservableObject {
 
     /// Record one typing event (refreshes that sender's timeout). Empty
     /// chat ids and empty senders are ignored (nothing to attribute).
+    /// Publishes only on change: an identical redelivery (same sender,
+    /// same instant) skips the write, so dup frames never re-render.
     public func ingest(_ event: TypingEvent, at now: Date = Date()) {
         guard !event.chatID.isEmpty, !event.sender.isEmpty else { return }
         let key = event.senderID ?? event.sender
+        let entry = Entry(displayName: event.sender, lastSeen: now)
         var thread = byChat[event.chatID] ?? [:]
-        thread[key] = Entry(displayName: event.sender, lastSeen: now)
+        guard thread[key] != entry else { return }
+        thread[key] = entry
         byChat[event.chatID] = thread
         ensureTimer()
     }
 
     /// A real message supersedes that sender's indicator (the bubble is
-    /// the typing resolved). Unknown senders are a no-op.
+    /// the typing resolved). Unknown senders are a no-op (no publish).
     public func noteMessage(chatID: String, sender: String, senderID: String? = nil) {
         guard var thread = byChat[chatID] else { return }
+        let before = thread.count
         if let sid = senderID { thread.removeValue(forKey: sid) }
         for key in thread.keys where thread[key]?.displayName == sender {
             thread.removeValue(forKey: key)
         }
+        guard thread.count != before else { return }
         if thread.isEmpty {
             byChat.removeValue(forKey: chatID)
         } else {
@@ -106,7 +112,8 @@ public final class TypingStore: ObservableObject {
     }
 
     /// Drop expired indicators (the 1s timer drives this while any chat
-    /// holds state; tests drive it with explicit dates).
+    /// holds state; tests drive it with explicit dates). Publishes only
+    /// when something actually expired (the 1s tick stays silent).
     public func prune(at now: Date = Date()) {
         var next = byChat
         for (chat, thread) in next {
@@ -117,7 +124,9 @@ public final class TypingStore: ObservableObject {
                 next[chat] = kept
             }
         }
-        byChat = next
+        if next != byChat {
+            byChat = next
+        }
         if next.isEmpty {
             timer?.invalidate()
             timer = nil
@@ -125,7 +134,13 @@ public final class TypingStore: ObservableObject {
     }
 
     /// Drop everything after sign-out (fail closed; stale rows vanish).
+    /// No-op when already empty (no publish).
     public func clear() {
+        guard !byChat.isEmpty else {
+            timer?.invalidate()
+            timer = nil
+            return
+        }
         byChat = [:]
         timer?.invalidate()
         timer = nil

@@ -31,7 +31,29 @@ public final class ChatListViewModel: ObservableObject, ChatSelection {
     public typealias Leaver = @Sendable (String) throws -> LeaveResponse
 
     /// Latest rows (only meaningful in `.loaded`; stale otherwise).
-    @Published public private(set) var chats: [ChatItem] = []
+    /// Every write rebuilds `chatByID` (first id wins, `.first` parity).
+    @Published public private(set) var chats: [ChatItem] = [] {
+        didSet { rebuildChatIndex() }
+    }
+
+    /// O(1) row lookup by chat id (om-s6-renderparse). Rebuilt on every
+    /// `chats` write; reads (realtime path, selection) never scan.
+    private var chatByID: [String: ChatItem] = [:]
+
+    private func rebuildChatIndex() {
+        var next: [String: ChatItem] = [:]
+        next.reserveCapacity(chats.count)
+        for c in chats where next[c.id] == nil {
+            next[c.id] = c
+        }
+        chatByID = next
+    }
+
+    /// Row for one chat id (nil when unknown). Same answer as a linear
+    /// `.first` scan, O(1).
+    public func chat(id: String) -> ChatItem? {
+        chatByID[id]
+    }
     /// Current content state. Starts `.loading`.
     @Published public private(set) var state: ChatListState = .loading
     /// Sidebar selection (see ``ChatSelection``).
@@ -46,7 +68,7 @@ public final class ChatListViewModel: ObservableObject, ChatSelection {
     @Published public private(set) var leaveFailures = 0
 
     public var selectedChat: ChatItem? {
-        chats.first { $0.id == selectedChatID }
+        selectedChatID.flatMap { chatByID[$0] }
             ?? selectedChatID.flatMap(PinnedChats.row(for:))
     }
 
@@ -124,7 +146,7 @@ public final class ChatListViewModel: ObservableObject, ChatSelection {
             state = visible.isEmpty ? .empty : .loaded
             if let sel = selectedChatID,
                !PinnedChats.isSynthetic(sel),
-               !visible.contains(where: { $0.id == sel })
+               chatByID[sel] == nil
             {
                 selectedChatID = nil
             }
@@ -141,7 +163,7 @@ public final class ChatListViewModel: ObservableObject, ChatSelection {
     public func leave(chatID: String) async {
         let id = chatID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !id.isEmpty, !PinnedChats.isSynthetic(id) else { return }
-        guard chats.contains(where: { $0.id == id }) else { return }
+        guard chatByID[id] != nil else { return }
         guard !leavingIDs.contains(id) else { return }
         leavingIDs.insert(id)
         leaveError = nil
@@ -166,7 +188,7 @@ public final class ChatListViewModel: ObservableObject, ChatSelection {
     public func block(chatID: String) {
         let id = chatID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !id.isEmpty, !PinnedChats.isSynthetic(id) else { return }
-        guard let row = chats.first(where: { $0.id == id }) else { return }
+        guard let row = chatByID[id] else { return }
         blocked.block(chatID: id, name: row.name)
         removeLocally(chatID: id)
     }
@@ -180,7 +202,7 @@ public final class ChatListViewModel: ObservableObject, ChatSelection {
     /// its neighbor (never the dead thread, never a blind first-row
     /// jump for untouched selections). Unknown ids are a no-op.
     public func removeLocally(chatID: String) {
-        guard chats.contains(where: { $0.id == chatID }) else { return }
+        guard chatByID[chatID] != nil else { return }
         let next = LeaveSelection.fallback(
             removedID: chatID, chats: chats, selectedID: selectedChatID)
         chats.removeAll { $0.id == chatID }
@@ -216,15 +238,61 @@ public final class ChatListViewModel: ObservableObject, ChatSelection {
     /// in place; beacons/blobs/unknown ids leave the list unchanged.
     public nonisolated static func ingested(_ message: RealtimeMessage, into list: [ChatItem]) -> [ChatItem] {
         guard let i = list.firstIndex(where: { $0.id == message.chatID }) else { return list }
-        let old = list[i]
+        guard let (updated, outcome) = updatedRow(old: list[i], message: message) else { return list }
+        if outcome == .refresh {
+            var out = list
+            out[i] = updated
+            return out
+        }
+        var out = list
+        out.remove(at: i)
+        out.insert(updated, at: 0)
+        return out
+    }
+
+    /// Pure batch fold: sequential ingest, order resolved once by the final
+    /// fold (the last user-active chat ends on top). One O(n) index for
+    /// the burst instead of a scan per event (same fold, same result).
+    public nonisolated static func ingested(_ messages: [RealtimeMessage], into list: [ChatItem]) -> [ChatItem] {
+        guard !messages.isEmpty else { return list }
+        // Duplicate ids take the legacy fold (dict order can't model two
+        // rows sharing one id — same result, no new semantics).
+        var seen = Set<String>()
+        for c in list {
+            if !seen.insert(c.id).inserted {
+                return messages.reduce(list) { Self.ingested($1, into: $0) }
+            }
+        }
+        var order = list.map(\.id)
+        var rows: [String: ChatItem] = [:]
+        rows.reserveCapacity(list.count)
+        for c in list { rows[c.id] = c }
+        for m in messages {
+            guard let old = rows[m.chatID] else { continue }
+            guard let (updated, outcome) = updatedRow(old: old, message: m) else { continue }
+            rows[m.chatID] = updated
+            if outcome == .bubble {
+                order.removeAll { $0 == m.chatID }
+                order.insert(m.chatID, at: 0)
+            }
+        }
+        return order.compactMap { rows[$0] }
+    }
+
+    /// One event's row update: nil for skips and unchanged rows (beacons,
+    /// blobs, meeting cards with nothing human), else the new row plus
+    /// its placement (refresh in place, bubble to top).
+    nonisolated static func updatedRow(
+        old: ChatItem, message: RealtimeMessage
+    ) -> (ChatItem, SidebarIngest.Outcome)? {
         let outcome = SidebarIngest.decide(message: message, chatName: old.name)
-        guard outcome != .skip else { return list }
+        guard outcome != .skip else { return nil }
         let isMeeting = MeetingSignal.isMeetingThread(old.chatId)
         // Meeting previews are last user text: mine the human card lines;
         // nothing human → keep the row. Image-only keeps its sender line.
         let preview: String
         if isMeeting, !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            guard let human = SidebarIngest.humanLines(message.text) else { return list }
+            guard let human = SidebarIngest.humanLines(message.text) else { return nil }
             preview = human
         } else {
             preview = message.text
@@ -246,21 +314,7 @@ public final class ChatListViewModel: ObservableObject, ChatSelection {
             last_message_time: message.time,
             last_message_sender: sender,
             last_message_preview: preview)
-        if outcome == .refresh {
-            var out = list
-            out[i] = updated
-            return out
-        }
-        var out = list
-        out.remove(at: i)
-        out.insert(updated, at: 0)
-        return out
-    }
-
-    /// Pure batch fold: sequential ingest, order resolved once by the final
-    /// fold (the last user-active chat ends on top).
-    public nonisolated static func ingested(_ messages: [RealtimeMessage], into list: [ChatItem]) -> [ChatItem] {
-        messages.reduce(list) { Self.ingested($1, into: $0) }
+        return (updated, outcome)
     }
 
     static func message(for error: Error) -> String {
