@@ -90,4 +90,11 @@ public enum DiagnosticsFormat {
         guard let source, !source.isEmpty else { return "off" }
         return "\(source) · \(frames) frames · \(sent) sent"
     }
+
+    /// Image-preload counters (om-imgpreload): completed prefills,
+    /// window targets already cached, cancelled far fetches, fills in
+    /// flight. Diagnostics window only — chats never show counts.
+    public static func preloadLine(prefetched: Int, hits: Int, cancelled: Int, inFlight: Int) -> String {
+        "\(prefetched) prefetched · \(hits) hits · \(cancelled) cancelled · \(inFlight) in flight"
+    }
 }

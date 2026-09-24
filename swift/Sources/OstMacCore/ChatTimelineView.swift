@@ -26,6 +26,9 @@ struct ChatTimelineView: View {
     /// Preview-row tap (om-linkpreview passthrough).
     var onOpenLink: (URL) -> Void = { LinkPreviewOpen.default($0) }
     @StateObject private var scroll = ChatScrollModel()
+    /// Look-ahead image prefetch (om-imgpreload): shared across chats
+    /// (cache keys are URL+message, so fills dedupe naturally).
+    @ObservedObject private var preload = ImagePreloadStore.shared
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -83,8 +86,14 @@ struct ChatTimelineView: View {
                                     onOpenLink: onOpenLink
                                 )
                                 .id(msg.id)
-                                .onAppear { scroll.visibleIDs.insert(msg.id) }
-                                .onDisappear { scroll.visibleIDs.remove(msg.id) }
+                                .onAppear {
+                                    scroll.visibleIDs.insert(msg.id)
+                                    noteVisible()
+                                }
+                                .onDisappear {
+                                    scroll.visibleIDs.remove(msg.id)
+                                    noteVisible()
+                                }
                             }
                         }
                         // Bottom sentinel: on screen ⇔ viewport hugs the
@@ -122,6 +131,7 @@ struct ChatTimelineView: View {
                     } else {
                         settleToBottom(proxy)
                     }
+                    noteVisible()
                     // Shot hook: --show-picker pops the more-picker
                     // on the first reacted bubble (or the first
                     // bubble). Messages arrive after open, so the id
@@ -238,6 +248,13 @@ struct ChatTimelineView: View {
         store.loadMore()
     }
 
+    /// Visibility changed (appear / disappear / history / new mail):
+    /// reschedule the image-prefetch window (om-imgpreload) so bytes
+    /// land before their bubbles scroll into view.
+    private func noteVisible() {
+        preload.update(messages: store.messages, visibleIDs: scroll.visibleIDs)
+    }
+
     /// Tail advance → follow or pill; stable tail + moved count →
     /// prepended history (or same-tail refresh) → hold first-visible.
     /// (A prepend landing in the SAME update as an append takes the
@@ -259,6 +276,7 @@ struct ChatTimelineView: View {
                 DispatchQueue.main.async { proxy.scrollTo(anchor, anchor: .top) }
             }
         }
+        noteVisible()
     }
 
     /// History just landed: restart the settle landing (guarded by

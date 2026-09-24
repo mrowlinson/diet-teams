@@ -80,6 +80,9 @@ struct DiagnosticsView: View {
             Section("Screen share") {
                 ShareDiagRow(store: state.screenShare)
             }
+            Section("Image preload") {
+                PreloadDiagRow(store: ImagePreloadStore.shared)
+            }
             Section("Call") {
                 callRow
                 LabeledContent(
@@ -212,6 +215,21 @@ struct ShareDiagRow: View {
                 source: store.phase.isLive ? store.sourceLabel : nil,
                 frames: store.framesCaptured,
                 sent: store.framesSent))
+            .textSelection(.enabled)
+    }
+}
+
+/// Prefetch counters row (om-imgpreload): observes the shared store
+/// so the counts tick as the reader scrolls.
+struct PreloadDiagRow: View {
+    @ObservedObject var store: ImagePreloadStore
+
+    var body: some View {
+        LabeledContent(
+            "Images",
+            value: DiagnosticsFormat.preloadLine(
+                prefetched: store.stats.prefetched, hits: store.stats.hits,
+                cancelled: store.stats.cancelled, inFlight: store.stats.inFlight))
             .textSelection(.enabled)
     }
 }
