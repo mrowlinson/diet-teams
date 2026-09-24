@@ -268,6 +268,22 @@ public enum RustCore {
         return (data, resp.content_type)
     }
 
+    /// OneDrive file search, one $top window (blocking FFI + network:
+    /// call off the main thread). Rows reuse the Shared tab shape.
+    public static func fileSearch(query: String, limit: Int32 = 25) throws -> FileSearchResponse {
+        try query.withCString { ptr in
+            try call(ostmac_file_search(ptr, limit), as: FileSearchResponse.self)
+        }
+    }
+
+    /// Directory people search, one $top window (blocking FFI + network:
+    /// call off the main thread). Rows reuse the roster shape.
+    public static func peopleSearch(query: String, limit: Int32 = 25) throws -> PeopleSearchResponse {
+        try query.withCString { ptr in
+            try call(ostmac_people_search(ptr, limit), as: PeopleSearchResponse.self)
+        }
+    }
+
     public static func sharedFiles(chatID: String, limit: Int32 = 20, includeFolders: Bool = false) throws -> SharedFilesResponse {
         try chatID.withCString { ptr in
             if includeFolders {

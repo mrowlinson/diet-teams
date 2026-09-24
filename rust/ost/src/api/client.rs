@@ -99,6 +99,27 @@ impl TeamsClient {
         check_response(resp, &url).await
     }
 
+    /// GET request with `ConsistencyLevel: eventual` (Graph `$search` /
+    /// `$count` queries 400 without it). Otherwise identical to
+    /// [`graph_get`](Self::graph_get). OstMac (om-jb-filesearch): people
+    /// search.
+    pub async fn graph_get_consistent(&self, path: &str) -> Result<reqwest::Response> {
+        let token = self.graph_token()?;
+        let url = format!("{}{}", GRAPH_BASE, path);
+        tracing::debug!("Graph GET {}", url);
+
+        let resp = self
+            .http
+            .get(&url)
+            .bearer_auth(&token)
+            .header("ConsistencyLevel", "eventual")
+            .send()
+            .await
+            .with_context(|| format!("Graph GET {} failed", url))?;
+
+        check_response(resp, &url).await
+    }
+
     /// POST request to Microsoft Graph API (bearer auth with Graph token).
     /// GET an absolute Graph URL with the Graph bearer token (async
     /// `Content-Location` operation polls hand back absolute URLs).

@@ -1428,6 +1428,63 @@ pub fn files_children_json(drive_id: &str, item_id: &str, limit: usize) -> Strin
     }
 }
 
+/// Search the signed-in user's OneDrive by name/content (om-jb-filesearch).
+/// One `$top` window (limit clamped 1..=25); rows reuse the Shared tab
+/// projection. Empty queries are rejected before any network.
+/// Returns `{ok:true, query, files:[...]}`.
+pub fn file_search_json(query: &str, limit: usize) -> String {
+    if query.trim().is_empty() {
+        return err_json("arg", "empty query");
+    }
+    let limit = ost::api::clamp_limit(limit);
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let files = ost::api::search_files_data(&client, query, limit)
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let items: Vec<_> = files.iter().map(shared_file_to_json).collect();
+            Ok(json!({"ok": true, "query": query, "files": items}).to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("file_search", e),
+    }
+}
+
+/// Search the directory for people by display name (om-jb-filesearch).
+/// One `$top` window (limit clamped 1..=25); rows reuse the roster
+/// projection with empty roles (directory hits carry no team role).
+/// Empty queries are rejected before any network.
+/// Returns `{ok:true, query, people:[...]}`.
+pub fn people_search_json(query: &str, limit: usize) -> String {
+    if query.trim().is_empty() {
+        return err_json("arg", "empty query");
+    }
+    let limit = ost::api::clamp_limit(limit);
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let people = ost::api::search_people_data(&client, query, limit)
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let items: Vec<_> = people.iter().map(team_member_to_json).collect();
+            Ok(json!({"ok": true, "query": query, "people": items}).to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("people_search", e),
+    }
+}
+
 /// Upload a local file to a chat/channel and post it as a `reference`
 /// attachment. Files <=4 MB use one simple PUT; larger files use a
 /// resumable upload session (ost routes on size). Per-fragment progress
@@ -3012,6 +3069,34 @@ pub extern "C" fn ostmac_files_children(
         Err(e) => return string_to_c(err_json("arg", e)),
     };
     string_to_c(files_children_json(&drive, &item, lim))
+}
+
+/// OneDrive file search, one `$top` window. See [`file_search_json`].
+/// Non-positive `limit` means 25.
+#[no_mangle]
+pub extern "C" fn ostmac_file_search(
+    query: *const c_char,
+    limit: c_int,
+) -> *mut c_char {
+    let lim = if limit <= 0 { 25 } else { limit as usize };
+    match cstr_to_string(query) {
+        Ok(q) => string_to_c(file_search_json(&q, lim)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
+/// Directory people search, one `$top` window. See [`people_search_json`].
+/// Non-positive `limit` means 25.
+#[no_mangle]
+pub extern "C" fn ostmac_people_search(
+    query: *const c_char,
+    limit: c_int,
+) -> *mut c_char {
+    let lim = if limit <= 0 { 25 } else { limit as usize };
+    match cstr_to_string(query) {
+        Ok(q) => string_to_c(people_search_json(&q, lim)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
 }
 
 /// Upload a local file to a chat/channel. See [`files_upload_json`].
@@ -5217,6 +5302,21 @@ mod tests {
     }
 
     #[test]
+    fn find_search_rejects_empty_query_without_network() {
+        // om-jb-filesearch: blank queries never reach Graph.
+        for bad in ["", "   "] {
+            let v: serde_json::Value =
+                serde_json::from_str(&file_search_json(bad, 25)).unwrap();
+            assert_eq!(v["ok"], false, "query={:?}", bad);
+            assert_eq!(v["error"], "arg");
+            let v: serde_json::Value =
+                serde_json::from_str(&people_search_json(bad, 25)).unwrap();
+            assert_eq!(v["ok"], false, "query={:?}", bad);
+            assert_eq!(v["error"], "arg");
+        }
+    }
+
+    #[test]
     fn search_hit_json_shape() {
         // om-ja-search: channel-hit projection (chat_id = channel).
         let h = ost::api::SearchHitInfo {
@@ -5235,6 +5335,44 @@ mod tests {
         assert_eq!(v["team_id"], "t1");
         assert_eq!(v["sender"], "Tom");
         assert!(v["subject"].is_null());
+    }
+
+    #[test]
+    fn find_search_null_query_is_arg_error() {
+        // om-jb-filesearch: null pointers reject (no network).
+        unsafe {
+            for p in [
+                ostmac_file_search(std::ptr::null(), 25),
+                ostmac_people_search(std::ptr::null(), 0),
+            ] {
+                assert!(!p.is_null());
+                let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+                ostmac_free(p);
+                let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+                assert_eq!(v["ok"], false);
+                assert_eq!(v["error"], "arg");
+            }
+        }
+    }
+
+    #[test]
+    fn find_people_row_reuses_roster_projection() {
+        // om-jb-filesearch: directory hit -> TeamMember row, roles empty.
+        let m = ost::api::TeamMemberInfo {
+            id: "u1".to_string(),
+            display_name: "Ava Lindqvist".to_string(),
+            user_id: Some("u1".to_string()),
+            email: Some("ava@x".to_string()),
+            roles: Vec::new(),
+            is_owner: false,
+        };
+        let v = team_member_to_json(&m);
+        assert_eq!(v["id"], "u1");
+        assert_eq!(v["display_name"], "Ava Lindqvist");
+        assert_eq!(v["user_id"], "u1");
+        assert_eq!(v["email"], "ava@x");
+        assert!(v["roles"].as_array().unwrap().is_empty());
+        assert_eq!(v["is_owner"], false);
     }
 
     #[test]
