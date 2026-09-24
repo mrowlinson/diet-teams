@@ -2,12 +2,11 @@
 //
 // Ordered pin list (oldest pin first) persisted to UserDefaults as a
 // string array (suite-injectable for tests — QuietHoursStore
-// precedent). The sidebar renders the pinned section between the two
-// synthetic rows and recency via `PinnedChats.sorted(_:pins:)`; the
-// store itself holds ids only, so pins for chats outside the current
-// fetch window survive (never pruned — a later fetch restores the
-// row). Synthetic rows refuse pins (already pinned by construction);
-// pinning never touches unread/counts and never refetches the list.
+// precedent). The sidebar renders the pinned section above recency
+// via `PinnedChats.sorted(_:pins:)`; the store itself holds ids only,
+// so pins for chats outside the current fetch window survive (never
+// pruned — a later fetch restores the row). Pinning never touches
+// unread/counts and never refetches the list.
 //
 //   let pins = UserPinStore()
 //   pins.pin(chat.id) // context menu Pin
@@ -22,8 +21,8 @@ public final class UserPinStore: ObservableObject {
     /// UserDefaults key for the ordered id array.
     public static let defaultsKey = "omUserPinsV1"
 
-    /// Pinned ids, oldest pin first. Sanitized on load (blanks,
-    /// synthetics, and dupes dropped, first occurrence kept).
+    /// Pinned ids, oldest pin first. Sanitized on load (blanks and
+    /// dupes dropped, first occurrence kept).
     @Published public private(set) var orderedIDs: [String] = []
 
     private let defaults: UserDefaults
@@ -59,10 +58,10 @@ public final class UserPinStore: ObservableObject {
     }
 
     /// Pin a chat (appends — the newest pin renders last in the
-    /// pinned section). Synthetic/blank ids are no-ops; re-pinning
-    /// keeps the original pin time (no reorder, no write). Ids
-    /// outside the current list still pin (they render when a later
-    /// fetch brings the row).
+    /// pinned section). Blank ids are no-ops; re-pinning keeps the
+    /// original pin time (no reorder, no write). Ids outside the
+    /// current list still pin (they render when a later fetch brings
+    /// the row).
     public func pin(_ id: String) {
         guard PinnedChats.isPinnable(id) else { return }
         guard !orderedIDs.contains(id) else { return }

@@ -149,8 +149,8 @@ public struct ChatListSidebar: View {
 
     private var loadedList: some View {
         // Hidden filter first, text second, mentions third: all preserve
-        // order (filtering never re-sorts — pin-top owns the comparator
-        // via displayChats). Client-side only — never refetches the list.
+        // order (filtering never re-sorts — displayChats owns the order).
+        // Client-side only — never refetches the list.
         var visible = ChatListFormat.filterHidden(
             model.displayChats, hiddenIDs: rules.config.hiddenChatIDs,
             showHidden: showHidden)
@@ -196,45 +196,42 @@ public struct ChatListSidebar: View {
                         .tag(chat.id)
                         .unreadBadge(unread.count(for: chat.id))
                         // Wave G row menu: one native menu, top-level
-                        // items only (never a submenu). Real threads only —
-                        // synthetic pinned rows are app UI, not threads.
-                        // Badge updates in place, list never refetches.
+                        // items only (never a submenu). Badge updates
+                        // in place, list never refetches.
                         .contextMenu {
-                            if !PinnedChats.isSynthetic(chat.id) {
-                                if model.isPinned(chat.id) {
-                                    Button("Unpin", systemImage: "pin.slash") {
-                                        model.unpin(chat.id)
-                                    }
-                                } else {
-                                    Button("Pin", systemImage: "pin") {
-                                        model.pin(chat.id)
-                                    }
+                            if model.isPinned(chat.id) {
+                                Button("Unpin", systemImage: "pin.slash") {
+                                    model.unpin(chat.id)
                                 }
-                                if unread.count(for: chat.id) > 0 {
-                                    Button("Mark as Read") {
-                                        unread.markRead(chatID: chat.id)
-                                    }
-                                } else {
-                                    Button("Mark as Unread") {
-                                        unread.markUnread(chatID: chat.id)
-                                    }
+                            } else {
+                                Button("Pin", systemImage: "pin") {
+                                    model.pin(chat.id)
                                 }
-                                // Mute absolute (no banners, no unread,
-                                // mentions incl); hide drops row until Show
-                                // hidden restores it.
-                                Button(rules.isMuted(chatID: chat.id) ? "Unmute" : "Mute") {
-                                    rules.setMuted(chatID: chat.id, muted: !rules.isMuted(chatID: chat.id))
+                            }
+                            if unread.count(for: chat.id) > 0 {
+                                Button("Mark as Read") {
+                                    unread.markRead(chatID: chat.id)
                                 }
-                                Button(rules.isHidden(chatID: chat.id) ? "Unhide" : "Hide") {
-                                    rules.setHidden(chatID: chat.id, hidden: !rules.isHidden(chatID: chat.id))
+                            } else {
+                                Button("Mark as Unread") {
+                                    unread.markUnread(chatID: chat.id)
                                 }
-                                // Leave/block arm the confirm alerts below.
-                                if chat.is_group {
-                                    Button("Leave Chat…") { pendingLeave = chat }
-                                        .disabled(model.leavingIDs.contains(chat.id))
-                                } else {
-                                    Button("Block User…") { pendingBlock = chat }
-                                }
+                            }
+                            // Mute absolute (no banners, no unread,
+                            // mentions incl); hide drops row until Show
+                            // hidden restores it.
+                            Button(rules.isMuted(chatID: chat.id) ? "Unmute" : "Mute") {
+                                rules.setMuted(chatID: chat.id, muted: !rules.isMuted(chatID: chat.id))
+                            }
+                            Button(rules.isHidden(chatID: chat.id) ? "Unhide" : "Hide") {
+                                rules.setHidden(chatID: chat.id, hidden: !rules.isHidden(chatID: chat.id))
+                            }
+                            // Leave/block arm the confirm alerts below.
+                            if chat.is_group {
+                                Button("Leave Chat…") { pendingLeave = chat }
+                                    .disabled(model.leavingIDs.contains(chat.id))
+                            } else {
+                                Button("Block User…") { pendingBlock = chat }
                             }
                         }
                     }
@@ -314,8 +311,8 @@ public struct ChatListSidebar: View {
 }
 
 /// Row right-click menu (om-leave-block): one top-level item — group
-/// chats offer Leave, 1:1 chats offer Block. Synthetic rows (Mentions,
-/// Notifications) get no menu. In-flight leaves disable their item.
+/// chats offer Leave, 1:1 chats offer Block. In-flight leaves disable
+/// their item.
 struct ChatRow: View {
     let chat: ChatItem
     /// User-pinned rows show a pin glyph by the timestamp.
