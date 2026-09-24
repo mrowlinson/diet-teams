@@ -69,7 +69,7 @@ struct ReactionPickerView: View {
                         ForEach(current, id: \.emoji) { e in
                             Button { onPick(e.emoji) } label: {
                                 Text(e.emoji)
-                                    .font(.system(size: 22))
+                                    .font(.system(size: DietSize.emojiMD))
                                     .frame(width: 34, height: 34)
                             }
                             .buttonStyle(.plain)
@@ -80,7 +80,8 @@ struct ReactionPickerView: View {
             }
         }
         .padding(DietSpace.sm)
-        .frame(width: 322, height: 330)
+        // Minimums, not fixed: the popover grows with larger text.
+        .frame(minWidth: 322, minHeight: 330)
         .background(DietColor.windowColor)
     }
 

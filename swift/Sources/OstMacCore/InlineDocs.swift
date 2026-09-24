@@ -13,6 +13,7 @@
 //   let docs = InlineDocs.docs(for: message, files: sharedFiles)
 //   InlineDocRows(docs: docs, onOpen: { shared.open($0.file) })
 import AppKit
+import DietDesign
 import Foundation
 import SwiftUI
 
@@ -218,9 +219,9 @@ struct InlineDocRow: View {
                     .help("Open in SharePoint (browser)")
             }
         }
-        .padding(8)
-        .background(Color.gray.opacity(0.12))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .padding(DietSpace.sm)
+        .background(DietColor.dividerColor)
+        .clipShape(RoundedRectangle(cornerRadius: DietRadius.control))
         .accessibilityLabel("\(doc.name), \(doc.sizeLabel)")
     }
 }

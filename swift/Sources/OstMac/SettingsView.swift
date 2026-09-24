@@ -68,7 +68,7 @@ struct SettingsView: View {
                 }
                 if fixedAccount == nil {
                     Section("Sign in") {
-                        AuthView(model: auth)
+                        AuthView(model: auth, embedded: true)
                     }
                 }
                 Section("Notifications") {

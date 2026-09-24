@@ -114,13 +114,14 @@ public struct MentionPickerView: View {
                 }
             }
         }
-        .frame(width: 280, height: 300)
+        // Minimums, not fixed: the popover grows with larger text.
+        .frame(minWidth: 280, minHeight: 300)
     }
 
     private func emptyState(systemImage: String, title: String, message: String) -> some View {
         VStack(spacing: DietSpace.xs) {
             Image(systemName: systemImage)
-                .font(.largeTitle)
+                .font(.system(size: DietSize.stateIcon))
                 .foregroundStyle(DietColor.textSecondaryColor)
             Text(title)
                 .font(DietType.headline)

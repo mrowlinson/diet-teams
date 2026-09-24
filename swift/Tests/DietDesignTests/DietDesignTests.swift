@@ -27,7 +27,8 @@ final class DietSpaceTests: XCTestCase {
     func testSizesPositive() {
         for value in [
             DietSize.iconSM, DietSize.iconMD, DietSize.iconLG,
-            DietSize.iconXL, DietSize.avatarSM, DietSize.avatarMD,
+            DietSize.iconXL, DietSize.emojiMD, DietSize.stateIcon,
+            DietSize.avatarSM, DietSize.avatarMD,
             DietSize.avatarLG, DietSize.presenceDot,
             DietSize.controlHeight, DietSize.sidebarRow,
         ] {

@@ -36,7 +36,8 @@ public struct TenorPickerView: View {
                 grid
             }
         }
-        .frame(width: 380, height: 320)
+        // Minimums, not fixed: the popover grows with larger text.
+        .frame(minWidth: 380, minHeight: 320)
         .task {
             guard !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
             await loadTrending()

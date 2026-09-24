@@ -5,10 +5,11 @@
 import Foundation
 import OstMacCore
 
-/// One jump destination: a chat, a channel, or a team.
+/// One jump destination: a chat, a 1:1 chat, a channel, or a team.
 public struct JumpTarget: Identifiable, Hashable, Sendable {
     public enum Kind: Sendable {
         case chat
+        case oneToOne
         case channel
         case team
     }
@@ -55,7 +56,7 @@ public enum JumpTargets {
             out.append(JumpTarget(
                 id: c.id, openID: c.id, openName: c.name,
                 title: c.name, subtitle: c.is_group ? "Group chat" : "Chat",
-                kind: .chat))
+                kind: c.is_group ? .chat : .oneToOne))
         }
         for t in teams {
             for ch in t.channels {

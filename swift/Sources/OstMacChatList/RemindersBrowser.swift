@@ -122,6 +122,7 @@ public struct RemindersBrowser: View {
                 .font(DietType.caption1)
                 .foregroundStyle(DietColor.textSecondaryColor)
                 .toggleStyle(.checkbox)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, DietSpace.sm)
                 .padding(.bottom, DietSpace.sm)
         }

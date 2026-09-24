@@ -24,7 +24,7 @@ public struct DietEmptyState: View {
     public var body: some View {
         VStack(spacing: DietSpace.sm) {
             Image(systemName: systemImage)
-                .font(.system(size: DietSize.iconXL + DietSpace.md))
+                .font(.system(size: DietSize.stateIcon))
                 .foregroundStyle(DietColor.textTertiaryColor)
                 .padding(.bottom, DietSpace.xs)
             Text(title)

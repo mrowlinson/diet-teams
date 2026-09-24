@@ -9,6 +9,7 @@
 // sheet cannot dismiss on click-outside) with Done + Esc +
 // click-outside dismiss; every close resets the summary state.
 import AppKit
+import DietDesign
 import SwiftUI
 
 // MARK: - Sheet dismissal routing
@@ -177,9 +178,9 @@ public struct CatchUpInstallPrompt: View {
                     .font(.caption)
             }
         }
-        .padding(8)
-        .background(.secondary.opacity(0.12))
-        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .padding(DietSpace.sm)
+        .background(DietColor.dividerColor)
+        .clipShape(RoundedRectangle(cornerRadius: DietRadius.control))
     }
 }
 

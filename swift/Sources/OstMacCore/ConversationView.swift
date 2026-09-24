@@ -352,6 +352,8 @@ public struct ConversationView: View {
             Text("\(store.messages.count)")
                 .font(DietType.captionMono)
                 .foregroundStyle(DietColor.textTertiaryColor)
+                .help("\(store.messages.count) messages loaded")
+                .accessibilityLabel("\(store.messages.count) messages")
         }
     }
 
@@ -694,6 +696,10 @@ struct MessageBubble: View {
     var body: some View {
         HStack(spacing: DietSpace.xs) {
             if message.isOwn { Spacer(minLength: DietSpace.xxl) }
+            // Failed marker rides OUTSIDE the bubble (DietBubble parity;
+            // retry lives in the right-click menu, same as DietBubble's
+            // context menu) — never an in-bubble row.
+            if failed { DietBubbleFailedIcon() }
             // Tapback badges overlap the bubble's top outer corner
             // (iMessage-style); later rows paint above, so the badge
             // straddling upward stays visible.
@@ -784,21 +790,6 @@ struct MessageBubble: View {
                             .foregroundStyle(DietColor.textTertiaryColor)
                             .accessibilityLabel("Unsupported post format")
                     }
-                    if failed {
-                        HStack(spacing: DietSpace.xs) {
-                            Image(systemName: "exclamationmark.circle.fill")
-                                .font(.system(size: DietSize.iconMD))
-                                .foregroundStyle(Color(nsColor: DietColor.danger))
-                                .accessibilityLabel("Send failed")
-                            Text("Not delivered")
-                                .font(DietType.caption1)
-                                .foregroundStyle(Color(nsColor: DietColor.danger))
-                            Button("Retry", action: onRetry)
-                                .font(DietType.caption1)
-                                .buttonStyle(.link)
-                                .tint(Color(nsColor: DietColor.danger))
-                        }
-                    }
                     if message.isOwn, isRead, !failed {
                         HStack(spacing: DietSpace.xxs) {
                             Image(systemName: "checkmark")
@@ -877,9 +868,9 @@ struct MessageBubble: View {
         if let parent = quoted {
             Button { onQuoteJump(parent.id) } label: {
                 HStack(spacing: DietSpace.xs) {
-                    RoundedRectangle(cornerRadius: 2)
+                    RoundedRectangle(cornerRadius: DietSpace.xxs)
                         .fill(Color.accentColor)
-                        .frame(width: 3)
+                        .frame(width: DietSpace.xs)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(parent.sender)
                             .font(DietType.caption1).bold()

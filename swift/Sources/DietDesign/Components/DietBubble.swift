@@ -6,6 +6,20 @@ public enum DietBubbleDirection {
     case incoming, outgoing
 }
 
+/// Failed-send marker: red icon OUTSIDE the bubble, retry via the
+/// bubble's context menu. Shared by DietBubble (Showcase, Meeting)
+/// and the timeline MessageBubble — one failed language everywhere.
+public struct DietBubbleFailedIcon: View {
+    public init() {}
+
+    public var body: some View {
+        Image(systemName: "exclamationmark.circle.fill")
+            .font(.system(size: DietSize.iconMD))
+            .foregroundStyle(Color(nsColor: DietColor.danger))
+            .accessibilityLabel("Send failed")
+    }
+}
+
 public struct DietBubble: View {
     private let text: String
     private let direction: DietBubbleDirection
@@ -27,12 +41,7 @@ public struct DietBubble: View {
     public var body: some View {
         HStack(spacing: DietSpace.xs) {
             if direction == .outgoing { Spacer(minLength: DietSpace.xl) }
-            if failed {
-                Image(systemName: "exclamationmark.circle.fill")
-                    .font(.system(size: DietSize.iconMD))
-                    .foregroundStyle(Color(nsColor: DietColor.danger))
-                    .accessibilityLabel("Send failed")
-            }
+            if failed { DietBubbleFailedIcon() }
             Text(text)
                 .font(DietType.body)
                 .foregroundStyle(DietColor.textPrimaryColor)

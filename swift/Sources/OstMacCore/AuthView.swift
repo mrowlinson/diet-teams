@@ -11,9 +11,13 @@ import SwiftUI
 
 public struct AuthView: View {
     @ObservedObject public var model: AuthViewModel
+    /// Embedded in a host card (Settings): drops the standalone
+    /// minHeight so the card hugs the content instead of ballooning.
+    private let embedded: Bool
 
-    public init(model: AuthViewModel) {
+    public init(model: AuthViewModel, embedded: Bool = false) {
         self.model = model
+        self.embedded = embedded
     }
 
     public var body: some View {
@@ -55,7 +59,7 @@ public struct AuthView: View {
             }
         }
         .padding(DietSpace.lg)
-        .frame(minWidth: 360, minHeight: 420)
+        .frame(minWidth: 360, minHeight: embedded ? nil : 420)
         // No fill: the host (Auth window, gate, Settings card) owns bg.
     }
 
@@ -111,8 +115,16 @@ public struct AuthView: View {
                 .foregroundStyle(DietColor.textSecondaryColor)
                 .textSelection(.enabled)
             HStack(spacing: DietSpace.sm) {
-                Button(model.copied ? "Copied ✓" : "Copy code") { model.copyCode() }
-                    .buttonStyle(.dietSecondary)
+                Button {
+                    model.copyCode()
+                } label: {
+                    if model.copied {
+                        Label("Copied", systemImage: "checkmark")
+                    } else {
+                        Text("Copy code")
+                    }
+                }
+                .buttonStyle(.dietSecondary)
                 Button("Open browser") { model.openBrowser() }
                     .buttonStyle(.dietPrimary)
             }

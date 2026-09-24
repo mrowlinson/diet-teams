@@ -58,18 +58,14 @@ public struct NotesView: View {
             .pickerStyle(.menu)
             .frame(maxWidth: 200)
             Spacer()
+            // No DEMO badge here: the conversation header already shows it
+            // (this tab doubled it — the only tab that did).
             if store.groupID != nil {
                 Text("team notes")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 6).padding(.vertical, 2)
                     .background(Color.blue.opacity(0.12))
-                    .clipShape(Capsule())
-            } else if store.isDemo {
-                Text("DEMO")
-                    .font(.caption2).bold()
-                    .padding(.horizontal, 6).padding(.vertical, 2)
-                    .background(.orange.opacity(0.2))
                     .clipShape(Capsule())
             }
         }

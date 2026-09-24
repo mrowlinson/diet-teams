@@ -38,6 +38,10 @@ public enum DietSize {
     public static let iconMD: CGFloat = 16
     public static let iconLG: CGFloat = 20
     public static let iconXL: CGFloat = 28
+    /// Reaction-picker emoji glyph (fills the 34pt cell).
+    public static let emojiMD: CGFloat = 22
+    /// Empty-state glyph (DietEmptyState + popover empty states).
+    public static let stateIcon: CGFloat = 44
     public static let avatarSM: CGFloat = 24
     public static let avatarMD: CGFloat = 32
     public static let avatarLG: CGFloat = 48

@@ -10,6 +10,7 @@
 //   let health = HealthStore() // live core fetchers
 //   await health.run()         // fills `report` (Settings diagnostics)
 // Tests inject mock fetchers (same seam as PresenceStore).
+import DietDesign
 import Foundation
 import SwiftUI
 
@@ -238,50 +239,62 @@ public struct HealthView: View {
         case nil: store.running ? "Checking…" : "Unknown"
         }
         let color: Color = switch overall {
-        case .ok: .green
-        case .degraded: .orange
-        case .broken: .red
-        case nil: .gray
+        case .ok: Color(nsColor: DietColor.success)
+        case .degraded: Color(nsColor: DietColor.warning)
+        case .broken: Color(nsColor: DietColor.danger)
+        case nil: DietColor.textTertiaryColor
         }
-        return HStack(spacing: 4) {
-            Circle().fill(color).frame(width: 8, height: 8)
-            Text(label).font(.headline)
+        return HStack(spacing: DietSpace.xs) {
+            Circle().fill(color).frame(
+                width: DietSize.presenceDot, height: DietSize.presenceDot)
+            Text(label).font(DietType.headline)
         }
     }
 
     private func tokenSection(_ tokens: [HealthToken]) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text("Tokens").font(.caption).bold()
+        VStack(alignment: .leading, spacing: DietSpace.xxs) {
+            Text("Tokens").font(DietType.caption1).bold()
             ForEach(tokens, id: \.audience) { t in
                 HStack {
-                    Circle().fill(tokenColor(t)).frame(width: 6, height: 6)
-                    Text(t.audience).font(.caption).monospaced()
+                    Circle().fill(tokenColor(t)).frame(
+                        width: DietSize.presenceDot,
+                        height: DietSize.presenceDot)
+                    Text(t.audience).font(DietType.caption1).monospaced()
                     Spacer()
-                    Text(t.state).font(.caption).foregroundStyle(.secondary)
+                    Text(t.state).font(DietType.caption1)
+                        .foregroundStyle(DietColor.textSecondaryColor)
                 }
             }
         }
     }
 
     private func tokenColor(_ t: HealthToken) -> Color {
-        !t.present ? .gray : t.expired ? .red : .green
+        !t.present
+            ? DietColor.textTertiaryColor
+            : t.expired
+                ? Color(nsColor: DietColor.danger)
+                : Color(nsColor: DietColor.success)
     }
 
     private func probeSection(_ probes: [HealthProbe]) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Probes").font(.caption).bold()
+        VStack(alignment: .leading, spacing: DietSpace.xs) {
+            Text("Probes").font(DietType.caption1).bold()
             ForEach(probes, id: \.name) { p in
                 VStack(alignment: .leading, spacing: 0) {
                     HStack {
                         Image(systemName: p.ok ? "checkmark.circle" : "xmark.circle")
-                            .foregroundStyle(p.ok ? .green : .red)
-                        Text(p.name).font(.caption).monospaced()
+                            .foregroundStyle(p.ok
+                                ? Color(nsColor: DietColor.success)
+                                : Color(nsColor: DietColor.danger))
+                        Text(p.name).font(DietType.caption1).monospaced()
                         Spacer()
                         Text("\(p.durationMs)ms")
-                            .font(.caption).monospaced().foregroundStyle(.secondary)
+                            .font(DietType.captionMono)
+                            .foregroundStyle(DietColor.textSecondaryColor)
                     }
                     Text(p.detail)
-                        .font(.caption2).foregroundStyle(.secondary)
+                        .font(DietType.caption2)
+                        .foregroundStyle(DietColor.textSecondaryColor)
                         .lineLimit(2)
                         .textSelection(.enabled)
                 }
