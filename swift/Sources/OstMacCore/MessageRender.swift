@@ -805,6 +805,8 @@ public enum MessageRender {
     /// instead — a thread never shows a blank bubble for server data.
     /// Truly empty synthetic bubbles (no content, no raw) stay blank.
     public static func showsPlaceholder(for message: ChatMessage) -> Bool {
+        // Rendered cards own the bubble: never placeholder beside them.
+        if MessageBubbleState.shouldShowCards(for: message) { return false }
         let posts = botPosts(fromRaw: message.raw ?? message.content)
         if !posts.isEmpty { return false }
         if !bubbleText(for: message).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {

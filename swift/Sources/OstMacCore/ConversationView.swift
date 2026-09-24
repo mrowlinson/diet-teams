@@ -732,7 +732,13 @@ struct MessageBubble: View {
                     ForEach(Array(photos.enumerated()), id: \.offset) { _, img in
                         RemoteImage(url: img.url, messageID: message.id, alt: img.alt)
                     }
-                    if !posts.isEmpty {
+                    let cards = MessageBubbleState.cards(for: message)
+                    if !cards.isEmpty {
+                        ForEach(Array(cards.enumerated()), id: \.offset) { _, card in
+                            AdaptiveCardView(card: card, messageID: message.id)
+                        }
+                    }
+                    if !posts.isEmpty, MessageBubbleState.shouldShowFallbackRows(for: message) {
                         BotPostRows(posts: posts)
                     }
                     if !docs.isEmpty {
