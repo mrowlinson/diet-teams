@@ -135,6 +135,40 @@ final class MentionsTests: XCTestCase {
         XCTAssertTrue(span.mentionsOwner(ownName: "Me"))
     }
 
+    func testMentionsOwnerMatchesSplitSpans() {
+        // Live wire shape: one person across two adjacent Mention spans.
+        let split = [
+            Mention(id: "0", mri: nil, displayName: "Rowlinson,"),
+            Mention(id: "1", mri: nil, displayName: "Michael"),
+        ]
+        XCTAssertTrue(Mentions.mentionsOwner(split, ownerMRI: nil, ownerDisplayName: "Michael Rowlinson"))
+        XCTAssertTrue(Mentions.mentionsOwner(split, ownerMRI: nil, ownerDisplayName: "Rowlinson, Michael"))
+        // Non-owner and non-adjacent coverage never match.
+        XCTAssertFalse(Mentions.mentionsOwner(split, ownerMRI: nil, ownerDisplayName: "Bo"))
+        let scattered = [
+            Mention(id: "0", mri: nil, displayName: "Rowlinson,"),
+            Mention(id: "1", mri: nil, displayName: "Tom Becker"),
+            Mention(id: "2", mri: nil, displayName: "Michael"),
+        ]
+        XCTAssertFalse(Mentions.mentionsOwner(scattered, ownerMRI: nil, ownerDisplayName: "Michael Rowlinson"))
+        // Single Last,First span vs First Last owner: same class, matches.
+        XCTAssertTrue(Mentions.mentionsOwner(
+            [Mention(id: "0", mri: nil, displayName: "Rowlinson, Michael")],
+            ownerMRI: nil, ownerDisplayName: "Michael Rowlinson"))
+        // End-to-end through raw mining.
+        let bubble = Self.bubble(
+            content: "Rowlinson, Michael STOP ASSIGNING ME TICKETS",
+            raw: #"<span itemtype="http://schema.skype.com/Mention" itemscope="" itemid="0">Rowlinson,</span> <span itemtype="http://schema.skype.com/Mention" itemscope="" itemid="1">Michael</span>STOP ASSIGNING ME TICKETS"#)
+        XCTAssertTrue(bubble.mentionsOwner(ownName: "Michael Rowlinson"))
+        // MRI mismatch still vetoes the join; IDs-only mode disables it.
+        let veto = [
+            Mention(id: "0", mri: "8:orgid:other", displayName: "Rowlinson,"),
+            Mention(id: "1", mri: nil, displayName: "Michael"),
+        ]
+        XCTAssertFalse(Mentions.mentionsOwner(veto, ownerMRI: "8:orgid:me", ownerDisplayName: "Michael Rowlinson"))
+        XCTAssertFalse(Mentions.mentionsOwner(split, ownerMRI: nil, ownerDisplayName: "Michael Rowlinson", matchByName: false))
+    }
+
     func testChatMessageMineNeedsRaw() {
         // Content-only @-text without raw never mines (render fallback
         // is bubble-only; matching stays on MessageInfo.raw).
