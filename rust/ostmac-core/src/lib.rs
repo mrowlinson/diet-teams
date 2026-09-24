@@ -1633,12 +1633,15 @@ pub fn trouter_poll_json() -> String {
 /// `{ok:true, messages:[{chat_id,id,sender,sender_id?,text,time,
 /// is_edit,edited_id?,message_type,reactions?,raw}], resync:bool, skipped:n,
 /// calls:[{kind,call_id,peer,peer_name,detail?}],
-/// typing:[{chat_id,sender,sender_id?,time}]}`.
+/// typing:[{chat_id,sender,sender_id?,time}],
+/// roster:[{meeting_id,id,name,speaking?,muted?,present?}]}`.
 /// `resync` is true when a `trouter.message_loss` frame was seen: the UI
 /// must re-fetch visible conversations (push had a gap). `skipped` counts
 /// non-message frames (handshake, presence…). `calls` carries incoming
 /// invitations / remote ends (also recorded in the call slot). `typing`
 /// carries typing indicators (held per thread with a timeout, never bubbles).
+/// `roster` carries meeting-roster snapshots (upserted in place by id,
+/// never a list refresh).
 /// NOTE: drains the same queue as [`trouter_poll_json`] — use one consumer.
 pub fn trouter_poll_typed_json() -> String {
     let events = ost::event_hub::drain(64);
@@ -1660,6 +1663,7 @@ pub fn trouter_poll_typed_json() -> String {
         "skipped": batch.skipped,
         "calls": call_events,
         "typing": batch.typing,
+        "roster": batch.roster,
     })
     .to_string()
 }
@@ -2902,6 +2906,33 @@ mod tests {
         assert_eq!(typing[0]["chat_id"], "19:abc@thread.v2");
         assert_eq!(typing[0]["sender"], "Doe, Jane");
         assert_eq!(typing[0]["sender_id"], "8:orgid:aaa");
+    }
+
+    #[test]
+    fn typed_poll_carries_roster_events() {
+        let _ = ost::event_hub::drain(1024);
+        ost::event_hub::publish(
+            r#"{"name":"conversation/rosterUpdate","args":[{
+                "threadid":"19:meeting_x@thread.v2",
+                "roster":{"participants":[
+                    {"mri":"8:orgid:aaa","displayName":"Doe, Jane","isMuted":false},
+                    {"mri":"8:orgid:bbb","displayName":"Smith, Bob","serverMuted":true}
+                ]},
+                "dominantSpeakerInfo":{"mri":"8:orgid:aaa"}}]}"#
+                .to_string(),
+        );
+        let v: serde_json::Value =
+            serde_json::from_str(&trouter_poll_typed_json()).unwrap();
+        assert_eq!(v["ok"], true);
+        assert_eq!(v["messages"].as_array().unwrap().len(), 0);
+        let roster = v["roster"].as_array().unwrap();
+        assert_eq!(roster.len(), 3); // 2 participants + speaker marker
+        assert_eq!(roster[0]["meeting_id"], "19:meeting_x@thread.v2");
+        assert_eq!(roster[0]["id"], "8:orgid:aaa");
+        assert_eq!(roster[0]["muted"], false);
+        assert_eq!(roster[1]["muted"], true);
+        assert_eq!(roster[2]["id"], "8:orgid:aaa");
+        assert_eq!(roster[2]["speaking"], true);
     }
 
     #[test]

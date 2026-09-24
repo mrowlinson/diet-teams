@@ -146,6 +146,7 @@ public struct TypingEvent: Decodable, Sendable, Equatable {
 /// Typed poll envelope from ostmac_trouter_poll_typed.
 /// `calls` is nil on old core builds (pre om-signal) — treat as no events.
 /// `typing` is nil on old core builds (pre om-typing) — same rule.
+/// `roster` is nil on old core builds (pre om-meet-chat) — same rule.
 public struct RealtimePoll: Decodable, Sendable {
     public let ok: Bool
     public let messages: [RealtimeMessage]
@@ -153,14 +154,16 @@ public struct RealtimePoll: Decodable, Sendable {
     public let skipped: Int
     public let calls: [CallEvent]?
     public let typing: [TypingEvent]?
+    public let roster: [MeetingRosterEvent]?
 
-    public init(ok: Bool, messages: [RealtimeMessage], resync: Bool, skipped: Int, calls: [CallEvent]? = nil, typing: [TypingEvent]? = nil) {
+    public init(ok: Bool, messages: [RealtimeMessage], resync: Bool, skipped: Int, calls: [CallEvent]? = nil, typing: [TypingEvent]? = nil, roster: [MeetingRosterEvent]? = nil) {
         self.ok = ok
         self.messages = messages
         self.resync = resync
         self.skipped = skipped
         self.calls = calls
         self.typing = typing
+        self.roster = roster
     }
 }
 
@@ -197,6 +200,7 @@ public final class RealtimeFeed: @unchecked Sendable {
     private var resyncSubs: [UUID: @Sendable () -> Void] = [:]
     private var callSubs: [UUID: @Sendable (CallEvent) -> Void] = [:]
     private var typingSubs: [UUID: @Sendable (TypingEvent) -> Void] = [:]
+    private var rosterSubs: [UUID: @Sendable (MeetingRosterEvent) -> Void] = [:]
     private var attempt = 0
     private var pollCountValue = 0
     private var lastErrorValue: String?
@@ -273,6 +277,16 @@ public final class RealtimeFeed: @unchecked Sendable {
     public func onTyping(_ h: @escaping @Sendable (TypingEvent) -> Void) -> UUID {
         let t = UUID()
         lock.lock(); typingSubs[t] = h; lock.unlock()
+        return t
+    }
+
+    /// Subscribe to meeting-roster snapshots. Every event upserts one
+    /// row in place (no dedupe — repeats are state refreshes); the
+    /// MeetingRosterStore owns the rows. Never touches the chat list.
+    @discardableResult
+    public func onRoster(_ h: @escaping @Sendable (MeetingRosterEvent) -> Void) -> UUID {
+        let t = UUID()
+        lock.lock(); rosterSubs[t] = h; lock.unlock()
         return t
     }
 
@@ -369,12 +383,15 @@ public final class RealtimeFeed: @unchecked Sendable {
         let callEvents = p.calls ?? []
         let typingHandlers = Array(typingSubs.values)
         let typingEvents = p.typing ?? []
+        let rosterHandlers = Array(rosterSubs.values)
+        let rosterEvents = p.roster ?? []
         lock.unlock()
         if notify {
             for m in fresh { for h in msgHandlers { h(m) } }
             for h in rsHandlers { h() }
             for e in callEvents { for h in callHandlers { h(e) } }
             for e in typingEvents { for h in typingHandlers { h(e) } }
+            for e in rosterEvents { for h in rosterHandlers { h(e) } }
         }
         return (fresh.count, p.resync)
     }

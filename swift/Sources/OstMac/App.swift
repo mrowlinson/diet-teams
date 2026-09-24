@@ -21,6 +21,7 @@
 // --say auto-sends once into the open chat. In live mode that is a REAL
 // send via core — never use it on shared chats for testing.
 // --show-about / --show-settings / --show-av open those windows at launch (shot hooks).
+// --show-meeting seeds the Meeting window offline + opens it (shot hook).
 // --show-diagnostics opens the Diagnostics window at launch (shot hook).
 // --av-mic-denied seeds the Call A/V panel's mic-denied hint (shot hook).
 // --show-teams opens the sidebar on the Teams browser (shot hook).
@@ -157,6 +158,10 @@ struct OstMacAppMain: App {
                 .environmentObject(state)
         }
         .defaultSize(width: 440, height: 480)
+        Window("Meeting", id: AppIdentity.meetingWindowID) {
+            MeetingPanel(roster: state.meeting, chat: state.meetingChat)
+        }
+        .defaultSize(width: 720, height: 480)
         Settings {
             SettingsView(auth: state.auth, catchUp: state.catchUp, notifs: state.notifs)
         }
@@ -181,6 +186,7 @@ private struct OstMacCommands: Commands {
         }
         CommandMenu("Call") {
             Button("Call A/V Test") { openWindow(id: AppIdentity.avWindowID) }
+            Button("Meeting Chat…") { openWindow(id: AppIdentity.meetingWindowID) }
         }
         CommandMenu("Go") {
             Button("Jump to Chat…") {
@@ -211,6 +217,8 @@ final class AppState: ObservableObject {
     let auth = AuthViewModel()
     let presence = PresenceStore()
     let call: CallStore
+    let meeting = MeetingRosterStore()
+    let meetingChat = MeetingChatStore()
     let notes = NotesStore()
     let showNotes: Bool
     let catchUp: CatchUpStore
@@ -238,6 +246,7 @@ final class AppState: ObservableObject {
     @Published var feedResyncs = 0
     @Published var feedPolls = 0
     @Published var feedTyping = 0
+    @Published var feedRoster = 0
     @Published var feedError: String?
     @Published var showJump = false
     @AppStorage("selectedChatID") private var persistedSelection: String?
@@ -441,10 +450,13 @@ final class AppState: ObservableObject {
                 Task { @MainActor [weak self] in self?.handleResync() }
             }
             feed.onCall { [weak self] ev in
-                Task { @MainActor [weak self] in self?.call.ingest(ev) }
+                Task { @MainActor [weak self] in self?.handleCall(ev) }
             }
             feed.onTyping { [weak self] ev in
                 Task { @MainActor [weak self] in self?.handleTyping(ev) }
+            }
+            feed.onRoster { [weak self] ev in
+                Task { @MainActor [weak self] in self?.handleRoster(ev) }
             }
             notifs.attach()
             await notifs.requestAuthorization()
@@ -620,6 +632,24 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// One roster snapshot: count it, upsert the row in place. Never
+    /// touches the chat list (no refresh — the roster is the only
+    /// surface); own rows are kept (self is a participant too).
+    private func handleRoster(_ ev: MeetingRosterEvent) {
+        feedRoster += 1
+        meeting.ingest(ev)
+    }
+
+    /// Call events land in the call slot; a remote end also closes the
+    /// meeting (the thread stays persisted, roster speaking clears).
+    private func handleCall(_ ev: CallEvent) {
+        call.ingest(ev)
+        if ev.kind == "end" || ev.kind == "rejected" {
+            meetingChat.endMeeting()
+            meeting.noteMeetingEnded()
+        }
+    }
+
     private func handleRealtime(_ msg: RealtimeMessage) {
         feedEvents += 1
         refreshFeedStatus()
@@ -650,6 +680,10 @@ final class AppState: ObservableObject {
             realtime: msg, ownName: conv.ownDisplayName,
             ownerMRI: resolvedOwnerMRI, openChatID: openChatID)
         maybeNotify(msg, chatName: chatName, decision: decision)
+        // om-meet-chat: meeting-thread events adopt the meeting panel
+        // (any meeting thread, not just the open chat). The panel owns
+        // its thread; the chat list is untouched by this path.
+        meetingChat.ingestIfMeeting(realtime: msg)
         guard msg.isFor(chatID: openChatID) else { return }
         conv.ingest(realtime: msg)
         // om-receipts: a peer reply implies they read through our tail;
@@ -796,6 +830,8 @@ final class AppState: ObservableObject {
             feed.stop()
             presence.clear()
             typing.clear()
+            meeting.clear()
+            meetingChat.clear()
             unread.markAllRead() // om-notifbadge: dock clears on sign-out
             mentions.markAllRead() // om-mentions: flags clear on sign-out
             receipts.clear() // om-receipts: positions clear on sign-out
@@ -892,6 +928,15 @@ struct RootView: View {
             }
             if CommandLine.arguments.contains("--show-av") {
                 openWindow(id: AppIdentity.avWindowID)
+            }
+            if CommandLine.arguments.contains("--show-meeting") {
+                state.meeting.seedDemo()
+                state.meetingChat.showDemo(
+                    threadID: MeetingDemo.threadID,
+                    chatName: MeetingDemo.threadName,
+                    messages: MeetingDemo.messages)
+                state.meetingChat.adoptIdentity(displayName: "Me")
+                openWindow(id: AppIdentity.meetingWindowID)
             }
             if CommandLine.arguments.contains("--show-diagnostics") {
                 openWindow(id: AppIdentity.diagWindowID)

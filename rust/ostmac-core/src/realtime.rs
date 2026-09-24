@@ -32,6 +32,14 @@
 //! per thread with a timeout; frames without an attributable sender are
 //! skipped (nothing to show).
 //!
+//! Roster (om-meet-chat): call-signaling `roster: {participants: [...]}` /
+//! `participants[]` frames yield `RosterEvent`s (`roster[]`), one per
+//! attributable participant, plus `dominantSpeakerInfo` / `activeSpeaker`
+//! markers (speaker id with `speaking: true`). The host upserts each id
+//! in place (never a list refresh); entries without any id are skipped.
+//! Invitation `participants` are objects (`{from,to}`), never arrays, so
+//! the call path never collides.
+//!
 //! `message_loss` behavior: the server sends `trouter.message_loss` when it
 //! dropped queued indicators (backpressure / reconnect gap / stale etag). It
 //! means "push is not a complete log — some events were never delivered".
@@ -95,11 +103,33 @@ pub struct TypingEvent {
     pub time: String,
 }
 
+/// One meeting-roster snapshot from a Trouter event (om-meet-chat).
+/// Call-signaling frames carry `roster: {participants: [...]}` updates
+/// plus `dominantSpeakerInfo` markers; the host upserts each participant
+/// in place by id (never a list refresh). `speaking`/`muted`/`present`
+/// are None when the frame said nothing about that axis (host keeps the
+/// last-known value); `name` is "" on speaker-only markers (host keeps
+/// the roster name) and "?" on unnamed roster entries (the core's
+/// missing-name marker, MeetingDedup parity).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RosterEvent {
+    pub meeting_id: String,
+    pub id: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub speaking: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub muted: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub present: Option<bool>,
+}
+
 /// Result of parsing one batch of raw events.
 #[derive(Debug, Default)]
 pub struct ParsedBatch {
     pub messages: Vec<RealtimeMessage>,
     pub typing: Vec<TypingEvent>,
+    pub roster: Vec<RosterEvent>,
     pub resync: bool,
     pub skipped: usize,
 }
@@ -145,6 +175,8 @@ fn parse_value(v: &Value, batch: &mut ParsedBatch) {
                 }
                 let edit_hint = name.contains("edit");
                 let typing_hint = name.contains("typing");
+                let roster_hint = name.contains("roster");
+                let speaker_hint = name.contains("speaker");
                 for a in args {
                     // Named typing envelope: the name may be the only
                     // marker, so try typing before the generic path.
@@ -153,6 +185,27 @@ fn parse_value(v: &Value, batch: &mut ParsedBatch) {
                             if let Some(t) = typing_from_object_hinted(m, true) {
                                 batch.typing.push(t);
                                 continue;
+                            }
+                        }
+                    }
+                    // Named roster/speaker envelope: the name may be the
+                    // only marker, so try roster before the generic path.
+                    // A bare participants array under a roster name is
+                    // treated as the roster itself.
+                    if roster_hint || speaker_hint {
+                        if let Value::Object(m) = a {
+                            let r = roster_from_object(m);
+                            if !r.is_empty() {
+                                batch.roster.extend(r);
+                                continue;
+                            }
+                        } else if roster_hint {
+                            if let Value::Array(items) = a {
+                                let r = roster_from_entries(items, "");
+                                if !r.is_empty() {
+                                    batch.roster.extend(r);
+                                    continue;
+                                }
                             }
                         }
                     }
@@ -173,6 +226,14 @@ fn parse_value(v: &Value, batch: &mut ParsedBatch) {
                 for it in list {
                     parse_value(it, batch);
                 }
+                return;
+            }
+            // Roster frames first: participant snapshots + speaker
+            // markers surface as roster[]; they carry no content, so the
+            // message path would only skip them.
+            let roster = roster_from_object(map);
+            if !roster.is_empty() {
+                batch.roster.extend(roster);
                 return;
             }
             // Typing frames first: they must surface as indicators,
@@ -301,6 +362,222 @@ fn typing_from_object_hinted(
         sender_id,
         time,
     })
+}
+
+/// Roster snapshots from one flat object: `participants[]` arrays
+/// (top level or under `roster`) plus `dominantSpeakerInfo` /
+/// `activeSpeaker` markers. Empty = not a roster frame (fall through
+/// to typing/message). Invitation `participants` are objects
+/// (`{from,to}`), never arrays, so the call path is untouched.
+fn roster_from_object(map: &serde_json::Map<String, Value>) -> Vec<RosterEvent> {
+    let meeting_id = chat_id_from(map);
+    let mut out = Vec::new();
+    if let Some(items) = participants_array(map) {
+        out.extend(roster_from_entries(items, &meeting_id));
+    }
+    if let Some(id) = dominant_speaker_id(map) {
+        out.push(RosterEvent {
+            meeting_id: meeting_id.clone(),
+            id,
+            name: dominant_speaker_name(map),
+            speaking: Some(true),
+            muted: None,
+            present: None,
+        });
+    }
+    out
+}
+
+/// The `participants[]` array of a roster frame: top level, or nested
+/// under `roster`. Non-array `participants` (invitation `{from,to}`)
+/// never match.
+fn participants_array(map: &serde_json::Map<String, Value>) -> Option<&Vec<Value>> {
+    if let Some(items) = get_ci(map, "participants").and_then(|v| v.as_array()) {
+        return Some(items);
+    }
+    get_ci(map, "roster")
+        .and_then(|r| r.as_object())
+        .and_then(|o| get_ci(o, "participants"))
+        .and_then(|v| v.as_array())
+}
+
+/// One roster event per attributable participant entry. Entries without
+/// any id are skipped (nothing to upsert, same rule as typing).
+fn roster_from_entries(items: &[Value], meeting_id: &str) -> Vec<RosterEvent> {
+    let mut out = Vec::new();
+    for e in items {
+        let Value::Object(m) = e else { continue };
+        let Some(id) = participant_id(m) else { continue };
+        let name = participant_name(m);
+        out.push(RosterEvent {
+            meeting_id: meeting_id.to_string(),
+            id,
+            name,
+            speaking: bool_ci(m, &["speaking", "isspeaking", "activespeaker", "active_speaker", "dominantspeaker"]),
+            muted: bool_ci(m, &["ismuted", "servermuted", "muted", "audiomuted", "audio_muted"]),
+            present: presence_of(m),
+        });
+    }
+    out
+}
+
+/// Stable participant identity: MRI / participant / user ids first,
+/// `from` next, then one `user`/`participant` nest. Endpoint ids are
+/// per-device (churn across rejoins), so they never qualify.
+fn participant_id(map: &serde_json::Map<String, Value>) -> Option<String> {
+    if let Some(id) = first_str(
+        map,
+        &[
+            "mri",
+            "id",
+            "participantid",
+            "participant_id",
+            "userid",
+            "user_id",
+            "objectid",
+            "from",
+        ],
+    )
+    .filter(|s| !s.trim().is_empty())
+    {
+        return Some(id);
+    }
+    for nest in ["user", "participant"] {
+        if let Some(inner) = get_ci(map, nest).and_then(|v| v.as_object()) {
+            if let Some(id) =
+                first_str(inner, &["mri", "id", "userid", "user_id", "objectid"])
+                    .filter(|s| !s.trim().is_empty())
+            {
+                return Some(id);
+            }
+        }
+    }
+    None
+}
+
+/// Display name for a roster entry: "" becomes "?" (the core's
+/// missing-name marker); nested `user` covered defensively.
+fn participant_name(map: &serde_json::Map<String, Value>) -> String {
+    if let Some(n) = first_str(
+        map,
+        &["displayname", "display_name", "name", "imdisplayname"],
+    )
+    .filter(|s| !s.trim().is_empty())
+    {
+        return n;
+    }
+    for nest in ["user", "participant"] {
+        if let Some(inner) = get_ci(map, nest).and_then(|v| v.as_object()) {
+            if let Some(n) = first_str(inner, &["displayname", "display_name", "name"])
+                .filter(|s| !s.trim().is_empty())
+            {
+                return n;
+            }
+        }
+    }
+    "?".to_string()
+}
+
+/// Present-axis from leave markers / join states. None when the entry
+/// says nothing (host keeps the last-known row).
+fn presence_of(map: &serde_json::Map<String, Value>) -> Option<bool> {
+    if bool_ci(map, &["removed", "left", "departed"]) == Some(true) {
+        return Some(false);
+    }
+    match first_str(map, &["state", "status"])
+        .unwrap_or_default()
+        .to_lowercase()
+        .as_str()
+    {
+        "joined" | "active" | "connected" | "admitted" | "present" | "inlobby"
+        | "in_lobby" => Some(true),
+        "left" | "removed" | "departed" | "disconnected" | "declined" => Some(false),
+        _ => None,
+    }
+}
+
+/// Dominant/active speaker identity: string MRI or an object carrying
+/// one. None = no speaker marker on this frame.
+fn dominant_speaker_id(map: &serde_json::Map<String, Value>) -> Option<String> {
+    for key in [
+        "dominantspeakerinfo",
+        "dominantspeaker",
+        "activespeaker",
+        "active_speaker",
+    ] {
+        let Some(v) = get_ci(map, key) else {
+            continue;
+        };
+        match v {
+            Value::String(s) if !s.trim().is_empty() => return Some(s.clone()),
+            Value::Object(m) => {
+                if let Some(id) = first_str(
+                    m,
+                    &[
+                        "mri",
+                        "id",
+                        "participantid",
+                        "participant_id",
+                        "userid",
+                        "user_id",
+                        "from",
+                    ],
+                )
+                .filter(|s| !s.trim().is_empty())
+                {
+                    return Some(id);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Display name riding a speaker marker, or "" (host keeps the roster
+/// name — speaker-only markers must never blank it).
+fn dominant_speaker_name(map: &serde_json::Map<String, Value>) -> String {
+    for key in [
+        "dominantspeakerinfo",
+        "dominantspeaker",
+        "activespeaker",
+        "active_speaker",
+    ] {
+        if let Some(m) = get_ci(map, key).and_then(|v| v.as_object()) {
+            if let Some(n) = first_str(m, &["displayname", "display_name", "name"])
+                .filter(|s| !s.trim().is_empty())
+            {
+                return n;
+            }
+        }
+    }
+    String::new()
+}
+
+/// Case-insensitive boolean lookup: JSON bools, 1/0 numbers, and
+/// true/false/1/0/yes/no strings. Unknown shapes fall through to the
+/// next key (never a wrong value).
+fn bool_ci(map: &serde_json::Map<String, Value>, keys: &[&str]) -> Option<bool> {
+    for k in keys {
+        let Some(v) = get_ci(map, k) else {
+            continue;
+        };
+        match v {
+            Value::Bool(b) => return Some(*b),
+            Value::Number(n) => {
+                if let Some(i) = n.as_i64() {
+                    return Some(i != 0);
+                }
+            }
+            Value::String(s) => match s.trim().to_lowercase().as_str() {
+                "true" | "1" | "yes" => return Some(true),
+                "false" | "0" | "no" => return Some(false),
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Build a typed message from a flat resource object. None = not a message.
@@ -701,5 +978,128 @@ mod tests {
         assert!(b.messages.is_empty());
         assert_eq!(b.typing.len(), 1);
         assert_eq!(b.typing[0].sender, "A");
+    }
+
+    #[test]
+    fn roster_participants_parse_with_mute_and_speaking() {
+        let b = batch_of(json!({
+            "threadid": "19:meeting_abc@thread.v2",
+            "roster": {
+                "sequenceNumber": 3,
+                "participants": [
+                    {"mri": "8:orgid:aaa", "displayName": "Doe, Jane",
+                     "isMuted": false, "speaking": true, "state": "joined"},
+                    {"mri": "8:orgid:bbb", "displayName": "Smith, Bob",
+                     "serverMuted": true, "state": "active"},
+                    {"endpointId": "device-only", "displayName": "Ghost"},
+                ],
+            },
+        }));
+        assert!(b.messages.is_empty());
+        assert!(b.typing.is_empty());
+        assert_eq!(b.skipped, 0);
+        assert_eq!(b.roster.len(), 2); // device-only entry unattributable
+        let a = &b.roster[0];
+        assert_eq!(a.meeting_id, "19:meeting_abc@thread.v2");
+        assert_eq!(a.id, "8:orgid:aaa");
+        assert_eq!(a.name, "Doe, Jane");
+        assert_eq!(a.speaking, Some(true));
+        assert_eq!(a.muted, Some(false));
+        assert_eq!(a.present, Some(true));
+        let c = &b.roster[1];
+        assert_eq!(c.id, "8:orgid:bbb");
+        assert_eq!(c.speaking, None); // frame said nothing: host keeps
+        assert_eq!(c.muted, Some(true));
+        assert_eq!(c.present, Some(true));
+        // Envelope shape: set axes serialize, missing axes omit.
+        let env = serde_json::to_value(a).unwrap();
+        assert_eq!(env["meeting_id"], "19:meeting_abc@thread.v2");
+        assert_eq!(env["speaking"], true);
+        assert!(serde_json::to_value(c)
+            .unwrap()
+            .get("speaking")
+            .is_none());
+    }
+
+    #[test]
+    fn roster_top_level_participants_and_leave_states() {
+        let b = batch_of(json!({
+            "conversationLink": "https://h/v1/users/ME/conversations/19:m@thread.v2/messages/1",
+            "participants": [
+                {"id": "8:orgid:gone", "name": "Gone, Gail", "removed": true},
+                {"user": {"id": "8:orgid:nested", "displayName": "Nested, Ned"},
+                 "audioMuted": "1", "status": "left"},
+            ],
+        }));
+        assert_eq!(b.roster.len(), 2);
+        assert_eq!(b.roster[0].meeting_id, "19:m@thread.v2");
+        assert_eq!(b.roster[0].present, Some(false));
+        assert_eq!(b.roster[1].id, "8:orgid:nested");
+        assert_eq!(b.roster[1].name, "Nested, Ned");
+        assert_eq!(b.roster[1].muted, Some(true)); // "1" string bool
+        assert_eq!(b.roster[1].present, Some(false)); // status left
+    }
+
+    #[test]
+    fn roster_dominant_speaker_marks_speaking_only() {
+        let b = batch_of(json!({
+            "threadid": "19:m@thread.v2",
+            "dominantSpeakerInfo": {"mri": "8:orgid:aaa", "displayName": "Doe, Jane"},
+        }));
+        assert_eq!(b.roster.len(), 1);
+        let r = &b.roster[0];
+        assert_eq!(r.id, "8:orgid:aaa");
+        assert_eq!(r.name, "Doe, Jane");
+        assert_eq!(r.speaking, Some(true));
+        assert_eq!(r.muted, None);
+        assert_eq!(r.present, None);
+        // String-marker form keeps an empty name (host keeps roster name).
+        let b2 = batch_of(json!({
+            "threadid": "19:m@thread.v2",
+            "activeSpeaker": "8:orgid:bbb",
+        }));
+        assert_eq!(b2.roster.len(), 1);
+        assert_eq!(b2.roster[0].id, "8:orgid:bbb");
+        assert_eq!(b2.roster[0].name, "");
+        assert_eq!(b2.roster[0].speaking, Some(true));
+    }
+
+    #[test]
+    fn roster_named_envelope_and_bare_array() {
+        let b = batch_of(json!({
+            "name": "conversation/rosterUpdate",
+            "args": [{
+                "threadid": "19:m@thread.v2",
+                "participants": [
+                    {"mri": "8:orgid:aaa", "isMuted": 0},
+                ],
+            }],
+        }));
+        assert_eq!(b.roster.len(), 1);
+        assert_eq!(b.roster[0].muted, Some(false)); // 0 number bool
+        let bare = batch_of(json!({
+            "name": "rosterUpdate",
+            "args": [[
+                {"mri": "8:orgid:aaa", "displayName": "A"},
+            ]],
+        }));
+        assert_eq!(bare.roster.len(), 1);
+        assert_eq!(bare.roster[0].name, "A");
+        assert_eq!(bare.roster[0].meeting_id, "");
+    }
+
+    #[test]
+    fn roster_ignores_invitation_participant_objects() {
+        // Invitation frames carry participants as {from,to} objects —
+        // never roster arrays — so they must not yield roster events.
+        let b = batch_of(json!({
+            "participants": {
+                "from": {"id": "8:orgid:aaa", "displayName": "A"},
+                "to": [{"id": "8:orgid:bbb"}],
+            },
+        }));
+        assert!(b.roster.is_empty());
+        assert!(b.messages.is_empty());
+        assert_eq!(b.skipped, 1);
     }
 }

@@ -13,6 +13,7 @@ public enum AppIdentity {
     public static let authWindowID = "auth"
     public static let avWindowID = "av"
     public static let diagWindowID = "diagnostics"
+    public static let meetingWindowID = "meeting"
     public static let tagline = "Teams client for macOS"
 }
 
