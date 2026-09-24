@@ -16,6 +16,7 @@ public enum DemoData {
     public static let historyID = "demo-history"
     public static let botpostsID = "demo-botposts"
     public static let docsID = "demo-docs"
+    public static let showcaseID = "demo-showcase"
 
     /// Sidebar rows. [0] is "demo" (matches ConversationStore.demo()).
     /// The rich row derives from the rich thread's last message, so its
@@ -43,6 +44,7 @@ public enum DemoData {
         historyChat(),
         botPostsChat(),
         docsChat(),
+        showcaseChat(),
     ]
 
     /// Rich sidebar row: preview/sender/time from the rich thread's tail.
@@ -126,6 +128,17 @@ public enum DemoData {
         let last = msgs.last
         return ChatItem(
             chatId: docsID, name: "Demo — Shared Docs", is_group: true,
+            last_message_time: last?.timestamp,
+            last_message_sender: last?.sender,
+            last_message_preview: last?.content)
+    }
+
+    /// Showcase sidebar row: preview/sender/time from the showcase tail.
+    public static func showcaseChat(now: Date = Date()) -> ChatItem {
+        let msgs = showcaseMessages(now: now)
+        let last = msgs.last
+        return ChatItem(
+            chatId: showcaseID, name: "Demo — Showcase", is_group: true,
             last_message_time: last?.timestamp,
             last_message_sender: last?.sender,
             last_message_preview: last?.content)
@@ -247,6 +260,7 @@ public enum DemoData {
         case historyID: return historyMessages()
         case botpostsID: return botPostsMessages()
         case docsID: return docsMessages()
+        case showcaseID: return showcaseMessages()
         default: break
         }
         if chatID.hasPrefix("demo-chan-") { return channelMessages }
@@ -259,16 +273,17 @@ public enum DemoData {
     }
 
     /// Demo threads flagging an owner mention (om-mentions): the rich
-    /// thread's edited bubble mines `@Me` from its `<at>` tag. Adopted
-    /// by the app's MentionStore at demo launch (offline, no feed).
-    public static let mentionedChatIDs: Set<String> = [richID]
+    /// thread's edited bubble mines `@Me` from its `<at>` tag, and the
+    /// showcase kickoff does the same. Adopted by the app's MentionStore
+    /// at demo launch (offline, no feed).
+    public static let mentionedChatIDs: Set<String> = [richID, showcaseID]
 
     /// Canned shared files for `--demo` (om-shared lane). Design Sync has
     /// three (pdf + image + sheet, one with a sender); Ava has one; the
     /// rich thread and channels share the design set; standup is empty.
     public static func sharedFiles(for chatID: String) -> [SharedFile] {
         switch chatID {
-        case demoID, richID, docsID: return designFiles
+        case demoID, richID, docsID, showcaseID: return designFiles
         case avaID: return [avaFile]
         case standupID: return []
         default:
@@ -605,6 +620,101 @@ public enum DemoData {
                 id: "doc-3", sender: "Me",
                 timestamp: iso(at(h: 9, m: 9)),
                 content: "Got them — reviewing now.",
+                isOwn: true),
+        ]
+    }
+
+    /// Showcase thread (om-demo-showcase): ONE conversation exercising
+    /// every rich feature — mentions (`<at>` tags), reactions (counts),
+    /// replies (quote blocks + nesting), pins (first two bubbles are the
+    /// seeded strip targets), cards/bot posts (MessageCard JSON + digest
+    /// rows), images (offline `demo://` fixtures), receipts (own tail →
+    /// Seen via the demo adopt), and day separators (Yesterday/Today).
+    /// Fully offline. Timestamps float off now. Zero real data: the same
+    /// fictional crew as every other demo thread.
+    public static func showcaseMessages(now: Date = Date()) -> [ChatMessage] {
+        func iso(_ d: Date) -> String {
+            let f = ISO8601DateFormatter()
+            f.formatOptions = [.withInternetDateTime]
+            return f.string(from: d)
+        }
+        func at(dayOffset: Int, h: Int, m: Int) -> Date {
+            var cal = Calendar.current
+            cal.timeZone = TimeZone.current
+            let base = cal.date(byAdding: .day, value: dayOffset, to: now) ?? now
+            return cal.date(bySettingHour: h, minute: m, second: 0, of: base) ?? base
+        }
+        return [
+            ChatMessage(
+                id: "sc-1", sender: "Priya Nair",
+                timestamp: iso(at(dayOffset: -1, h: 16, m: 2)),
+                content: "Showcase thread is open — @Me kick us off with the hero shot?",
+                raw: "<p>Showcase thread is open — <at id=\"8:me\">@Me</at> kick us off with the hero shot?</p>",
+                reactions: [
+                    ReactionCount(emoji: "👍", count: 3),
+                    ReactionCount(emoji: "❤️", count: 1),
+                ]),
+            ChatMessage(
+                id: "sc-2", sender: "Tom Becker",
+                timestamp: iso(at(dayOffset: -1, h: 16, m: 5)),
+                content: "In. Run `ostmac demo --rich` then frame the timeline.",
+                raw: #"<quote author="Priya Nair" guid="sc-1">Showcase thread is open — @Me kick us off with the hero shot?</quote><p>In. Run `ostmac demo --rich` then frame the timeline.</p>"#,
+                reply_to: "sc-1"),
+            ChatMessage(
+                id: "sc-3", sender: "Me",
+                timestamp: iso(at(dayOffset: -1, h: 16, m: 9)),
+                content: "Sunset from the offsite 🌅",
+                isOwn: true,
+                raw: #"<p>Sunset from the offsite 🌅</p><p><img src="demo://photo-1" alt="offsite sunset"></p>"#),
+            ChatMessage(
+                id: "sc-4", sender: "Tech News RSS",
+                timestamp: iso(at(dayOffset: 0, h: 8, m: 2)),
+                content: "Morning digest — 2 new stories:"
+                    + "Swift 6.2 releasedConcurrency notes and migration guide."
+                    + "Rust 1.89 shipsConst generics progress.",
+                raw: "<p>Morning digest — 2 new stories:</p>"
+                    + #"<attachment><p><a href="https://example.com/swift-62">Swift 6.2 released</a></p>"#
+                    + "<p>Concurrency notes and migration guide.</p></attachment>"
+                    + #"<attachment><p><a href="https://example.com/rust-189">Rust 1.89 ships</a></p>"#
+                    + "<p>Const generics progress.</p></attachment>"),
+            ChatMessage(
+                id: "sc-5", sender: "Build Bot",
+                timestamp: iso(at(dayOffset: 0, h: 8, m: 5)),
+                content: #"{"@type":"MessageCard","@context":"https://schema.org/extensions","title":"Build green","text":"main passed all checks","potentialAction":[{"@type":"OpenUri","name":"View run","targets":[{"os":"default","uri":"https://example.com/builds/7"}]}]}"#,
+                raw: #"{"@type":"MessageCard","@context":"https://schema.org/extensions","title":"Build green","text":"main passed all checks","potentialAction":[{"@type":"OpenUri","name":"View run","targets":[{"os":"default","uri":"https://example.com/builds/7"}]}]}"#),
+            ChatMessage(
+                id: "sc-6", sender: "Tom Becker",
+                timestamp: iso(at(dayOffset: 0, h: 8, m: 8)),
+                content: "The const-generics note unblocked my render patch.",
+                raw: #"<quote author="Tech News RSS" guid="sc-4">Morning digest — 2 new stories</quote><p>The const-generics note unblocked my render patch.</p>"#,
+                reactions: [ReactionCount(emoji: "😂", count: 2)],
+                reply_to: "sc-4"),
+            ChatMessage(
+                id: "sc-7", sender: "Priya Nair",
+                timestamp: iso(at(dayOffset: 0, h: 9, m: 1)),
+                content: "Nice. @Tom Becker (party) the review deck is ready — thumbs up when you've seen it?",
+                raw: "<p>Nice. <at id=\"8:t\">@Tom Becker</at> (party) the review deck is ready — thumbs up when you've seen it?</p>"),
+            ChatMessage(
+                id: "sc-8", sender: "Me",
+                timestamp: iso(at(dayOffset: 0, h: 9, m: 4)),
+                content: "Seen — the empty-states slide made me laugh out loud.",
+                isOwn: true,
+                raw: #"<quote author="Priya Nair" guid="sc-7">Nice. @Tom Becker (party) the review deck is ready — thumbs up when you've seen it?</quote><p>Seen — the empty-states slide made me laugh out loud.</p>"#,
+                reply_to: "sc-7"),
+            ChatMessage(
+                id: "sc-9", sender: "Tom Becker",
+                timestamp: iso(at(dayOffset: 0, h: 9, m: 6)),
+                content: "",
+                raw: #"<p><img src="demo://photo-2" alt="lake dawn"></p>"#),
+            ChatMessage(
+                id: "sc-10", sender: "Priya Nair",
+                timestamp: iso(at(dayOffset: 0, h: 9, m: 9)),
+                content: "Locking the shot list: mentions, reactions, replies, pins, cards, photos, receipts.",
+                edited: true),
+            ChatMessage(
+                id: "sc-11", sender: "Me",
+                timestamp: iso(at(dayOffset: 0, h: 9, m: 12)),
+                content: "Framed it. Merging the showcase lane — ship it 🚀",
                 isOwn: true),
         ]
     }

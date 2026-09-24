@@ -303,7 +303,7 @@ final class MentionsTests: XCTestCase {
     // MARK: - demo seed
 
     func testDemoMentionSeedMatchesThread() {
-        XCTAssertEqual(DemoData.mentionedChatIDs, [DemoData.richID])
+        XCTAssertEqual(DemoData.mentionedChatIDs, [DemoData.richID, DemoData.showcaseID])
         // The seed is real: the rich thread mines an owner mention.
         let store = MentionStore()
         store.noteThread(
@@ -311,5 +311,11 @@ final class MentionsTests: XCTestCase {
             messages: ConversationStore.richDemoMessages(),
             ownName: "Me")
         XCTAssertTrue(store.contains(chatID: DemoData.richID))
+        // om-demo-showcase: the showcase kickoff mines one too.
+        store.noteThread(
+            chatID: DemoData.showcaseID,
+            messages: DemoData.showcaseMessages(),
+            ownName: "Me")
+        XCTAssertTrue(store.contains(chatID: DemoData.showcaseID))
     }
 }
