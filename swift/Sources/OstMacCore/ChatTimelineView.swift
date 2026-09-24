@@ -34,12 +34,19 @@ struct ChatTimelineView: View {
     @ObservedObject private var preload = ImagePreloadStore.shared
 
     var body: some View {
+        // One id index per body-eval (om-s6-renderparse): the strip,
+        // quote, and receipt lookups share it instead of scanning the
+        // thread per bubble. Same values, O(n) build + O(1) lookups.
+        timelineBody(index: MessageIndex(store.messages))
+    }
+
+    private func timelineBody(index: MessageIndex) -> some View {
         ScrollViewReader { proxy in
             VStack(spacing: 0) {
                 // Pinned strip (om-pinmessages): pinned to the top of the
                 // timeline (never scrolls away). Tap jumps to the bubble.
                 PinnedStripView(
-                    rows: pins.rows(for: store.chatID, messages: store.messages),
+                    rows: pins.rows(for: store.chatID, messages: store.messages, index: index),
                     onJump: { jumpToPin(proxy, id: $0) },
                     onUnpin: { pins.unpin(chatID: store.chatID, messageID: $0) })
                 DietSeamH()
@@ -80,7 +87,7 @@ struct ChatTimelineView: View {
                                     message: msg,
                                     failed: store.failedIDs.contains(msg.id),
                                     highlightName: store.ownDisplayName,
-                                    quoted: store.quotedParent(for: msg),
+                                    quoted: store.quotedParent(for: msg, in: index),
                                     onRetry: { _ = store.retry(id: msg.id) },
                                     onReact: { store.toggleReaction(messageID: msg.id, emoji: $0) },
                                     onForward: { onForward(msg) },
@@ -92,7 +99,7 @@ struct ChatTimelineView: View {
                                     isRead: store.chatID.map {
                                         receipts.isOwnRead(
                                             chatID: $0, messageID: msg.id,
-                                            messages: store.messages)
+                                            position: index.position)
                                     } ?? false,
                                     onOpenLink: onOpenLink,
                                     isPinned: pins.isPinned(

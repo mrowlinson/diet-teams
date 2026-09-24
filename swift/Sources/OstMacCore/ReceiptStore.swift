@@ -140,17 +140,39 @@ public final class ReceiptStore: ObservableObject {
         Self.isRead(messageID: messageID, messages: messages, peerIDs: peerReadIDs(for: chatID))
     }
 
+    /// Indexed own-read (om-s6-renderparse): same answer, O(peers)
+    /// against a body-eval `MessageIndex.position` (no scans).
+    public func isOwnRead(chatID: String, messageID: String, position: [String: Int]) -> Bool {
+        Self.isRead(messageID: messageID, position: position, peerIDs: peerReadIDs(for: chatID))
+    }
+
     /// Pure read check: `messageID` precedes-or-equals any `peerIDs` entry
-    /// in `messages` order. Unknown message or peers read false.
+    /// in `messages` order. Unknown message or peers read false. One
+    /// pass (first positions win, exactly like the old scan-per-peer).
     nonisolated public static func isRead(
         messageID: String, messages: [ChatMessage], peerIDs: Set<String>
     ) -> Bool {
         guard !messageID.isEmpty, !peerIDs.isEmpty else { return false }
-        guard let at = messages.firstIndex(where: { $0.id == messageID }) else { return false }
+        var at: Int?
+        var peerAt: [String: Int] = [:]
+        for (i, m) in messages.enumerated() {
+            if at == nil, m.id == messageID { at = i }
+            if peerIDs.contains(m.id), peerAt[m.id] == nil { peerAt[m.id] = i }
+            if at != nil, peerAt.count == peerIDs.count { break }
+        }
+        guard let at else { return false }
+        return peerAt.values.contains { $0 >= at }
+    }
+
+    /// Pure read check over a prebuilt position map (same semantics as
+    /// the `messages` overload: first positions win).
+    nonisolated public static func isRead(
+        messageID: String, position: [String: Int], peerIDs: Set<String>
+    ) -> Bool {
+        guard !messageID.isEmpty, !peerIDs.isEmpty else { return false }
+        guard let at = position[messageID] else { return false }
         for peer in peerIDs {
-            if let pi = messages.firstIndex(where: { $0.id == peer }), pi >= at {
-                return true
-            }
+            if let pi = position[peer], pi >= at { return true }
         }
         return false
     }
