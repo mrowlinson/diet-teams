@@ -3,6 +3,7 @@
 // graceful off-state pointing at Settings (no request is ever made).
 import DietDesign
 import SwiftUI
+import DietDesign
 
 /// GIF picker. `onPick` fires with the full-size GIF URL; the host inserts
 /// it into the draft (or sends it) and dismisses the popover.
@@ -24,7 +25,7 @@ public struct TenorPickerView: View {
             if apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 offState
             } else {
-                HStack(spacing: 8) {
+                HStack(spacing: DietSpace.sm) {
                     Image(systemName: "magnifyingglass")
                         .foregroundStyle(DietColor.textSecondaryColor)
                     TextField("Search GIFs", text: $query)
@@ -32,7 +33,7 @@ public struct TenorPickerView: View {
                         .onSubmit { Task { await runSearch() } }
                     if loading { ProgressView().controlSize(.small) }
                 }
-                .padding(10)
+                .padding(DietSpace.sm)
                 DietSeamH()
                 grid
             }
@@ -68,8 +69,8 @@ public struct TenorPickerView: View {
             } else {
                 ScrollView {
                     LazyVGrid(
-                        columns: [GridItem(.adaptive(minimum: 100), spacing: 8)],
-                        spacing: 8
+                        columns: [GridItem(.adaptive(minimum: 100), spacing: DietSpace.sm)],
+                        spacing: DietSpace.sm
                     ) {
                         ForEach(gifs) { gif in
                             Button { onPick(gif.fullURL) } label: {
@@ -89,13 +90,13 @@ public struct TenorPickerView: View {
                                 }
                                 .frame(height: 90)
                                 .clipped()
-                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                                .clipShape(RoundedRectangle(cornerRadius: DietRadius.control))
                             }
                             .buttonStyle(.plain)
                             .help(gif.title.isEmpty ? "Send GIF" : gif.title)
                         }
                     }
-                    .padding(10)
+                    .padding(DietSpace.sm)
                 }
             }
         }
