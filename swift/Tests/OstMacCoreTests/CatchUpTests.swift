@@ -46,7 +46,7 @@ final class CatchUpTests: XCTestCase {
         XCTAssertFalse(store.config.enabled)
         XCTAssertEqual(store.config.provider, .openCodeCLI)
         XCTAssertEqual(store.config.baseURL, "https://opencode.ai/zen/v1")
-        XCTAssertEqual(store.config.model, "muse-spark-1.3-contributor-free")
+        XCTAssertEqual(store.config.model, "opencode/muse-spark-1.3-contributor-free")
         XCTAssertEqual(store.config.apiKey, "")
         XCTAssertEqual(store.state, .idle)
     }

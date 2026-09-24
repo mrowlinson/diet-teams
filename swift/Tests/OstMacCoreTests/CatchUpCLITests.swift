@@ -71,7 +71,7 @@ final class CatchUpCLITests: XCTestCase {
         await store.summarize(messages: thread(25))
         XCTAssertTrue(direct.prompts.isEmpty)
         XCTAssertEqual(runner.calls.count, 1)
-        XCTAssertEqual(runner.calls[0].model, "muse-spark-1.3-contributor-free")
+        XCTAssertEqual(runner.calls[0].model, "opencode/muse-spark-1.3-contributor-free")
         XCTAssertTrue(runner.calls[0].prompt.contains("TL;DR"))
         XCTAssertEqual(store.state, .loaded("TL;DR: cli works."))
     }
@@ -131,5 +131,102 @@ final class CatchUpCLITests: XCTestCase {
         await store.summarize(messages: thread(25))
         XCTAssertTrue(direct.prompts.isEmpty)
         XCTAssertEqual(store.state, .failed(CatchUpError.cliBadOutput.message))
+    }
+
+    // MARK: - om-catchup-clifix: qualified CLI model id
+
+    func testCLIDefaultModelIsQualified() {
+        // `opencode run` rejects the bare id (exit 1 +
+        // {"type":"error",...}); only provider/model succeeds.
+        XCTAssertEqual(
+            CatchUpProvider.openCodeCLI.defaultModel,
+            "opencode/muse-spark-1.3-contributor-free")
+        XCTAssertEqual(
+            CatchUpConfig().model, "opencode/muse-spark-1.3-contributor-free")
+        // The Zen HTTPS path keeps the bare id.
+        XCTAssertEqual(
+            CatchUpProvider.openCode.defaultModel,
+            "muse-spark-1.3-contributor-free")
+    }
+
+    func testSelectProviderCLIPreloadsQualifiedModel() {
+        let direct = CatchUpCannedTransport(stub: "ok")
+        let runner = CatchUpMockCLIRunner()
+        let store = cliStore(direct: direct, runner: runner)
+        store.selectProvider(.openCodeCLI)
+        XCTAssertEqual(store.config.model, "opencode/muse-spark-1.3-contributor-free")
+    }
+
+    // MARK: - om-catchup-clifix: type:text parts + type:error blobs
+
+    func testParseOutputFindsTextPart() throws {
+        // Live `opencode run --format json` shape (probed 2026-09-24).
+        let stdout = """
+        {"type":"step_start","part":{"type":"step-start"}}
+        {"type":"text","part":{"type":"text","text":"Hi, great to meet you."}}
+        {"type":"step_finish","part":{"type":"step-finish","reason":"stop"}}
+        """
+        XCTAssertEqual(try CatchUpCLI.parseOutput(stdout), "Hi, great to meet you.")
+    }
+
+    func testParseOutputTypeErrorThrowsServerWithMessage() {
+        let stdout = """
+        {"type":"error","error":{"name":"UnknownError","data":{"message":"Unexpected server error. Check server logs for details."}}}
+        """
+        XCTAssertThrowsError(try CatchUpCLI.parseOutput(stdout)) { error in
+            guard case let .server(detail) = error as? CatchUpError else {
+                return XCTFail("expected .server, got \(error)")
+            }
+            XCTAssertTrue(detail.contains("Unexpected server error"))
+        }
+    }
+
+    func testErrorMessageExtraction() {
+        XCTAssertEqual(
+            CatchUpCLI.errorMessage(in: #"{"type":"error","error":{"name":"N","data":{"message":"M"}}}"#),
+            "M")
+        // Fallbacks: error.message, then error.name.
+        XCTAssertEqual(
+            CatchUpCLI.errorMessage(in: #"{"type":"error","error":{"message":"M2"}}"#),
+            "M2")
+        XCTAssertEqual(
+            CatchUpCLI.errorMessage(in: #"{"type":"error","error":{"name":"N3"}}"#),
+            "N3")
+        XCTAssertNil(CatchUpCLI.errorMessage(in: #"{"content":"ok"}"#))
+        XCTAssertNil(CatchUpCLI.errorMessage(in: ""))
+    }
+
+    func testCLIFailureSurfacesStdoutAndStderr() async {
+        let direct = CatchUpCannedTransport(stub: "SHOULD NOT APPEAR")
+        let runner = CatchUpMockCLIRunner(result: CatchUpCLIResult(
+            stdout: #"{"type":"error","error":{"name":"N","data":{"message":"bad model"}}}"#,
+            stderr: "warn: something",
+            exitCode: 1))
+        let store = cliStore(direct: direct, runner: runner)
+        store.adopt(CatchUpConfig(provider: .openCodeCLI, enabled: true, apiKey: ""))
+        await store.summarize(messages: thread(25))
+        XCTAssertTrue(direct.prompts.isEmpty)
+        guard case let .failed(detail) = store.state else {
+            return XCTFail("expected .failed, got \(store.state)")
+        }
+        XCTAssertTrue(detail.contains("bad model"), detail)
+        XCTAssertTrue(detail.contains("warn: something"), detail)
+    }
+
+    func testCLIFailureStdoutOnlyKeepsCLIMessage() async {
+        // Bare-model-id shape: exit 1, stderr empty, error blob on
+        // stdout. Must not collapse to opaque "exit 1".
+        let direct = CatchUpCannedTransport(stub: "SHOULD NOT APPEAR")
+        let runner = CatchUpMockCLIRunner(result: CatchUpCLIResult(
+            stdout: #"{"type":"error","error":{"name":"UnknownError","data":{"message":"Unexpected server error."}}}"#,
+            stderr: "",
+            exitCode: 1))
+        let store = cliStore(direct: direct, runner: runner)
+        store.adopt(CatchUpConfig(provider: .openCodeCLI, enabled: true, apiKey: ""))
+        await store.summarize(messages: thread(25))
+        guard case let .failed(detail) = store.state else {
+            return XCTFail("expected .failed, got \(store.state)")
+        }
+        XCTAssertTrue(detail.contains("Unexpected server error"), detail)
     }
 }

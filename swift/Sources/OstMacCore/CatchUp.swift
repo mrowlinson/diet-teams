@@ -40,7 +40,11 @@
 //     exact name match) > Zen "muse-spark-1.3" (paid $1.25/$4.25) >
 //     OpenRouter "meta/muse-spark-1.3:free" (wrong provider for the
 //     Zen base URL) > "muse-spark-1.2-contributor-free" (free, older).
-//     Preloaded id: muse-spark-1.3-contributor-free.
+//     Preloaded id: muse-spark-1.3-contributor-free (bare, Zen HTTPS).
+//     The CLI provider instead preloads the PROVIDER-QUALIFIED id
+//     "opencode/muse-spark-1.3-contributor-free": `opencode run`
+//     rejects the bare id (exit 1 + {"type":"error",...} on stdout,
+//     probed 2026-09-24) and only the qualified id succeeds.
 import Foundation
 import Security
 
@@ -151,7 +155,10 @@ public enum CatchUpProvider: String, Sendable, Equatable, CaseIterable, Identifi
         switch self {
         case .openAICompatible: "gpt-4o-mini"
         case .openCode: "muse-spark-1.3-contributor-free"
-        case .openCodeCLI: "muse-spark-1.3-contributor-free"
+        // Qualified: `opencode run` rejects the bare id (exit 1 +
+        // {"type":"error",...} on stdout); the Zen HTTPS path keeps
+        // the bare id (see header).
+        case .openCodeCLI: "opencode/muse-spark-1.3-contributor-free"
         }
     }
 }
@@ -170,7 +177,7 @@ public struct CatchUpConfig: Sendable, Equatable {
         provider: CatchUpProvider = .openCodeCLI,
         enabled: Bool = false,
         baseURL: String = "https://opencode.ai/zen/v1",
-        model: String = "muse-spark-1.3-contributor-free",
+        model: String = "opencode/muse-spark-1.3-contributor-free",
         apiKey: String = ""
     ) {
         self.provider = provider
@@ -377,7 +384,8 @@ public final class CatchUpCannedTransport: CatchUpTransport, @unchecked Sendable
 /// Pure CLI helpers: argv shape, auth-failure sniffing, JSON output
 /// parsing. `opencode run --format json` emits JSON (one object per
 /// line for streaming events); the summary is the last assistant
-/// message payload we can find.
+/// text payload we can find (message content or text part).
+/// {"type":"error",...} blobs surface via errorMessage(in:).
 public enum CatchUpCLI {
     public static let executable = "opencode"
     public static let defaultTimeoutSeconds: Double = 60
@@ -410,8 +418,10 @@ public enum CatchUpCLI {
 
     /// Extract the summary text from `opencode run --format json`
     /// stdout. Accepts a single JSON object or JSON lines; picks the
-    /// last non-empty assistant payload. Throws .cliBadOutput when
-    /// nothing parses or nothing usable is found.
+    /// last non-empty assistant payload. A {"type":"error",...} blob
+    /// surfaces as .server with the CLI's own message instead of the
+    /// opaque .cliBadOutput. Throws .cliBadOutput when nothing parses
+    /// or nothing usable is found.
     public static func parseOutput(_ stdout: String) throws -> String {
         let trimmed = stdout.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw CatchUpError.cliBadOutput }
@@ -429,8 +439,41 @@ public enum CatchUpCLI {
                 candidates.append(found)
             }
         }
-        guard let last = candidates.last else { throw CatchUpError.cliBadOutput }
-        return last
+        if let last = candidates.last { return last }
+        if let message = errorMessage(in: stdout) {
+            throw CatchUpError.server("opencode CLI error: \(message)")
+        }
+        throw CatchUpError.cliBadOutput
+    }
+
+    /// First {"type":"error",...} message in a CLI stdout blob, if any.
+    /// Shape: {"type":"error","error":{"name":...,"data":{"message":...}}}.
+    /// Pure (test seam); also feeds the nonzero-exit detail so a
+    /// stdout-only failure keeps the CLI's own words.
+    public static func errorMessage(in stdout: String) -> String? {
+        let trimmed = stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        var blobs = [trimmed]
+        blobs.append(contentsOf: trimmed.components(separatedBy: "\n"))
+        for blob in blobs {
+            let line = blob.trimmingCharacters(in: .whitespaces)
+            guard line.hasPrefix("{"), let data = line.data(using: .utf8),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  json["type"] as? String == "error"
+            else { continue }
+            if let err = json["error"] as? [String: Any] {
+                if let data = err["data"] as? [String: Any],
+                   let msg = data["message"] as? String, !msg.isEmpty
+                {
+                    return msg
+                }
+                if let msg = err["message"] as? String, !msg.isEmpty { return msg }
+                if let name = err["name"] as? String, !name.isEmpty { return name }
+            }
+            if let msg = json["message"] as? String, !msg.isEmpty { return msg }
+            return "unknown CLI error"
+        }
+        return nil
     }
 
     private static func extractText(from json: Any) -> String? {
@@ -439,6 +482,15 @@ public enum CatchUpCLI {
         if let type = obj["type"] as? String, type == "message" {
             if let role = obj["role"] as? String, role != "assistant" { return nil }
             return stringOrBlockText(obj["content"])
+        }
+        // Error events never carry summary text (see errorMessage(in:)).
+        if let type = obj["type"] as? String, type == "error" { return nil }
+        // Streaming text event: {"type":"text","part":{"type":"text","text":...}}
+        // (live `opencode run --format json` shape, probed 2026-09-24).
+        if let part = obj["part"] as? [String: Any],
+           let s = stringOrBlockText(part["text"]), !s.isEmpty
+        {
+            return s
         }
         // Direct payload keys.
         for key in ["content", "text", "result", "output", "summary"] {
@@ -614,8 +666,20 @@ public struct OpenCodeCLICatchUpTransport: CatchUpTransport {
             {
                 throw CatchUpError.cliMissing
             }
-            let detail = res.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
-            throw CatchUpError.server("opencode CLI failed: \(detail.isEmpty ? "exit \(res.exitCode)" : String(detail.prefix(300)))")
+            // Both streams: failures like a rejected model id land on
+            // stdout ({"type":"error",...}) with stderr empty; prefer
+            // the parsed CLI message over raw JSON.
+            let errText = res.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+            let outText = res.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+            var parts: [String] = []
+            if !errText.isEmpty { parts.append(errText) }
+            if let cliMessage = CatchUpCLI.errorMessage(in: res.stdout), !cliMessage.isEmpty {
+                parts.append(cliMessage)
+            } else if !outText.isEmpty {
+                parts.append(outText)
+            }
+            let detail = parts.joined(separator: "\n")
+            throw CatchUpError.server("opencode CLI failed: \(detail.isEmpty ? "exit \(res.exitCode)" : String(detail.prefix(500)))")
         }
         let text = try CatchUpCLI.parseOutput(res.stdout)
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
