@@ -115,6 +115,9 @@ pub struct SharedFile {
     /// Folders have no size/mime/download_url; Swift drills in via the
     /// children endpoint (drive_id + id). Always present in core JSON.
     pub is_folder: bool,
+    /// Sharing link from createLink (om-i1-links). List paths never fill
+    /// it (None); Swift caches the created link per file id after Copy link.
+    pub share_url: Option<String>,
     /// File-attachment GUID mined from the driveItem eTag (om-inline-docs):
     /// matches the `<attachment id>` in the message that shared this file,
     /// so embedders render inline doc rows in the bubble. None when the
@@ -139,6 +142,7 @@ fn shared_from_item(item: DriveItem, sender: Option<String>) -> SharedFile {
         sender,
         is_folder,
         attachment_id,
+        share_url: None,
     }
 }
 
@@ -415,6 +419,9 @@ pub async fn list_files(chat_id: &str, limit: usize) -> Result<()> {
             println!("{}", f.name);
         }
         println!("  ID:   {}", f.id);
+        if let Some(ref d) = f.drive_id {
+            println!("  Drive: {}", d);
+        }
         println!("  Size: {} bytes", f.size);
         if let Some(ref m) = f.mime {
             println!("  Type: {}", m);
@@ -586,6 +593,91 @@ pub async fn upload_file(chat_id: &str, local_path: &str) -> Result<()> {
     let client = TeamsClient::new().await?;
     let file = upload_file_data(&client, chat_id, local_path).await?;
     println!("Uploaded {} ({} bytes, id {})", file.name, file.size, file.id);
+    Ok(())
+}
+
+// -- Sharing links (om-i1-links) --
+
+/// A view-only sharing link for one driveItem (Graph createLink).
+pub struct SharedLink {
+    pub url: String,
+    pub scope: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateLinkResponse {
+    link: Option<CreateLinkInner>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateLinkInner {
+    #[serde(rename = "webUrl")]
+    web_url: Option<String>,
+    scope: Option<String>,
+}
+
+/// Normalize a createLink scope (the perms surface): `anonymous` (anyone
+/// with the link) or `organization` (org-only). Blank/unknown input falls
+/// back to `organization` (least privilege). Case-insensitive; `anyone`
+/// is accepted as an alias for `anonymous`.
+pub fn normalize_link_scope(scope: &str) -> &'static str {
+    match scope.trim().to_lowercase().as_str() {
+        "anonymous" | "anyone" => "anonymous",
+        _ => "organization",
+    }
+}
+
+/// POST body for createLink (view-only link; edit links not offered).
+pub fn create_link_body(scope: &str) -> serde_json::Value {
+    serde_json::json!({"type": "view", "scope": normalize_link_scope(scope)})
+}
+
+/// Graph path for createLink on one driveItem.
+pub fn create_link_path(drive_id: &str, item_id: &str) -> String {
+    format!("/drives/{}/items/{}/createLink", drive_id, item_id)
+}
+
+/// Pull the shareable URL out of a Graph createLink response body.
+pub fn parse_create_link(body: &serde_json::Value) -> Result<SharedLink> {
+    let resp: CreateLinkResponse =
+        serde_json::from_value(body.clone()).context("Failed to parse createLink response")?;
+    let inner = resp
+        .link
+        .context("createLink response has no link object")?;
+    let url = inner
+        .web_url
+        .filter(|s| !s.is_empty())
+        .context("createLink response link has no webUrl")?;
+    Ok(SharedLink {
+        url,
+        scope: inner.scope,
+    })
+}
+
+/// Create (or fetch the existing) view-only sharing link for one
+/// driveItem. Idempotent server-side: the same scope returns the same
+/// link. `scope` is normalized via [`normalize_link_scope`].
+pub async fn create_link_data(
+    client: &TeamsClient,
+    drive_id: &str,
+    item_id: &str,
+    scope: &str,
+) -> Result<SharedLink> {
+    let path = create_link_path(drive_id, item_id);
+    let body = create_link_body(scope);
+    let resp = client.graph_post(&path, &body).await?;
+    let value: serde_json::Value = resp
+        .json()
+        .await
+        .context("Failed to read createLink response")?;
+    parse_create_link(&value)
+}
+
+/// Create a sharing link (prints the URL to stdout).
+pub async fn create_link(drive_id: &str, item_id: &str, scope: &str) -> Result<()> {
+    let client = TeamsClient::new().await?;
+    let link = create_link_data(&client, drive_id, item_id, scope).await?;
+    println!("{}", link.url);
     Ok(())
 }
 
@@ -778,6 +870,67 @@ mod tests {
         let missing: DriveItem =
             serde_json::from_str(r#"{"id":"i3","name":"h.docx"}"#).unwrap();
         assert_eq!(shared_from_item(missing, None).attachment_id, None);
+    }
+
+    #[test]
+    fn link_scope_normalizes_to_least_privilege() {
+        assert_eq!(normalize_link_scope("organization"), "organization");
+        assert_eq!(normalize_link_scope("  Organization "), "organization");
+        assert_eq!(normalize_link_scope("anonymous"), "anonymous");
+        assert_eq!(normalize_link_scope("Anyone"), "anonymous");
+        assert_eq!(normalize_link_scope(""), "organization");
+        assert_eq!(normalize_link_scope("edit"), "organization");
+    }
+
+    #[test]
+    fn link_body_is_view_only_with_scope() {
+        assert_eq!(
+            create_link_body("anonymous"),
+            serde_json::json!({"type": "view", "scope": "anonymous"})
+        );
+        assert_eq!(
+            create_link_body("bogus"),
+            serde_json::json!({"type": "view", "scope": "organization"})
+        );
+    }
+
+    #[test]
+    fn link_path_addresses_drive_item() {
+        assert_eq!(
+            create_link_path("D1", "I1"),
+            "/drives/D1/items/I1/createLink"
+        );
+    }
+
+    #[test]
+    fn link_parse_extracts_web_url_and_scope() {
+        let body: serde_json::Value = serde_json::from_str(
+            r#"{"id":"perm-1","link":{"type":"view","scope":"organization",
+                "webUrl":"https://contoso.sharepoint.com/:i:/x/ABC"}}"#,
+        )
+        .unwrap();
+        let link = parse_create_link(&body).unwrap();
+        assert_eq!(link.url, "https://contoso.sharepoint.com/:i:/x/ABC");
+        assert_eq!(link.scope.as_deref(), Some("organization"));
+    }
+
+    #[test]
+    fn link_parse_rejects_missing_link_or_url() {
+        for raw in [
+            r#"{"id":"perm-1"}"#,
+            r#"{"link":{"type":"view","scope":"organization"}}"#,
+            r#"{"link":{"webUrl":""}}"#,
+        ] {
+            let body: serde_json::Value = serde_json::from_str(raw).unwrap();
+            assert!(parse_create_link(&body).is_err(), "raw {}", raw);
+        }
+    }
+
+    #[test]
+    fn list_never_fills_share_url() {
+        let item: DriveItem =
+            serde_json::from_str(r#"{"id":"i1","name":"f.docx"}"#).unwrap();
+        assert_eq!(shared_from_item(item, None).share_url, None);
     }
 
     #[test]

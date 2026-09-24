@@ -136,6 +136,11 @@ char *ostmac_files_children(const char *drive_id, const char *item_id, int limit
 // Returns {ok, file}. Caller frees.
 char *ostmac_files_upload(const char *chat_id, const char *path);
 
+// Create a view-only sharing link for one driveItem (Graph createLink).
+// scope NULL/empty = organization (org-only); "anonymous" = anyone link.
+// Returns {ok, link, scope}. Caller frees.
+char *ostmac_files_link(const char *drive_id, const char *item_id, const char *scope);
+
 // Download one driveItem's content to dest path.
 // Returns {ok, path, bytes}. Caller frees.
 char *ostmac_files_download(const char *drive_id, const char *item_id, const char *dest);

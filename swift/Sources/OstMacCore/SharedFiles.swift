@@ -45,12 +45,16 @@ public final class SharedFilesStore: ObservableObject {
     public typealias ChildrenFetcher = @Sendable (String, String, Int32) throws -> SharedFileChildrenResponse
     public typealias UploadFetcher = @Sendable (String, String) throws -> SharedFileUploadResponse
     public typealias DownloadFetcher = @Sendable (String, String, String) throws -> SharedFileDownloadResponse
+    public typealias LinkFetcher = @Sendable (String, String, String) throws -> SharedFileLinkResponse
     public typealias OpenURLFn = @Sendable (URL) -> Bool
+    public typealias CopyLinkFn = @Sendable (String) -> Void
 
     @Published public private(set) var files: [SharedFile] = []
     @Published public private(set) var state: SharedFilesState = .loading
     @Published public private(set) var uploading = false
     @Published public private(set) var savingIDs: Set<String> = []
+    @Published public private(set) var linkingIDs: Set<String> = []
+    @Published public private(set) var links: [String: String] = [:]
     @Published public private(set) var savedPath: String?
     /// Breadcrumb path from root (empty = root). Drives view crumbs + back.
     @Published public private(set) var crumbs: [SharedFolderCrumb] = []
@@ -64,12 +68,14 @@ public final class SharedFilesStore: ObservableObject {
     private let childrenFetcher: ChildrenFetcher
     private let uploadFetcher: UploadFetcher
     private let downloadFetcher: DownloadFetcher
+    private let linkFetcher: LinkFetcher
     private let openURLFn: OpenURLFn
     /// Per-folder list cache: rootKey + crumb keys. Back/crumb jumps read
     /// here (no refetch); refresh() bypasses for the current level only.
     private var cache: [String: [SharedFile]] = [:]
     private static let rootKey = "root"
     private var currentKey: String { crumbs.last?.key ?? Self.rootKey }
+    private let copyLinkFn: CopyLinkFn
     private var openGeneration = 0
 
     /// Default URL opener. No-op (returns false) under XCTest so tests never
@@ -78,6 +84,15 @@ public final class SharedFilesStore: ObservableObject {
     public nonisolated static let defaultOpenURL: OpenURLFn = { url in
         if NSClassFromString("XCTestCase") != nil { return false }
         return NSWorkspace.shared.open(url)
+    }
+
+    /// Default link copier. No-op under XCTest so tests never touch the
+    /// live pasteboard; tests inject a capturing closure instead.
+    public nonisolated static let defaultCopyLink: CopyLinkFn = { text in
+        if NSClassFromString("XCTestCase") != nil { return }
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(text, forType: .string)
     }
 
     public nonisolated init(
@@ -91,13 +106,19 @@ public final class SharedFilesStore: ObservableObject {
         download: @escaping DownloadFetcher = {
             try RustCore.sharedDownload(driveID: $0, itemID: $1, dest: $2)
         },
-        openURL: @escaping OpenURLFn = SharedFilesStore.defaultOpenURL
+        link: @escaping LinkFetcher = {
+            try RustCore.sharedLink(driveID: $0, itemID: $1, scope: $2)
+        },
+        openURL: @escaping OpenURLFn = SharedFilesStore.defaultOpenURL,
+        copyLink: @escaping CopyLinkFn = SharedFilesStore.defaultCopyLink
     ) {
         self.listFetcher = list
         self.childrenFetcher = children
         self.uploadFetcher = upload
         self.downloadFetcher = download
+        self.linkFetcher = link
         self.openURLFn = openURL
+        self.copyLinkFn = copyLink
     }
 
     /// Open a chat/channel: fetch the shared list via core, replace files.
@@ -288,6 +309,48 @@ public final class SharedFilesStore: ObservableObject {
         }
     }
 
+    /// Cached sharing link for one file (createLink result, or the
+    /// row's own share_url when core filled it). Nil until linked.
+    public func link(for file: SharedFile) -> String? {
+        links[file.id] ?? file.share_url
+    }
+
+    /// Create a view-only sharing link via core and copy it to the
+    /// pasteboard (injected writer). Cached links re-copy without
+    /// refetching (createLink is idempotent server-side anyway).
+    /// No-op without a drive_id; demo mode fabricates a stable link.
+    public func shareLink(_ file: SharedFile, scope: String = "organization") {
+        if let cached = link(for: file) {
+            copyLinkFn(cached)
+            return
+        }
+        guard let drive = file.drive_id else { return }
+        if isDemo {
+            let demo = SharedFileLink.demoLink(for: file.id)
+            links[file.id] = demo
+            files = files.map { $0.id == file.id ? $0.withShareURL(demo) : $0 }
+            copyLinkFn(demo)
+            return
+        }
+        guard !linkingIDs.contains(file.id) else { return }
+        linkingIDs.insert(file.id)
+        let fetcher = linkFetcher
+        let itemID = file.id
+        Task {
+            defer { linkingIDs.remove(itemID) }
+            do {
+                let resp = try await Task.detached {
+                    try fetcher(drive, itemID, scope)
+                }.value
+                links[itemID] = resp.link
+                files = files.map { $0.id == itemID ? $0.withShareURL(resp.link) : $0 }
+                copyLinkFn(resp.link)
+            } catch {
+                state = .error(Self.message(for: error))
+            }
+        }
+    }
+
     /// ~/Downloads/<filename> (pure, testable).
     public static func downloadDestination(filename: String) -> String {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
@@ -428,9 +491,12 @@ public struct SharedFilesView: View {
                 SharedFileRow(
                     file: file,
                     saving: store.savingIDs.contains(file.id),
+                    linking: store.linkingIDs.contains(file.id),
+                    linked: store.link(for: file) != nil,
                     onOpen: { store.open(file) },
                     onSave: { store.save(file) },
-                    onDrill: { store.drill(file) }
+                    onDrill: { store.drill(file) },
+                    onLink: { store.shareLink(file) }
                 )
             }
             .listStyle(.plain)
@@ -451,9 +517,12 @@ public struct SharedFilesView: View {
 struct SharedFileRow: View {
     let file: SharedFile
     var saving: Bool = false
+    var linking: Bool = false
+    var linked: Bool = false
     var onOpen: () -> Void = {}
     var onSave: () -> Void = {}
     var onDrill: () -> Void = {}
+    var onLink: () -> Void = {}
 
     /// Folders drill in (no Open/Save: never downloadable per I5). Folders
     /// without drive_id render as plain file rows (no drill target).
@@ -521,6 +590,9 @@ struct SharedFileRow: View {
                             .buttonStyle(.link)
                             .font(.caption)
                             .help("Save to ~/Downloads")
+                    }
+                    if file.drive_id != nil {
+                        SharedFileLinkButton(linking: linking, linked: linked, onTap: onLink)
                     }
                 }
             }

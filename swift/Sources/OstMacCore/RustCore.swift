@@ -282,6 +282,19 @@ public enum RustCore {
         }
     }
 
+    /// View-only sharing link for one driveItem (Graph createLink).
+    /// scope "organization" (default) or "anonymous". Blocking FFI
+    /// (network): call off the main thread.
+    public static func sharedLink(driveID: String, itemID: String, scope: String = "organization") throws -> SharedFileLinkResponse {
+        try driveID.withCString { dPtr in
+            try itemID.withCString { iPtr in
+                try scope.withCString { sPtr in
+                    try call(ostmac_files_link(dPtr, iPtr, sPtr), as: SharedFileLinkResponse.self)
+                }
+            }
+        }
+    }
+
     public static func presence() throws -> PresenceResponse {
         try call(ostmac_presence(), as: PresenceResponse.self)
     }

@@ -847,6 +847,10 @@ public struct SharedFile: Decodable, Sendable, Identifiable, Equatable {
     /// Folder flag from core `is_folder` (om-i5-folders). Nil on old core
     /// payloads (no key) — decode with `isFolder`, never force-unwrap.
     public let is_folder: Bool?
+    /// Sharing link from createLink (om-i1-links). Nil at list time: core
+    /// never fills it; the store caches the created link per file id.
+    /// Optional so old core payloads (no key) still decode.
+    public let share_url: String?
 
     public init(
         id: String, name: String, size: UInt64 = 0,
@@ -854,7 +858,7 @@ public struct SharedFile: Decodable, Sendable, Identifiable, Equatable {
         download_url: String? = nil, drive_id: String? = nil,
         created: String? = nil, modified: String? = nil,
         sender: String? = nil, attachment_id: String? = nil,
-        is_folder: Bool? = nil
+        is_folder: Bool? = nil, share_url: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -868,6 +872,18 @@ public struct SharedFile: Decodable, Sendable, Identifiable, Equatable {
         self.sender = sender
         self.attachment_id = attachment_id
         self.is_folder = is_folder
+        self.share_url = share_url
+    }
+
+    /// Copy with a sharing link attached (store caches createLink results).
+    public func withShareURL(_ url: String) -> SharedFile {
+        SharedFile(
+            id: id, name: name, size: size, mime: mime,
+            web_url: web_url, download_url: download_url,
+            drive_id: drive_id, created: created, modified: modified,
+            sender: sender, attachment_id: attachment_id,
+            is_folder: is_folder, share_url: url
+        )
     }
 
     /// True when core marked this item a folder. Missing key (old core)
@@ -952,6 +968,21 @@ public struct SharedFileChildrenResponse: Decodable, Sendable {
         self.drive_id = drive_id
         self.item_id = item_id
         self.files = files
+    }
+}
+
+/// Sharing-link result from core `ostmac_files_link` (om-i1-links):
+/// view-only link for one driveItem. `scope` echoes the applied scope
+/// (organization|anonymous).
+public struct SharedFileLinkResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let link: String
+    public let scope: String?
+
+    public init(ok: Bool, link: String, scope: String? = nil) {
+        self.ok = ok
+        self.link = link
+        self.scope = scope
     }
 }
 
