@@ -123,6 +123,32 @@ fn channel_info(ch: Channel) -> ChannelInfo {
     }
 }
 
+/// Join one team by id: self-enroll via `POST /teams/{id}/members`.
+/// Resolves the caller's own user id from Graph /me, then adds self as
+/// a plain member (`aadUserConversationMember`, no roles). Returns the
+/// trimmed team id on success.
+///
+/// Join-by-code (6-char Teams invite codes) is NOT Graph — codes redeem
+/// only through the undocumented teams.microsoft.com web API, so codes
+/// are out of scope here; callers pass the team id (GUID).
+pub async fn join_team_data(client: &TeamsClient, team_id: &str) -> Result<String> {
+    let id = team_id.trim();
+    anyhow::ensure!(!id.is_empty(), "empty team_id");
+    anyhow::ensure!(
+        !id.contains(['/', '?', '#']),
+        "invalid team_id (path separator)"
+    );
+    let me = super::me::whoami_data(client).await?;
+    let body = serde_json::json!({
+        "@odata.type": "#microsoft.graph.aadUserConversationMember",
+        "roles": [],
+        "user@odata.bind": format!("https://graph.microsoft.com/v1.0/users('{}')", me.id),
+    });
+    let path = format!("/teams/{}/members", id);
+    client.graph_post(&path, &body).await?;
+    Ok(id.to_string())
+}
+
 /// List joined teams with their channels and return structured data.
 pub async fn list_teams_data(client: &TeamsClient) -> Result<Vec<TeamInfo>> {
     tracing::debug!("Fetching joined teams...");

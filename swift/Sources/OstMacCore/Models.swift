@@ -224,6 +224,18 @@ public struct ChannelCreateResponse: Decodable, Sendable {
     }
 }
 
+/// Join-one-team result from core `ostmac_team_join`: `{"ok","team_id"}`.
+public struct TeamJoinResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let team_id: String
+
+    /// Host-side construction (tests, previews). Wire decoding is untouched.
+    public init(ok: Bool, team_id: String) {
+        self.ok = ok
+        self.team_id = team_id
+    }
+}
+
 public struct TrouterPoll: Decodable, Sendable {
     public let ok: Bool
     public let events: [AnyJSON]

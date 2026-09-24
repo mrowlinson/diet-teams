@@ -54,7 +54,7 @@ pub use notes::{
     read_note_page_data,
 };
 pub use presence::get_presence_data;
-pub use teams::{create_channel_body, create_channel_data, create_channel_path, list_teams_data};
+pub use teams::{create_channel_body, create_channel_data, create_channel_path, join_team_data, list_teams_data};
 pub use todo::{
     complete_todo_task_data, create_todo_task_data, list_todo_lists_data,
     list_todo_tasks_data,

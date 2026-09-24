@@ -20,6 +20,9 @@ public struct TeamsBrowser: View {
     @State private var collapsedTeamIDs: Set<String> = []
     /// New-channel sheet visibility (om-h3-create).
     @State private var showCreate = false
+    /// Join-sheet visibility + the typed team id.
+    @State private var showJoin = false
+    @State private var joinTeamID = ""
 
     public init(
         model: TeamsViewModel, openChatID: String? = nil,
@@ -76,7 +79,9 @@ public struct TeamsBrowser: View {
                 DietEmptyState(
                     systemImage: "person.3",
                     title: "No teams",
-                    message: "Teams you join will appear here.")
+                    message: "Teams you join will appear here.",
+                    actionLabel: "Join a team",
+                    action: { showJoin = true })
                     .transition(.opacity)
             case .error(let message):
                 DietEmptyState(
@@ -94,6 +99,22 @@ public struct TeamsBrowser: View {
         // System-default crossfade between content states (load lands
         // softly instead of popping). Standard SwiftUI only.
         .animation(.default, value: model.state)
+        .sheet(isPresented: $showJoin) {
+            JoinTeamSheet(
+                teamID: $joinTeamID,
+                joining: !model.joiningIDs.isEmpty,
+                error: model.joinError,
+                onJoin: {
+                    let id = joinTeamID
+                    Task {
+                        await model.join(teamID: id)
+                        if model.joinError == nil {
+                            joinTeamID = ""
+                            showJoin = false
+                        }
+                    }
+                })
+        }
     }
 
     private var loadedList: some View {
@@ -110,6 +131,14 @@ public struct TeamsBrowser: View {
                 .buttonStyle(.borderless)
                 .accessibilityLabel("New channel")
                 .help("Create a channel in one of your teams")
+                Button {
+                    showJoin = true
+                } label: {
+                    Image(systemName: "person.badge.plus")
+                }
+                .buttonStyle(DietSecondaryButtonStyle())
+                .accessibilityLabel("Join a team")
+                .help("Join a team by ID")
             }
             .padding(.horizontal, DietSpace.sm)
             .padding(.vertical, DietSpace.sm)
@@ -228,6 +257,45 @@ struct TeamHeader: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .clipped()
         .padding(.vertical, DietSpace.xs)
+    }
+}
+
+/// Join-by-ID sheet: paste a team id (GUID), Join self-enrolls via
+/// core `ostmac_team_join`. Stays open on failure showing `error`.
+struct JoinTeamSheet: View {
+    @Binding var teamID: String
+    let joining: Bool
+    let error: String?
+    let onJoin: () -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: DietSpace.sm) {
+            Text("Join a team")
+                .font(DietType.title3)
+                .foregroundStyle(DietColor.textPrimaryColor)
+            Text("Paste the team ID. You join as a member.")
+                .font(DietType.callout)
+                .foregroundStyle(DietColor.textSecondaryColor)
+            TextField("Team ID", text: $teamID)
+                .textFieldStyle(.roundedBorder)
+                .disabled(joining)
+            if let error {
+                Text(error)
+                    .font(DietType.callout)
+                    .foregroundStyle(Color(nsColor: DietColor.danger))
+            }
+            HStack(spacing: DietSpace.xs) {
+                Button("Cancel") { dismiss() }
+                    .buttonStyle(DietSecondaryButtonStyle())
+                    .disabled(joining)
+                Button(joining ? "Joining…" : "Join") { onJoin() }
+                    .buttonStyle(DietPrimaryButtonStyle())
+                    .disabled(joining || teamID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(DietSpace.md)
+        .frame(minWidth: 320)
     }
 }
 

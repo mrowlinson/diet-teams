@@ -52,6 +52,9 @@ char *ostmac_teams(void);
 char *ostmac_channel_create(
     const char *team_id, const char *name, const char *description);
 
+// Join one team by id (self-enroll): {ok, team_id}. Caller frees.
+char *ostmac_team_join(const char *team_id);
+
 // Message history JSON for one chat (requires sign-in). Caller frees.
 char *ostmac_messages(const char *chat_id, int limit);
 
