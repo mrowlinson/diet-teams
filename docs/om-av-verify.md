@@ -58,3 +58,46 @@ open fails; the 10 s `poll_started` timeout is the only failure signal
 
 Raw probe logs (scratch, not committed): `tmp/om-av-verify-audio*.log`,
 `tmp/om-av-verify-camera*.png`, `tmp/cpal-probe/`, `tmp/om-av-verify-cam.swift`.
+
+## Re-verified 2026-09-24 (same box, same lane, no code changes)
+
+All verdicts above reproduced live; timed ostmac-core probe
+(`tmp/om-av-verify2-audio.log`):
+
+- Mic hw: ffmpeg 1 s capture `max_volume: -91.0 dB`
+  (`mean_volume: -91.0 dB`, 38912 samples) — WORKING.
+- OstMic: `mic_test` → `no_input` (10.01 s); named
+  `MacBook Pro Microphone` → `unknown_device` (10.36 s);
+  `mic_level` 3× `peak_db:-60.0` (10.02 s each) — BROKEN.
+- `teams-cli mic-test` (exit 1): resolves
+  `Audio input device: MacBook Pro Microphone`, then
+  `Failed to build audio input stream: The requested stream
+  configuration is not supported by the device` → `Error: No
+  audio input device found`. Resolve-OK / open-fail, mislabeled.
+- Named-real vs bogus timing split: real names take the ~10 s
+  open timeout; `ostmac-no-such-device` fails fast (0.76 s in /
+  0.27 s out) — resolve-fail and open-fail are distinguishable,
+  supporting fast-follow #2.
+- Speaker hw: `afplay Glass.aiff` exit 0, 3.5 s — WORKING.
+  OstTone: `tone_play` → `no_output` (10.01 s); named
+  `BoomAudio` → `unknown_device` (10.40 s) — BROKEN.
+- `tone_check`: `detected:true delay_ms:50.0
+  corr:1.0000` — WORKING. `dry_run`: `25/25 echo:true
+  5pkts/5nals` — WORKING. `mic_probe`: `input:false
+  output:false` (20.21 s = 2 timeouts).
+- `audio_devices`: identical 5 inputs + 1 output, same
+  defaults (2.02 s) — picker WORKING. Camera discovery lists
+  `iPhone Camera` + `FaceTime HD Camera`, both
+  `connected=true` — picker WORKING.
+- iPhone capture: first 4 s window 0 frames (Continuity
+  warmup), retry 1 frame 1920×1080 meanR=97.6, 1.9 MB PNG
+  (`tmp/om-av-verify2-iphone.png`; committed
+  `docs/shots/om-av-verify-iphone.png` from prior run stands) —
+  WORKING but first-open flaky.
+- FaceTime HD: 0 frames in 4 s, exit 5; single external
+  display online (lid closed) — BROKEN (environmental).
+- cpal re-run: F32 mic in OK + play Ok, F32 BoomAudio 6ch
+  OK, F32 mono OK, i16 ost-style ERROR
+  (`stream configuration not supported`) — root cause holds.
+- Suite: ost exit 0 (145 passed), ostmac-core exit 0
+  (123 passed), `swift test` exit 0 (755 tests, 0 failures).
