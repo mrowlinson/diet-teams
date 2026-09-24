@@ -14,20 +14,21 @@ in `--demo` with canned data; sign in via device code or browser to go live.
 Chat & conversation
 : Sidebar (Chats / Teams / Reminders, pinned Mentions/Notifications,
   user chat pins, mark-unread, hide, leave/block) + conversation with
-  Chat / Shared / Notes tabs, live Trouter feed, paged history, ⌘K jump
-  palette, filters.
+  Chat / Shared / Notes tabs, live Trouter feed, paged history, ⌘K
+  search palette (chats, messages, files, people), filters.
 : Send, edit, delete, quote replies, emoji reactions, forward/copy/save,
   pinned messages, @-mention picker, rich rendering (mentions, code,
-  inline images, bot posts, link previews), read receipts, typing
-  indicators.
+  inline images, bot posts, adaptive cards, link previews), read
+  receipts, typing indicators.
 : Shared files (list/upload/download, folders + drill-in, share links,
   versions, move/copy/rename/delete, resumable big uploads, drag-drop +
   QuickLook, sort/filter, save-as) + composer attachments; GIF picker
   (bring-your-own Tenor key).
 
 Teams, meetings, reminders, notes
-: Teams/channels browser (join team, create channel, channel detail +
-  tabs, team roster); upcoming meetings + join-string parsing + lobby;
+: Teams/channels browser (join/create team, create channel, channel
+  detail + tabs, team roster); upcoming meetings + join-string parsing
+  + lobby;
   To Do lists/tasks; OneNote notebooks/sections/pages read + paragraph append.
 
 Calls
