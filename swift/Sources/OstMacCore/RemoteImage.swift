@@ -240,9 +240,9 @@ struct ZoomedImage: View {
                 }
                 .padding(DietSpace.sm)
                 .help(err)
-                Divider()
+                DietDividerH()
             }
-            Divider()
+            DietDividerH()
             HStack(spacing: DietSpace.sm) {
                 Slider(
                     value: Binding(

@@ -32,6 +32,9 @@ struct ChatTimelineView: View {
     /// Look-ahead image prefetch (om-imgpreload): shared across chats
     /// (cache keys are URL+message, so fills dedupe naturally).
     @ObservedObject private var preload = ImagePreloadStore.shared
+    /// Reduce Motion (om-a1-motion): every scrollTo below lands
+    /// instantly when set — no animated travel.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         // One id index per body-eval (om-s6-renderparse): the strip,
@@ -159,7 +162,7 @@ struct ChatTimelineView: View {
                 .onChange(of: store.jumpTargetID) {
                     guard let target = store.jumpTargetID else { return }
                     scroll.cancelSettle()
-                    withAnimation { proxy.scrollTo(target, anchor: .center) }
+                    jumpScroll(proxy, target: target, anchor: .center)
                     store.clearJumpTarget()
                 }
                 .onAppear {
@@ -173,7 +176,7 @@ struct ChatTimelineView: View {
                     }
                     noteVisible()
                     // Shot hook: --show-picker pops the more-picker
-                    // on the first reacted bubble (or the first
+                    // on the bottom-most reacted bubble (or the last
                     // bubble). Messages arrive after open, so the id
                     // resolves at fire time with a few retries.
                     if CommandLine.arguments.contains("--show-picker") {
@@ -388,7 +391,19 @@ struct ChatTimelineView: View {
     private func jumpToPin(_ proxy: ScrollViewProxy, id: String) {
         guard PinnedMessages.jumpTarget(pinID: id, messages: store.messages) != nil else { return }
         DispatchQueue.main.async {
-            withAnimation { proxy.scrollTo(id, anchor: .center) }
+            self.jumpScroll(proxy, target: id, anchor: .center)
+        }
+    }
+
+    /// Animated jump scroll, instant under Reduce Motion. Single funnel
+    /// for the jump-to-message / pin / quote scrolls.
+    private func jumpScroll(
+        _ proxy: ScrollViewProxy, target: String, anchor: UnitPoint
+    ) {
+        if DietMotion.scrollAnimated(requested: true, reduceMotion: reduceMotion) {
+            withAnimation { proxy.scrollTo(target, anchor: anchor) }
+        } else {
+            proxy.scrollTo(target, anchor: anchor)
         }
     }
 
@@ -402,7 +417,7 @@ struct ChatTimelineView: View {
               store.messages.contains(where: { $0.id == target })
         else { return }
         DispatchQueue.main.async {
-            withAnimation { proxy.scrollTo(target, anchor: .center) }
+            self.jumpScroll(proxy, target: target, anchor: .center)
         }
     }
 
@@ -412,8 +427,9 @@ struct ChatTimelineView: View {
     /// below the fold). Empty thread → no-op.
     private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool = true) {
         guard let target = ScrollPolicy.bottomTargetID(tailID: store.messages.last?.id) else { return }
+        let animate = DietMotion.scrollAnimated(requested: animated, reduceMotion: reduceMotion)
         DispatchQueue.main.async {
-            if animated {
+            if animate {
                 withAnimation { proxy.scrollTo(target, anchor: .bottom) }
             } else {
                 proxy.scrollTo(target, anchor: .bottom)
@@ -421,18 +437,24 @@ struct ChatTimelineView: View {
         }
     }
 
-    /// --show-picker driver: resolve the target bubble once messages
-    /// exist, then ask its anchor to open the more-picker.
+    /// --show-picker driver: ask the target bubble's anchor to open
+    /// the more-picker. Re-posts until tries run out: the notified
+    /// anchor can be a stale copy (SwiftUI replaces representable
+    /// views during load), so a late-created anchor catches a later
+    /// post. The anchor dedups via isPickerShown.
     private static func postPickerShot(store: ConversationStore, tries: Int) {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-            let id = store.messages.first(where: { !$0.reactions.isEmpty })?.id
-                ?? store.messages.first?.id
+            guard tries > 0 else { return }
+            // Bottom-most: settle-to-bottom keeps the tail on-screen,
+            // and LazyVStack detaches off-screen rows (their anchors
+            // have no window, so the picker can never show on them).
+            let id = store.messages.last(where: { !$0.reactions.isEmpty })?.id
+                ?? store.messages.last?.id
             if let id {
                 NotificationCenter.default.post(
                     name: ReactionMenuAnchorView.shotPickerNote, object: id)
-            } else if tries > 1 {
-                postPickerShot(store: store, tries: tries - 1)
             }
+            postPickerShot(store: store, tries: tries - 1)
         }
     }
 

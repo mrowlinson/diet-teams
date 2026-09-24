@@ -112,8 +112,8 @@ public struct TeamsTabsView: View {
                 ProgressView()
                     .controlSize(.small)
                 Text("Loading tabs…")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(DietType.caption1)
+                    .foregroundStyle(DietColor.textSecondaryColor)
                 Spacer()
             }
             .padding(.horizontal, DietSpace.md)
@@ -121,14 +121,14 @@ public struct TeamsTabsView: View {
         case let .error(message):
             HStack(spacing: DietSpace.xs) {
                 Image(systemName: "exclamationmark.triangle")
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(Color(nsColor: DietColor.warning))
                 Text(message)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(DietType.caption1)
+                    .foregroundStyle(DietColor.textSecondaryColor)
                     .lineLimit(1)
                 Button("Retry") { store.refresh() }
                     .buttonStyle(.link)
-                    .font(.caption)
+                    .font(DietType.caption1)
                 Spacer()
             }
             .padding(.horizontal, DietSpace.md)
@@ -164,9 +164,9 @@ public struct TeamsTabsView: View {
         } label: {
             HStack(spacing: DietSpace.xs) {
                 Image(systemName: icon(for: target))
-                    .font(.caption2)
+                    .font(DietType.caption2)
                 Text(tab.name)
-                    .font(.caption)
+                    .font(DietType.caption1)
                     .lineLimit(1)
             }
             .padding(.horizontal, DietSpace.sm)
@@ -179,7 +179,8 @@ public struct TeamsTabsView: View {
             .clipShape(Capsule())
         }
         .buttonStyle(.plain)
-        .foregroundStyle(target == .none ? .tertiary : .primary)
+        .foregroundStyle(
+            target == .none ? DietColor.textTertiaryColor : DietColor.textPrimaryColor)
         .disabled(target == .none)
         .help(hint(for: tab))
     }

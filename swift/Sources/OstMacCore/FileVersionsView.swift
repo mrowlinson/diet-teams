@@ -9,6 +9,7 @@
 //   store.restore(version)   // old version becomes current
 //   store.save(version)      // old bytes to ~/Downloads
 // Tests inject mock fetchers (same seam as SharedFilesStore).
+import DietDesign
 import Foundation
 import DietDesign
 import SwiftUI
@@ -178,7 +179,7 @@ public struct FileVersionsView: View {
     public var body: some View {
         VStack(spacing: 0) {
             toolbar
-            Divider()
+            DietSeamH()
             content
         }
     }
@@ -186,24 +187,24 @@ public struct FileVersionsView: View {
     private var toolbar: some View {
         HStack {
             Text("\(store.versions.count) versions")
-                .font(.caption).monospaced()
-                .foregroundStyle(.secondary)
+                .font(DietType.caption1).monospaced()
+                .foregroundStyle(DietColor.textSecondaryColor)
             if let restored = store.restoredID {
                 Text("restored v\(restored)")
-                    .font(.caption)
-                    .foregroundStyle(.green)
+                    .font(DietType.caption1)
+                    .foregroundStyle(Color(nsColor: DietColor.success))
                     .lineLimit(1)
             }
             if let saved = store.savedPath {
                 Text("saved \(saved)")
-                    .font(.caption)
-                    .foregroundStyle(.green)
+                    .font(DietType.caption1)
+                    .foregroundStyle(Color(nsColor: DietColor.success))
                     .lineLimit(1)
                     .textSelection(.enabled)
             }
             Spacer()
             Button("Refresh") { store.refresh() }
-                .font(.caption)
+                .font(DietType.caption1)
                 .disabled(store.driveID == nil)
         }
         .padding(.horizontal)
@@ -221,32 +222,17 @@ public struct FileVersionsView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .empty:
-            VStack(spacing: DietSpace.row) {
-                Spacer()
-                Image(systemName: "clock.arrow.circlepath")
-                    .font(.largeTitle).foregroundStyle(.secondary)
-                Text("No older versions.")
-                    .font(.headline)
-                Text("Edits to this file will appear here.")
-                    .font(.callout).foregroundStyle(.secondary)
-                Spacer()
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            DietEmptyState(
+                systemImage: "clock.arrow.circlepath",
+                title: "No older versions.",
+                message: "Edits to this file will appear here.")
         case let .error(message):
-            VStack(spacing: DietSpace.row) {
-                Spacer()
-                Image(systemName: "exclamationmark.triangle")
-                    .font(.largeTitle).foregroundStyle(.orange)
-                Text(message)
-                    .font(.callout).foregroundStyle(.red)
-                    .multilineTextAlignment(.center)
-                    .textSelection(.enabled)
-                    .padding(.horizontal)
-                Button("Retry") { store.refresh() }
-                    .buttonStyle(.bordered)
-                Spacer()
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            DietEmptyState(
+                systemImage: "exclamationmark.triangle",
+                title: "Couldn't load versions",
+                message: message,
+                actionLabel: "Retry",
+                action: { store.refresh() })
         case .loaded:
             List(store.versions) { version in
                 FileVersionRow(
@@ -273,17 +259,20 @@ struct FileVersionRow: View {
     var body: some View {
         HStack(spacing: DietSpace.sm) {
             Image(systemName: isRestored ? "checkmark.circle.fill" : "clock")
-                .font(.title2)
-                .foregroundStyle(isRestored ? .green : .secondary)
+                .font(DietType.title2)
+                .foregroundStyle(
+                    isRestored
+                        ? Color(nsColor: DietColor.success)
+                        : DietColor.textSecondaryColor)
                 .frame(width: 28)
             VStack(alignment: .leading, spacing: DietSpace.xxs) {
                 Text(version.subtitle)
-                    .font(.body)
+                    .font(DietType.body)
                     .lineLimit(1)
                     .textSelection(.enabled)
                 Text(version.sizeLabel)
-                    .font(.caption).monospaced()
-                    .foregroundStyle(.secondary)
+                    .font(DietType.caption1).monospaced()
+                    .foregroundStyle(DietColor.textSecondaryColor)
             }
             Spacer()
             if busy {
@@ -291,11 +280,11 @@ struct FileVersionRow: View {
             } else {
                 Button("Restore", action: onRestore)
                     .buttonStyle(.link)
-                    .font(.caption)
+                    .font(DietType.caption1)
                     .help("Make this version current")
                 Button("Save old", action: onSave)
                     .buttonStyle(.link)
-                    .font(.caption)
+                    .font(DietType.caption1)
                     .help("Download this version to ~/Downloads")
             }
         }

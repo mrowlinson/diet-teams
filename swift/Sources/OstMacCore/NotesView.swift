@@ -3,6 +3,7 @@
 // Notebook/section pickers, page list, rendered page, append box. Page HTML
 // renders through NSAttributedString's HTML importer; unparseable pages
 // fall back to stripped text (never blank, never raw tags).
+import DietDesign
 import SwiftUI
 import DietDesign
 
@@ -17,7 +18,7 @@ public struct NotesView: View {
     public var body: some View {
         VStack(spacing: 0) {
             pickers
-            Divider()
+            DietSeamH()
             switch store.state {
             case .idle:
                 idleHint
@@ -28,7 +29,7 @@ public struct NotesView: View {
             default:
                 content
             }
-            Divider()
+            DietSeamH()
             appendBox
         }
         .frame(minWidth: 380, minHeight: 480)
@@ -61,14 +62,14 @@ public struct NotesView: View {
             Spacer()
             if store.groupID != nil {
                 Text("team notes")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .font(DietType.caption2)
+                    .foregroundStyle(DietColor.textSecondaryColor)
                     .padding(.horizontal, DietSpace.xs).padding(.vertical, DietSpace.xxs)
                     .background(Color.blue.opacity(0.12))
                     .clipShape(Capsule())
             } else if store.isDemo {
                 Text("DEMO")
-                    .font(.caption2).bold()
+                    .font(DietType.caption2).bold()
                     .padding(.horizontal, DietSpace.xs).padding(.vertical, DietSpace.xxs)
                     .background(.orange.opacity(0.2))
                     .clipShape(Capsule())
@@ -103,34 +104,22 @@ public struct NotesView: View {
     private var loadingHint: some View {
         VStack(spacing: DietSpace.row) {
             ProgressView().controlSize(.small)
-            Text("Loading notes…").foregroundStyle(.secondary)
+            Text("Loading notes…").foregroundStyle(DietColor.textSecondaryColor)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func errorHint(_ message: String) -> some View {
-        VStack(spacing: DietSpace.row) {
-            Image(systemName: "exclamationmark.triangle")
-                .font(.largeTitle).foregroundStyle(.secondary)
-            Text(message)
-                .font(.caption)
-                .foregroundStyle(.red)
-                .lineLimit(4)
-                .textSelection(.enabled)
-            Button("Retry") { store.open(groupID: store.groupID) }
-        }
-        .padding()
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        DietEmptyState(
+            systemImage: "exclamationmark.triangle",
+            title: "Couldn't load notes",
+            message: message,
+            actionLabel: "Retry",
+            action: { store.open(groupID: store.groupID) })
     }
 
     private func hint(systemImage: String, title: String, body: String) -> some View {
-        VStack(spacing: DietSpace.row) {
-            Image(systemName: systemImage)
-                .font(.largeTitle).foregroundStyle(.secondary)
-            Text(title).font(.headline)
-            Text(body).font(.caption).foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        DietEmptyState(systemImage: systemImage, title: title, message: body)
     }
 
     // MARK: - Content
@@ -149,7 +138,7 @@ public struct NotesView: View {
         case .loadingSections:
             VStack(spacing: DietSpace.row) {
                 ProgressView().controlSize(.small)
-                Text("Loading sections…").foregroundStyle(.secondary)
+                Text("Loading sections…").foregroundStyle(DietColor.textSecondaryColor)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .noSections:
@@ -159,7 +148,7 @@ public struct NotesView: View {
         case .browse:
             HStack(spacing: 0) {
                 pageList
-                Divider()
+                DietDividerV()
                 pageDetail
             }
         }
@@ -172,7 +161,7 @@ public struct NotesView: View {
                     store.selectedSectionID == nil
                         ? "Select a section." : "No pages in this section."
                 )
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DietColor.textSecondaryColor)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List(store.pages, selection: pageBinding) { page in
@@ -181,8 +170,8 @@ public struct NotesView: View {
                             .lineLimit(2)
                         if let updated = page.updated {
                             Text(ChatMessage.shortTime(updated))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .font(DietType.caption1)
+                                .foregroundStyle(DietColor.textSecondaryColor)
                         }
                     }
                     .tag(page.id)
@@ -206,10 +195,10 @@ public struct NotesView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: DietSpace.row) {
                         Text(page.title.isEmpty ? "Untitled" : page.title)
-                            .font(.title3).bold()
+                            .font(DietType.title3).bold()
                             .textSelection(.enabled)
                         Text(Self.rendered(html: page.html))
-                            .font(.body)
+                            .font(DietType.body)
                             .textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
@@ -219,7 +208,7 @@ public struct NotesView: View {
                 Text(Self.detailHint(
                     sectionSelected: store.selectedSectionID != nil,
                     pagesEmpty: store.pages.isEmpty))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DietColor.textSecondaryColor)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
@@ -232,8 +221,8 @@ public struct NotesView: View {
         VStack(spacing: DietSpace.xs) {
             if let err = store.appendError {
                 Text(err)
-                    .font(.caption)
-                    .foregroundStyle(.red)
+                    .font(DietType.caption1)
+                    .foregroundStyle(Color(nsColor: DietColor.danger))
                     .lineLimit(2)
                     .textSelection(.enabled)
             }

@@ -841,9 +841,9 @@ public struct SharedFilesView: View {
         VStack(spacing: 0) {
             toolbar
             controls
-            Divider()
+            DietSeamH()
             if !store.isRoot { breadcrumbs }
-            if !store.isRoot { Divider() }
+            if !store.isRoot { DietSeamH() }
             content
         }
         .sheet(item: $renameTarget) { file in
@@ -861,7 +861,7 @@ public struct SharedFilesView: View {
         }
         .sheet(item: $copyTarget) { file in
             VStack(spacing: DietSpace.row) {
-                Text("Copy “\(file.name)”").font(.headline)
+                Text("Copy “\(file.name)”").font(DietType.headline)
                 TextField("Destination folder id", text: $copyFolder)
                     .textFieldStyle(.roundedBorder)
                 TextField("New name (optional)", text: $copyName)
@@ -902,7 +902,7 @@ public struct SharedFilesView: View {
 
     private func renameSheet(_ file: SharedFile) -> some View {
         VStack(spacing: DietSpace.row) {
-            Text("Rename “\(file.name)”").font(.headline)
+            Text("Rename “\(file.name)”").font(DietType.headline)
             TextField("New name", text: $renameName)
                 .textFieldStyle(.roundedBorder)
             HStack {
@@ -927,7 +927,7 @@ public struct SharedFilesView: View {
         action: @escaping () -> Void
     ) -> some View {
         VStack(spacing: DietSpace.row) {
-            Text(title).font(.headline)
+            Text(title).font(DietType.headline)
             TextField("Destination folder id", text: folder)
                 .textFieldStyle(.roundedBorder)
             HStack {
@@ -947,22 +947,22 @@ public struct SharedFilesView: View {
     private var breadcrumbs: some View {
         HStack(spacing: DietSpace.xs) {
             Button("‹ Back") { store.back() }
-                .font(.caption)
+                .font(DietType.caption1)
                 .buttonStyle(.link)
-            Text("·").foregroundStyle(.secondary)
+            Text("·").foregroundStyle(DietColor.textSecondaryColor)
             Button("Files") { store.goToRoot() }
-                .font(.caption)
+                .font(DietType.caption1)
                 .buttonStyle(.link)
             ForEach(Array(store.crumbs.enumerated()), id: \.offset) { i, crumb in
-                Text("/").foregroundStyle(.secondary).font(.caption)
+                Text("/").foregroundStyle(DietColor.textSecondaryColor).font(DietType.caption1)
                 if i == store.crumbs.count - 1 {
                     Text(crumb.name)
-                        .font(.caption)
+                        .font(DietType.caption1)
                         .fontWeight(.semibold)
                         .lineLimit(1)
                 } else {
                     Button(crumb.name) { store.goTo(depth: i + 1) }
-                        .font(.caption)
+                        .font(DietType.caption1)
                         .buttonStyle(.link)
                         .lineLimit(1)
                 }
@@ -977,19 +977,19 @@ public struct SharedFilesView: View {
         VStack(spacing: DietSpace.xs) {
             HStack {
                 Text("\(store.displayedFiles.count) files")
-                    .font(.caption).monospaced()
-                    .foregroundStyle(.secondary)
+                    .font(DietType.caption1).monospaced()
+                    .foregroundStyle(DietColor.textSecondaryColor)
                 if let saved = store.savedPath {
                     Text("saved \(saved)")
-                        .font(.caption)
-                        .foregroundStyle(.green)
+                        .font(DietType.caption1)
+                        .foregroundStyle(Color(nsColor: DietColor.success))
                         .lineLimit(1)
                         .textSelection(.enabled)
                     if QuickLookPreview.canPreview(path: saved) {
                         Button("Preview") {
                             QuickLookPreview.shared.preview(paths: [saved])
                         }
-                        .font(.caption)
+                        .font(DietType.caption1)
                         .help("Preview the saved file (Quick Look)")
                     }
                 }
@@ -997,28 +997,28 @@ public struct SharedFilesView: View {
                 if store.uploading {
                     if let frac = store.uploadProgress {
                         Text("\(Int((frac * 100).rounded()))%")
-                            .font(.caption).monospaced()
-                            .foregroundStyle(.secondary)
+                            .font(DietType.caption1).monospaced()
+                            .foregroundStyle(DietColor.textSecondaryColor)
                     }
                     ProgressView().controlSize(.small)
                 }
                 Button("Upload…") { pickAndUpload() }
-                    .font(.caption)
+                    .font(DietType.caption1)
                     .disabled(store.uploading || store.chatID == nil)
                     .help("Upload files (<4 MB each) to this chat")
                 Button("Refresh") { store.refresh() }
-                    .font(.caption)
+                    .font(DietType.caption1)
                     .disabled(store.chatID == nil)
             }
             if let err = store.uploadError {
                 HStack {
                     Text(err)
-                        .font(.caption)
-                        .foregroundStyle(.red)
+                        .font(DietType.caption1)
+                        .foregroundStyle(Color(nsColor: DietColor.danger))
                         .lineLimit(1)
                     Spacer()
                     Button("Dismiss") { store.clearUploadError() }
-                        .font(.caption)
+                        .font(DietType.caption1)
                         .buttonStyle(.link)
                 }
             }
@@ -1074,32 +1074,19 @@ public struct SharedFilesView: View {
         case .loading, .loaded:
             fileList
         case .empty:
-            VStack(spacing: DietSpace.row) {
-                Spacer()
-                Image(systemName: "folder")
-                    .font(.largeTitle).foregroundStyle(.secondary)
-                Text(store.isRoot ? "No shared files yet." : "This folder is empty.")
-                    .font(.headline)
-                Text(store.isRoot ? "Files shared in this conversation appear here." : "Files in this folder appear here.")
-                    .font(.callout).foregroundStyle(.secondary)
-                Spacer()
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            DietEmptyState(
+                systemImage: "folder",
+                title: store.isRoot ? "No shared files yet." : "This folder is empty.",
+                message: store.isRoot
+                    ? "Files shared in this conversation appear here."
+                    : "Files in this folder appear here.")
         case let .error(message):
-            VStack(spacing: DietSpace.row) {
-                Spacer()
-                Image(systemName: "exclamationmark.triangle")
-                    .font(.largeTitle).foregroundStyle(.orange)
-                Text(message)
-                    .font(.callout).foregroundStyle(.red)
-                    .multilineTextAlignment(.center)
-                    .textSelection(.enabled)
-                    .padding(.horizontal)
-                Button("Retry") { store.refresh() }
-                    .buttonStyle(.bordered)
-                Spacer()
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            DietEmptyState(
+                systemImage: "exclamationmark.triangle",
+                title: "Couldn't load shared files",
+                message: message,
+                actionLabel: "Retry",
+                action: { store.refresh() })
         }
     }
 
@@ -1135,7 +1122,7 @@ public struct SharedFilesView: View {
                         copyTarget = file
                     }
                     .disabled(file.drive_id == nil)
-                    Divider()
+                    Divider() // native context-menu separator; keep.
                     Button("Delete…", role: .destructive) {
                         deleteTarget = file
                     }
@@ -1192,22 +1179,22 @@ struct SharedFileRow: View {
         if drillable {
             HStack(spacing: DietSpace.sm) {
                 Image(systemName: "folder")
-                    .font(.title2)
-                    .foregroundStyle(.secondary)
+                    .font(DietType.title2)
+                    .foregroundStyle(DietColor.textSecondaryColor)
                     .frame(width: 28)
                 VStack(alignment: .leading, spacing: DietSpace.xxs) {
                     Text(file.name)
-                        .font(.body)
+                        .font(DietType.body)
                         .lineLimit(1)
                         .textSelection(.enabled)
                     Text("Folder")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(DietType.caption1)
+                        .foregroundStyle(DietColor.textSecondaryColor)
                 }
                 Spacer()
                 Image(systemName: "chevron.right")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(DietType.caption1)
+                    .foregroundStyle(DietColor.textSecondaryColor)
             }
             .padding(.vertical, DietSpace.xs)
             .contentShape(Rectangle())
@@ -1215,22 +1202,22 @@ struct SharedFileRow: View {
         } else {
             HStack(spacing: DietSpace.sm) {
                 Image(systemName: file.isFolder ? "folder" : file.iconName)
-                    .font(.title2)
-                    .foregroundStyle(.secondary)
+                    .font(DietType.title2)
+                    .foregroundStyle(DietColor.textSecondaryColor)
                     .frame(width: 28)
                 VStack(alignment: .leading, spacing: DietSpace.xxs) {
                     Text(file.name)
-                        .font(.body)
+                        .font(DietType.body)
                         .lineLimit(1)
                         .textSelection(.enabled)
                     HStack(spacing: DietSpace.xs) {
                         Text(file.sizeLabel)
-                            .font(.caption).monospaced()
-                            .foregroundStyle(.secondary)
+                            .font(DietType.caption1).monospaced()
+                            .foregroundStyle(DietColor.textSecondaryColor)
                         if let sender = file.sender {
                             Text("· \(sender)")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .font(DietType.caption1)
+                                .foregroundStyle(DietColor.textSecondaryColor)
                                 .lineLimit(1)
                         }
                     }
@@ -1242,13 +1229,13 @@ struct SharedFileRow: View {
                     if file.web_url != nil {
                         Button("Open", action: onOpen)
                             .buttonStyle(.link)
-                            .font(.caption)
+                            .font(DietType.caption1)
                             .help("Open in SharePoint (browser)")
                     }
                     if file.drive_id != nil || file.download_url != nil {
                         Button("Save", action: onSave)
                             .buttonStyle(.link)
-                            .font(.caption)
+                            .font(DietType.caption1)
                             .help("Save as… (defaults to ~/Downloads)")
                     }
                     if file.drive_id != nil {
