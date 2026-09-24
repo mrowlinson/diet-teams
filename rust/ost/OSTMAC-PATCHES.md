@@ -589,3 +589,27 @@ Held (need signed-in live runs before upstreaming):
   remove against a signed-in box).
 - ledger 37 [major] resumable uploads (I4: NOT live-verified — no test
   chat; session wire shape per Graph docs only).
+
+## Upstream PRs, wave 5 (2026-09-24, base 0892144; origin/main still 0892144)
+
+Minor (stacked: merge after the noted base; only the PR's top commit is new):
+- (aa) channel reply parents (ledger 44, after #14 — needs `reply_to` +
+  quote-split surface; #14 after #6):
+  https://github.com/eisbaw/ost/pull/31
+Held (docs shapes only, no live run — confirm on a signed-in box before
+upstreaming):
+- ledger 40 [major] message search (JA: wire shape per MS chat-message
+  search docs; stored Graph token expired, no live run).
+- ledger 41 [major] file + people search (JB: shapes per MS
+  driveitem-search + `$search` docs; no live run).
+- ledger 42 channel reactions (JE: unicode-vs-named `reactionType`, grant,
+  and id mapping unconfirmed; probe auth-blocked before any network, no
+  writes made).
+- ledger 43 team create (JF: would create a real team; wire shape per
+  Graph create-team docs, no live run).
+- ledger 45 1:1 chat create (LT5: no signed-in runs; Graph mints a thread
+  per call, dupes possible).
+Still held from wave 4 — OWNER-BLOCKED 2026-09-24: refresh token dead
+(AADSTS70043 token_expired, max lifetime 86400s; only fix is human
+`teams-cli login`). Post-login harness ready (`tmp/om-live-api-verify.sh`
++ RUNBOOK, PARTIAL-flex-15). Items: ledger 17, 27, 29, 30, 32, 37.
