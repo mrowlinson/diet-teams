@@ -117,45 +117,59 @@ public struct TeamsBrowser: View {
                         DisclosureGroup(
                             isExpanded: expandedBinding(for: team.id, filtering: filtering)
                         ) {
-                            if team.channels.isEmpty {
-                                Text("No channels")
-                                    .font(DietType.callout)
-                                    .foregroundStyle(DietColor.textSecondaryColor)
-                            } else {
-                                ForEach(team.channels) { channel in
-                                    ChannelRow(
-                                        channel: channel,
-                                        teamName: team.name,
-                                        isOpen: channel.id == openChatID,
-                                        onOpen: onOpen)
-                                        .unreadBadge(unread.count(for: channel.id))
-                                        // om-markunread: same native row
-                                        // menu as the chats list (top-level
-                                        // only). Badge updates in place; the
-                                        // browser never refetches.
-                                        .contextMenu {
-                                            if unread.count(for: channel.id) > 0 {
-                                                Button("Mark as Read") {
-                                                    unread.markRead(chatID: channel.id)
-                                                }
-                                            } else {
-                                                Button("Mark as Unread") {
-                                                    unread.markUnread(chatID: channel.id)
+                            Group {
+                                if team.channels.isEmpty {
+                                    Text("No channels")
+                                        .font(DietType.callout)
+                                        .foregroundStyle(DietColor.textSecondaryColor)
+                                } else {
+                                    ForEach(team.channels) { channel in
+                                        ChannelRow(
+                                            channel: channel,
+                                            teamName: team.name,
+                                            isOpen: channel.id == openChatID,
+                                            onOpen: onOpen)
+                                            .unreadBadge(unread.count(for: channel.id))
+                                            // om-markunread: same native row
+                                            // menu as the chats list (top-level
+                                            // only). Badge updates in place; the
+                                            // browser never refetches.
+                                            .contextMenu {
+                                                if unread.count(for: channel.id) > 0 {
+                                                    Button("Mark as Read") {
+                                                        unread.markRead(chatID: channel.id)
+                                                    }
+                                                } else {
+                                                    Button("Mark as Unread") {
+                                                        unread.markUnread(chatID: channel.id)
+                                                    }
                                                 }
                                             }
-                                        }
+                                    }
                                 }
                             }
+                            // Insertion is opacity-only + clipped: labels hold
+                            // their slots and never paint outside them.
+                            // (Chevron toggles step instantly — no animation
+                            // on disclosure state, see below — so nothing
+                            // interpolates and nothing slides.)
+                            .transition(.opacity)
+                            .clipped()
                         } label: {
                             TeamHeader(name: team.name)
                         }
                     }
                 }
                 .listStyle(.sidebar)
-                // System-default animation for chevron toggles (value 1)
-                // and for filter keystrokes (value 2: rows match/unmatch
-                // plus pinned-open expansion). Standard SwiftUI only.
-                .animation(.default, value: collapsedTeamIDs)
+                // No animation on disclosure state: chevron toggles step
+                // instantly to their final slots — labels stay put instead
+                // of sliding through intermediate positions (verified
+                // frame-by-frame). The sidebar outline drives row
+                // expansion natively and ignores .opacity transitions, so
+                // any animation here can only slide, never fade — stepped
+                // is the no-slide fix. Filter keystrokes keep the
+                // system-default animation (rows match/unmatch plus
+                // pinned-open expansion). Standard SwiftUI only.
                 .animation(.default, value: searchText)
             }
         }
@@ -192,6 +206,10 @@ struct TeamHeader: View {
                 .foregroundStyle(DietColor.textPrimaryColor)
                 .lineLimit(1)
         }
+        // Leading anchor + clip: the header label holds its slot and
+        // clips during expand/collapse instead of drifting.
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .clipped()
         .padding(.vertical, DietSpace.xs)
     }
 }
@@ -222,6 +240,10 @@ struct ChannelRow: View {
                         .accessibilityLabel("Open")
                 }
             }
+            // Leading anchor + clip: channel labels fade in place
+            // (see disclosure content transition above), never slide.
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .clipped()
             .padding(.vertical, DietSpace.xs)
         }
         .buttonStyle(.plain)
