@@ -404,7 +404,14 @@ final class AppState: ObservableObject {
                 fetcher: { _ in seed },
                 leaver: { LeaveResponse(ok: true, chat_id: $0) },
                 blocked: blocked)
-            teams = TeamsViewModel(fetcher: { DemoData.teamsResponse() })
+            teams = TeamsViewModel(
+                fetcher: { DemoData.teamsResponse() },
+                creator: { _, name, _ in
+                    ChannelCreateResponse(
+                        ok: true,
+                        channel: TeamChannel(
+                            channelId: "demo-channel-\(name)", name: name))
+                })
             reminders = RemindersViewModel(
                 listsFetcher: { DemoData.remindersResponse() },
                 tasksFetcher: { DemoData.reminderTasksResponse(for: $0) },

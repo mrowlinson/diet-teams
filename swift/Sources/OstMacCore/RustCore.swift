@@ -67,6 +67,59 @@ public enum RustCore {
         try call(ostmac_teams(), as: TeamsResponse.self)
     }
 
+    /// Create one standard channel in a team (nil/blank description is
+    /// dropped by core). Blocking FFI (network): call off the main thread.
+    public static func channelCreate(
+        teamID: String, name: String, description: String? = nil
+    ) throws -> ChannelCreateResponse {
+        try teamID.withCString { idPtr in
+            try name.withCString { namePtr in
+                try withOptionalCString(description) { descPtr in
+                    try call(
+                        ostmac_channel_create(idPtr, namePtr, descPtr),
+                        as: ChannelCreateResponse.self)
+                }
+            }
+        }
+    }
+
+    public static func teamMembers(teamID: String) throws -> TeamMembersResponse {
+        try teamID.withCString { ptr in
+            try call(ostmac_team_members(ptr), as: TeamMembersResponse.self)
+        }
+    }
+
+    public static func teamMemberAdd(teamID: String, user: String, owner: Bool = false) throws -> TeamMemberAddResponse {
+        try teamID.withCString { teamPtr in
+            try user.withCString { userPtr in
+                try call(ostmac_team_member_add(teamPtr, userPtr, owner ? 1 : 0), as: TeamMemberAddResponse.self)
+            }
+        }
+    }
+
+    /// Join one team by id (self-enroll, blocking FFI: call off main thread).
+    public static func teamJoin(teamID: String) throws -> TeamJoinResponse {
+        try teamID.withCString { ptr in
+            try call(ostmac_team_join(ptr), as: TeamJoinResponse.self)
+        }
+    }
+
+    /// One channel's pinned tabs, read-only (blocking FFI + network:
+    /// call off the main thread).
+    public static func tabs(channelID: String) throws -> TabsResponse {
+        try channelID.withCString { ptr in
+            try call(ostmac_tabs(ptr), as: TabsResponse.self)
+        }
+    }
+
+    public static func teamMemberRemove(teamID: String, memberID: String) throws -> TeamMemberRemoveResponse {
+        try teamID.withCString { teamPtr in
+            try memberID.withCString { memberPtr in
+                try call(ostmac_team_member_remove(teamPtr, memberPtr), as: TeamMemberRemoveResponse.self)
+            }
+        }
+    }
+
     public static func messages(chatID: String, limit: Int32 = 50) throws -> MessagesResponse {
         try chatID.withCString { ptr in
             try call(ostmac_messages(ptr, limit), as: MessagesResponse.self)

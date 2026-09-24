@@ -261,6 +261,71 @@ needing maintainer buy-in. Minor PRs stand alone; majors are separate PRs.
     upstream until `leave` succeeds against a signed-in box (same bar
     as ledger 17 reactions). Unit tests: MRI + endpoint shapes.
 
+28. [minor] `src/api/teams.rs` — **channel list detail (om-h1-listdetail
+    lane)**. `ChannelInfo` gains `description`, `membership_type`,
+    `web_url` (all `Option<String>`, from Graph `description` /
+    `membershipType` / `webUrl` on `GET /teams/{id}/channels`).
+    Additive fields only; `list_teams` output and TUI unchanged.
+    Live findings (tacv2 channel ids through chat-service endpoints):
+    `send` / `mark_read` / `delete` accept tacv2 ids;
+    `read_receipts_data` 403s (`AclCheckFailed`, not a roster member;
+    chats OK); `react` 404s on `/reactions`. Receipts/reactions on
+    channels need a different (likely Graph) path; not implemented.
+
+29. [minor] `src/api/teams.rs` + `src/api/mod.rs` —
+    **join team by id (om-h2-join lane)**. New `join_team_data(client,
+    team_id)` self-enrolls via `POST /teams/{id}/members`
+    (`aadUserConversationMember`, no roles; own user id resolved from
+    Graph /me first). Trims id; rejects empty + path separators before
+    network. Re-exported in `src/api/mod.rs`. Join-by-code NOT Graph
+    (6-char codes redeem only via undocumented teams.microsoft.com web
+    API) — out of scope. TUI untouched.
+
+30. [minor] `src/api/teams.rs` + `src/api/mod.rs` —
+    **channel creation (om-h3-create lane)**. New
+    `create_channel_data(client, team_id, name, description)` via Graph
+    `POST /teams/{team-id}/channels` (body `displayName` + optional
+    `description`), returning `ChannelInfo` (`ChannelInfo` shape
+    unchanged). Pure `create_channel_path` / `create_channel_body`
+    pinned by unit tests; shared `channel_info` mapper now feeds both
+    list and create paths. NOT verified live against the server in
+    this lane; a 403 surfaces as the call's detail. Team creation
+    (`POST /teams`) deliberately excluded: Graph returns 202 + async
+    provisioning (Content-Location poll), left for a follow-up lane.
+    TUI untouched.
+
+31. [minor] `src/api/tabs.rs` (new) + `src/api/mod.rs` + `src/main.rs` —
+    **channel tabs read-only (om-h4-tabs lane)**. New `TabInfo` (`id`,
+    `name`, `app_id`, `content_url`, `website_url` — link-out targets
+    only, no content) from Graph
+    `GET /teams/{team}/channels/{channel}/tabs`. `list_tabs_data`
+    resolves the owning team via a joinedTeams scan (files.rs parity);
+    empty ids bail pre-network, unknown channels post-scan. CLI:
+    `teams-cli tabs <channel_id>` (read-only). Additive module only;
+    existing commands and TUI unchanged. Live findings (tacv2
+    channels): the list carries Files/Notes/website tabs with
+    deep-link URLs; Posts is absent (built-in, not returned).
+
+32. [minor] `src/api/teams.rs` + `src/api/client.rs` + `src/api/mod.rs` +
+    `src/main.rs` — **team roster: list/add/remove members + owners
+    (om-h5-members lane)**. New `TeamMemberInfo` (membership id,
+    display_name, user_id?, email?, roles, is_owner from
+    `roles.contains("owner")`); `list_team_members_data` (Graph
+    `GET /teams/{id}/members`), `add_team_member_data` (Graph
+    `POST /teams/{id}/members`, `aadUserConversationMember` body,
+    optional `owner` role), `remove_team_member_data` (Graph
+    `DELETE /teams/{id}/members/{membership-id}`). Pure
+    `members_path` / `member_path` / `add_member_body` pinned by unit
+    tests; ids guarded (empty + `/ ? #` + whitespace rejected before
+    network, todo.rs pattern). New `TeamsClient::graph_delete`.
+    CLI: `teams-cli members --team <id> [--owners]` lists,
+    `--add <user-or-upn> [--owner]` adds, `--remove <membership-id>`
+    removes (`--add`+`--remove` exclusive). Re-exported in
+    `src/api/mod.rs`. Missing displayName falls back to membership
+    id; blank stays blank (Swift caller-fallback owns names). NOT
+    verified live against the server in this lane; 403 surfaces as
+    call detail. TUI untouched.
+
 ## Upstream PRs (2026-09-22, base 0892144; main red on sdp E0308 until #5)
 
 Minor (standalone modulo #5-first; merge in any order after):

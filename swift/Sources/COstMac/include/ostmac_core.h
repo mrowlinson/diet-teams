@@ -46,6 +46,30 @@ char *ostmac_chats(int limit);
 // Joined teams + channels JSON (requires sign-in). Caller frees.
 char *ostmac_teams(void);
 
+// Create one standard channel in a team (Graph POST, requires sign-in):
+// {ok,channel:{id,name}}. description may be NULL (no description).
+// Caller frees.
+char *ostmac_channel_create(
+    const char *team_id, const char *name, const char *description);
+
+// Join one team by id (self-enroll): {ok, team_id}. Caller frees.
+char *ostmac_team_join(const char *team_id);
+
+// One channel's pinned tabs JSON, read-only: {ok, channel_id, tabs}. Caller frees.
+char *ostmac_tabs(const char *channel_id);
+
+// One team's roster JSON: {ok, team_id, members:[{id, display_name,
+// user_id?, email?, roles, is_owner}]} (requires sign-in). Caller frees.
+char *ostmac_team_members(const char *team_id);
+
+// Add one user (id or UPN) to a team; owner nonzero grants the owner
+// role. Returns {ok, member}. Caller frees.
+char *ostmac_team_member_add(const char *team_id, const char *user, int owner);
+
+// Remove one membership id from a team. Returns {ok, team_id,
+// member_id}. Caller frees.
+char *ostmac_team_member_remove(const char *team_id, const char *member_id);
+
 // Message history JSON for one chat (requires sign-in). Caller frees.
 char *ostmac_messages(const char *chat_id, int limit);
 

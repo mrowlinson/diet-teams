@@ -147,22 +147,37 @@ public struct ChatsResponse: Decodable, Sendable {
 // MARK: - Teams (om-teams lane)
 
 /// One channel inside a team. Wire format from core `ostmac_teams`:
-/// `{"id","name"}`. The id opens as a conversation through the same
-/// messages/send path as chat ids (ost TUI parity).
+/// `{"id","name","description?","membership_type?","web_url?"}`.
+/// The id opens as a conversation through the same messages/send path
+/// as chat ids (ost TUI parity). Detail fields are nil on pre-H1
+/// payloads and when Graph omits them.
 public struct TeamChannel: Decodable, Sendable, Identifiable {
     public var id: String { channelId }
     public let channelId: String
     public let name: String
+    public let description: String?
+    public let membershipType: String?
+    public let webUrl: String?
 
     enum CodingKeys: String, CodingKey {
         case channelId = "id"
-        case name
+        case name, description
+        case membershipType = "membership_type"
+        case webUrl = "web_url"
     }
 
     /// Host-side construction (demo data, previews). Wire decoding is untouched.
-    public init(channelId: String, name: String) {
+    public init(
+        channelId: String, name: String,
+        description: String? = nil,
+        membershipType: String? = nil,
+        webUrl: String? = nil
+    ) {
         self.channelId = channelId
         self.name = name
+        self.description = description
+        self.membershipType = membershipType
+        self.webUrl = webUrl
     }
 }
 
@@ -194,6 +209,194 @@ public struct TeamsResponse: Decodable, Sendable {
     public init(ok: Bool, teams: [TeamItem]) {
         self.ok = ok
         self.teams = teams
+    }
+}
+
+/// `{ok,channel}` from `ostmac_channel_create`.
+public struct ChannelCreateResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let channel: TeamChannel
+
+    /// Host-side construction (mocks, previews). Wire decoding is untouched.
+    public init(ok: Bool, channel: TeamChannel) {
+        self.ok = ok
+        self.channel = channel
+    }
+}
+
+/// Join-one-team result from core `ostmac_team_join`: `{"ok","team_id"}`.
+public struct TeamJoinResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let team_id: String
+
+    /// Host-side construction (tests, previews). Wire decoding is untouched.
+    public init(ok: Bool, team_id: String) {
+        self.ok = ok
+        self.team_id = team_id
+    }
+}
+
+// MARK: - Channel tabs (om-h4-tabs lane)
+
+/// Where one channel tab deep-links. Posts/Files/Notes land in the
+/// conversation view's own Chat/Shared/Notes tabs; website tabs open in
+/// the browser; unknown tabs with no URL go nowhere (rendered dimmed).
+public enum ChannelTabTarget: Equatable, Sendable {
+    case chat
+    case shared
+    case notes
+    case web(URL)
+    case none
+}
+
+/// One pinned channel tab from core `ostmac_tabs` (Graph tabs
+/// projection): identity + link-out targets only. No content renderers —
+/// `target` maps well-known tabs to host views, the rest to the browser.
+public struct ChannelTab: Decodable, Sendable, Identifiable, Equatable {
+    public let id: String
+    public let name: String
+    public let appID: String?
+    public let contentURL: String?
+    public let websiteURL: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, name
+        case appID = "app_id"
+        case contentURL = "content_url"
+        case websiteURL = "website_url"
+    }
+
+    /// Teams Files-tab app id (SharePoint file browser).
+    public static let filesAppID = "com.microsoft.teamspace.tab.files.sharepoint"
+    /// Teams OneNote-tab app id (channel notebook).
+    public static let notesAppID = "0d820ecd-def2-4297-a09a-912c7e06f45b"
+
+    /// Host-side construction (demo data, previews, mock fetchers).
+    /// Wire decoding is untouched.
+    public init(
+        id: String, name: String, appID: String? = nil,
+        contentURL: String? = nil, websiteURL: String? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.appID = appID
+        self.contentURL = contentURL
+        self.websiteURL = websiteURL
+    }
+
+    /// Deep-link target: well-known tabs by app id (name fallback for
+    /// tenants that omit it), then content/website URL, else nowhere.
+    public var target: ChannelTabTarget {
+        let n = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if n == "posts" { return .chat }
+        if appID == Self.filesAppID || n == "files" { return .shared }
+        if appID == Self.notesAppID || n == "notes" { return .notes }
+        if let s = contentURL ?? websiteURL,
+           let url = URL(string: s), url.scheme != nil
+        {
+            return .web(url)
+        }
+        return .none
+    }
+}
+
+public struct TabsResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let channel_id: String?
+    public let tabs: [ChannelTab]
+
+    /// Host-side construction (demo data, previews, mock fetchers).
+    /// Wire decoding is untouched.
+    public init(ok: Bool, channel_id: String? = nil, tabs: [ChannelTab]) {
+        self.ok = ok
+        self.channel_id = channel_id
+        self.tabs = tabs
+    }
+}
+
+// MARK: - Team roster (om-h5-members lane)
+
+/// One roster entry from core `ostmac_team_members`.
+/// `id` is the Graph membership id (the remove target), NOT the user
+/// id. `isOwner` mirrors `roles.contains("owner")` (pinned in ost).
+public struct TeamMember: Decodable, Sendable, Identifiable, Equatable {
+    public let id: String
+    public let displayName: String
+    public let userId: String?
+    public let email: String?
+    public let roles: [String]
+    public let isOwner: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case displayName = "display_name"
+        case userId = "user_id"
+        case email, roles
+        case isOwner = "is_owner"
+    }
+
+    /// Host-side construction (demo data, previews). Wire decoding is untouched.
+    public init(id: String, displayName: String, userId: String? = nil, email: String? = nil, roles: [String] = [], isOwner: Bool = false) {
+        self.id = id
+        self.displayName = displayName
+        self.userId = userId
+        self.email = email
+        self.roles = roles
+        self.isOwner = isOwner
+    }
+}
+
+/// One team's roster. Wire format from core `ostmac_team_members`:
+/// `{"ok","team_id","members":[...]}`.
+public struct TeamMembersResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let teamId: String
+    public let members: [TeamMember]
+
+    enum CodingKeys: String, CodingKey {
+        case ok
+        case teamId = "team_id"
+        case members
+    }
+
+    /// Host-side construction (demo data, previews). Wire decoding is untouched.
+    public init(ok: Bool, teamId: String, members: [TeamMember]) {
+        self.ok = ok
+        self.teamId = teamId
+        self.members = members
+    }
+}
+
+/// Add result from core `ostmac_team_member_add`: `{"ok","member"}`.
+public struct TeamMemberAddResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let member: TeamMember
+
+    /// Host-side construction (mock fetchers).
+    public init(ok: Bool, member: TeamMember) {
+        self.ok = ok
+        self.member = member
+    }
+}
+
+/// Remove result from core `ostmac_team_member_remove`:
+/// `{"ok","team_id","member_id"}`.
+public struct TeamMemberRemoveResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let teamId: String
+    public let memberId: String
+
+    enum CodingKeys: String, CodingKey {
+        case ok
+        case teamId = "team_id"
+        case memberId = "member_id"
+    }
+
+    /// Host-side construction (mock fetchers).
+    public init(ok: Bool, teamId: String, memberId: String) {
+        self.ok = ok
+        self.teamId = teamId
+        self.memberId = memberId
     }
 }
 

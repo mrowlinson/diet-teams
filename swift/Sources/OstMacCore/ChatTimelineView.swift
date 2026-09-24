@@ -1,8 +1,9 @@
-// ChatTimelineView.swift — om-scroll/om-history/om-editdel/om-react-polish/om-scrollbottom/om-pinmessages:
+// ChatTimelineView.swift — om-scroll/om-history/om-editdel/om-react-polish/om-scrollbottom/om-pinmessages/om-hu-polish:
 // message timeline with follow/pill, prepend anchoring, armed+debounced
 // paging, history loading/error states, edit/delete passthrough, the
 // more-picker shot hook, settle re-asserts, a jump-to-latest while
-// scrolled up with nothing new, and the pinned strip (tap jumps).
+// scrolled up with nothing new, the pinned strip (tap jumps), the
+// open-chain progress count, and the capped-window marker.
 //
 // Extracted from ConversationView so the scroll state (ChatScrollModel)
 // is owned per chat: the parent `.id()`s this view by chatID, giving
@@ -225,7 +226,21 @@ struct ChatTimelineView: View {
 
     private var loadMoreRow: some View {
         Group {
-            if store.loadingMore {
+            if let progress = ScrollPolicy.openProgressTitle(
+                loading: store.loading, messageCount: store.messages.count)
+            {
+                // Open page-chain running with bubbles landed: count the
+                // slice so far (om-hu-polish). Before the first publish
+                // the centered "Loading recent" block covers it instead.
+                HStack {
+                    Spacer()
+                    ProgressView().controlSize(.small)
+                    Text(progress)
+                        .font(DietType.caption1)
+                        .foregroundStyle(DietColor.textSecondaryColor)
+                    Spacer()
+                }
+            } else if store.loadingMore {
                 HStack {
                     Spacer()
                     ProgressView().controlSize(.small)
@@ -235,6 +250,20 @@ struct ChatTimelineView: View {
                     Spacer()
                 }
             } else if store.canLoadMore {
+                // Capped window (om-hu-polish): name the visible slice
+                // above the explicit-tap fallback.
+                if let marker = ScrollPolicy.showingLastTitle(
+                    didLoad: store.didLoad,
+                    loading: store.loading || store.loadingMore,
+                    messageCount: store.messages.count,
+                    hasMoreHistory: store.pageToken != nil,
+                    isDemo: store.isDemo)
+                {
+                    Text(marker)
+                        .font(DietType.caption1)
+                        .foregroundStyle(DietColor.textSecondaryColor)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                }
                 // Explicit tap fallback: the sentinel above auto-fires on
                 // genuine reach-top; the tap covers readers whose sentinel
                 // never trips. Each tap loads one lazy day-chunk.

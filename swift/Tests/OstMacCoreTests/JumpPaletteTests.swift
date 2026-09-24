@@ -65,7 +65,7 @@ final class JumpPaletteTests: XCTestCase {
         let channels = targets.filter { $0.kind == .channel }
         let teams = targets.filter { $0.kind == .team }
         XCTAssertEqual(chats.count, DemoData.chats.count)
-        XCTAssertEqual(channels.count, 3) // 2 eng + 1 design
+        XCTAssertEqual(channels.count, 4) // 3 eng + 1 design (om-hu-fixture long channel)
         XCTAssertEqual(teams.count, 2)
     }
 
