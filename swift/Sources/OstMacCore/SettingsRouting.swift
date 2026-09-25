@@ -22,6 +22,7 @@ public enum SettingsRouting {
     /// always open on Account).
     public static func initialCategory(args: [String]) -> SettingsCategory {
         if args.contains("--show-settings-calls") { return .calls }
+        if args.contains("--show-settings-summaries") { return .summaries }
         if args.contains("--show-settings-keywords") { return .notifications }
         return .account
     }

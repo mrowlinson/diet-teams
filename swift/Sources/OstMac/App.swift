@@ -26,7 +26,8 @@
 // --show-settings-keywords opens the sanitized fixed Settings view
 // scrolled to the Keyword alerts section (R6 shot hook, offline).
 // --show-settings-calls opens it preselected on Calls (test-call
-// section shot hook, offline).
+// section shot hook, offline). --show-settings-summaries preselects
+// Summaries (provider picker shot hook, offline).
 // --show-catchup-ondevice is --show-catchup with the on-device provider (canned, shot hook).
 // --show-meeting seeds the Meeting window offline + opens it (shot hook).
 // --show-diagnostics opens the Diagnostics window at launch (shot hook).
@@ -2132,7 +2133,8 @@ struct RootView: View {
             }
             if CommandLine.arguments.contains("--show-settings")
                 || CommandLine.arguments.contains("--show-settings-keywords")
-                || CommandLine.arguments.contains("--show-settings-calls") {
+                || CommandLine.arguments.contains("--show-settings-calls")
+                || CommandLine.arguments.contains("--show-settings-summaries") {
                 openSettings()
             }
             if OstMacAppMain.authStateName(args: CommandLine.arguments) != nil {

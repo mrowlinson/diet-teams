@@ -136,5 +136,9 @@ final class SettingsOrgTests: XCTestCase {
         XCTAssertEqual(
             SettingsRouting.initialCategory(args: ["--show-settings-calls"]),
             .calls)
+        XCTAssertEqual(
+            SettingsRouting.initialCategory(
+                args: ["--show-settings-summaries"]),
+            .summaries)
     }
 }
