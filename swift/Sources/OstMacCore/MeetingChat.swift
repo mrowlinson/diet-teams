@@ -408,18 +408,58 @@ public final class MeetingChatStore: ObservableObject {
 
     // MARK: - File persistence (default seam)
 
+    /// Pre-rename Application Support leaf (never written, only moved).
+    nonisolated public static let legacyAppLeaf = "Diet Teams"
+
     nonisolated public static func meetingsDirectory() -> URL? {
         meetingsDirectory(for: AccountProfile.defaultID)
     }
 
     /// Per-account meetings dir (d1-accounts): default keeps the
-    /// legacy dir; others nest `<accountId>/` under it.
+    /// base dir; others nest `<accountId>/` under it. Lazily migrates
+    /// the legacy dir first, so pre-rename installs keep their data.
     nonisolated public static func meetingsDirectory(for accountID: String) -> URL? {
-        guard let dir = FileManager.default.urls(
+        guard let appSupport = FileManager.default.urls(
             for: .applicationSupportDirectory, in: .userDomainMask
-        ).first?.appendingPathComponent("Diet Teams/meetings", isDirectory: true)
-        else { return nil }
-        return AccountProfile.dir(dir, for: accountID)
+        ).first else { return nil }
+        migrateLegacyDirectory(under: appSupport)
+        return AccountProfile.dir(meetingsBaseURL(under: appSupport), for: accountID)
+    }
+
+    /// `<appSupport>/<AppIdentity.name>/meetings` (current dir).
+    nonisolated public static func meetingsBaseURL(under appSupport: URL) -> URL {
+        appSupport.appendingPathComponent("\(AppIdentity.name)/meetings", isDirectory: true)
+    }
+
+    /// `<appSupport>/Diet Teams/meetings` (pre-rename dir).
+    nonisolated public static func legacyMeetingsBaseURL(under appSupport: URL) -> URL {
+        legacyAppLeafURL(under: appSupport).appendingPathComponent("meetings", isDirectory: true)
+    }
+
+    nonisolated public static func legacyAppLeafURL(under appSupport: URL) -> URL {
+        appSupport.appendingPathComponent(legacyAppLeaf, isDirectory: true)
+    }
+
+    /// Move the legacy dir onto the new dir when the new one is absent
+    /// (per-account subdirs ride along). No-op when legacy is missing
+    /// or the new dir already exists — nothing is ever deleted.
+    @discardableResult
+    nonisolated public static func migrateLegacyDirectory(
+        under appSupport: URL, fileManager: FileManager = .default
+    ) -> Bool {
+        let legacy = legacyMeetingsBaseURL(under: appSupport)
+        let fresh = meetingsBaseURL(under: appSupport)
+        guard fileManager.fileExists(atPath: legacy.path),
+              !fileManager.fileExists(atPath: fresh.path)
+        else { return false }
+        do {
+            try fileManager.createDirectory(
+                at: fresh.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try fileManager.moveItem(at: legacy, to: fresh)
+            return true
+        } catch {
+            return false
+        }
     }
 
     /// Thread id → safe filename (alphanumerics kept, capped length).
