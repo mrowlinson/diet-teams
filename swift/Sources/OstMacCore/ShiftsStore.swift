@@ -2,8 +2,8 @@
 //
 // Team picker + week grid state over one core call per team. Tests and
 // demo inject a mock week fetcher (same seam as ChannelTabsStore).
-// The default fetcher throws until merge-finish wires
-// `ostmac_schedule_week` (header decl + real RustCore body).
+// The default fetcher hits `ostmac_schedule_week` (wired at B1 merge).
+import COstMac
 import Combine
 import Foundation
 
@@ -18,11 +18,11 @@ public enum ShiftsState: Equatable, Sendable {
 
 extension RustCore {
     /// One team's schedule week (blocking FFI + network: call off the
-    /// main thread). UNWIRED: merge-finish replaces the body with the
-    /// real `ostmac_schedule_week` call once the C decl lands.
+    /// main thread).
     public static func shiftsWeek(teamID: String) throws -> ShiftWeekResponse {
-        _ = teamID
-        throw CoreCallError.failed("shifts: core wiring lands at merge-finish")
+        try teamID.withCString { ptr in
+            try call(ostmac_schedule_week(ptr), as: ShiftWeekResponse.self)
+        }
     }
 }
 

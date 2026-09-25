@@ -516,6 +516,58 @@ needing maintainer buy-in. Minor PRs stand alone; majors are separate PRs.
     (empty-user/null guards, unit-tested); Swift person-pick wiring is
     Swift-only, no ledger item.
 
+46. [major] `src/api/planner.rs` (new) + re-exports in `src/api/mod.rs` —
+    **Planner boards (om-planner lane)**. Team → plans → buckets +
+    tasks via the Graph Planner API: `plans_path`, `buckets_path`,
+    `tasks_path`, `task_path` builders; `parse_plans`,
+    `parse_buckets`, `parse_tasks`, `parse_task`; `list_plans_data`,
+    `list_buckets_data`, `list_tasks_data`, `create_task_data`
+    (`create_task_body`), `set_task_complete_data`
+    (`set_complete_body`, complete/reopen via PATCH + If-Match etag).
+    9 unit tests (docs-grounded fixtures). Deliberately NOT in
+    `src/api/client.rs` (no shared `graph_patch_etag`; the module
+    builds its own If-Match PATCH from cached config) and no CLI
+    subcommand in `src/main.rs` this wave. Unverified live (refresh
+    dead per PARTIAL-flex-15; no signed-in runs). Consumer:
+    `ostmac-core` `planner.rs` + 6 FFI exports
+    (`ostmac_planner_plans/buckets/tasks/add/done/reopen`, 6 tests);
+    Swift Planner tab (models/core/demo/view-model/browser + 20
+    PlannerTests) is Swift-only, no ledger item.
+
+47. [minor] `src/api/calweek.rs` (new) + re-exports in `src/api/mod.rs` —
+    **calendar week view + schedule/cancel (om-calendar lane)**.
+    Extends the ledger-24 calendar surface: `calweek_view_path` (GET
+    `/me/calendar/calendarView` + `$top/$orderby/$select`,
+    Calendars.Read), `list_week_meetings_data`, `validate_schedule`,
+    `schedule_event_body` (POST `/me/calendar/events`,
+    `isOnlineMeeting` + `teamsForBusiness` toggle; join URL reads
+    back at `onlineMeeting.joinUrl`), `parse_created_event`,
+    `schedule_meeting_data` (Calendars.ReadWrite), and
+    `cancel_meeting_data` (DELETE `/me/calendar/events/{id}`). 7
+    fixture tests. Unverified live (no signed-in runs; ReadWrite
+    consent on the first-party client id unconfirmed). Consumer:
+    `ostmac-core` `calweek.rs` (`calweek_json`/`calschedule_json`/
+    `calcancel_json` + `ostmac_cal_week/schedule/cancel` exports, 4
+    tests); Swift week grid + schedule sheet + store (17
+    CalendarWeekTests) is Swift-only, no ledger item. Skipped v1:
+    edit/reschedule (occurrence PATCH recurrence semantics) and an
+    attendees picker.
+
+48. [minor] `src/api/schedule.rs` (new) + re-exports in `src/api/mod.rs` —
+    **Shifts schedule week, read-only (om-shifts lane)**. One team's
+    7-day schedule via the Graph schedule API:
+    `list_schedule_data` (GET `/teams/{id}/schedule`),
+    `list_shifts_data`, `list_timesoffs_data`,
+    `list_timeoff_reasons_data`, plus a `list_shifts` CLI helper
+    (no `src/main.rs` subcommand this wave). 3 unit tests. NO writes
+    v1 (no swap/time-off requests by design). Unverified live (no
+    signed-in runs). Consumer: `ostmac-core` `schedule.rs` (one
+    combined `schedule_week_json` — single FFI round-trip for the
+    grid — + `ostmac_schedule_week` export, 4 tests); Swift Shifts
+    tab + store (11 ShiftsTests) is Swift-only, no ledger item.
+    Time-off "balances" are approved-instance counts per reason
+    (Graph has no balances endpoint) — proxy pending owner confirm.
+
 ## Upstream PRs (2026-09-22, base 0892144; main red on sdp E0308 until #5)
 
 Minor (standalone modulo #5-first; merge in any order after):
@@ -681,3 +733,23 @@ Notes:
   to the vendored lane's exact bytes after filing (amended +
   force-pushed; the vendored source is clean on that line). The
   REDACTED note above still covers the PATCH/DELETE/GET lines.
+
+## Upstream PRs, wave 7 (2026-09-25, base 0892144; UNFILED — ledgered at
+B1 merge, no PRs cut this wave)
+
+B1 wave (planner + calendar-week + shifts). Ledger §§46–48 above carry
+the entry text (tags preserved); file upstream once a signed-in live
+run confirms each wire shape, or per owner override as in wave 6.
+
+Held (docs shapes only, no live run — confirm on a signed-in box before
+upstreaming; auth still dead per PARTIAL-flex-15, no signed-in runs
+possible):
+- ledger 46 [major] Planner boards (om-planner: plans/buckets/tasks +
+  If-Match complete/reopen; live use needs a working teams-cli
+  session; no CLI subcommand this wave).
+- ledger 47 [minor] calendar week + schedule/cancel (om-calendar:
+  calendarView GET + event POST/DELETE; Calendars.ReadWrite consent
+  on the first-party client id unconfirmed).
+- ledger 48 [minor] Shifts schedule week, read-only (om-shifts:
+  schedule/shifts/timesOff/timeOffReasons GETs; no writes v1;
+  balances proxy pending owner confirm).

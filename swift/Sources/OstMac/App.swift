@@ -180,8 +180,12 @@ struct OstMacAppMain: App {
         }
         .defaultSize(width: 440, height: 480)
         Window("Meetings", id: AppIdentity.meetWindowID) {
-            MeetingsBrowser(model: state.meetings)
+            CalendarWeekBrowser(week: state.calWeek, meetings: state.meetings)
                 .frame(minWidth: 380, minHeight: 480)
+                .task {
+                    await state.calWeek.load()
+                    state.meetings.refresh()
+                }
         }
         .defaultSize(width: 420, height: 560)
         Window("Meeting", id: AppIdentity.meetingWindowID) {
@@ -245,6 +249,10 @@ final class AppState: ObservableObject {
     let reminders: RemindersViewModel
     let planner: PlannerViewModel
     let meetings: MeetingsViewModel
+    /// Calendar week grid backing the Meetings window (B1 merge).
+    let calWeek: CalendarWeekStore
+    /// Shifts week grid backing the sidebar Shifts tab (B1 merge).
+    let shifts: ShiftsStore
     let conv = ConversationStore()
     /// Message search (om-ja-search): the jump palette's Messages scope
     /// searches through this store. Demo runs substring-over-fixtures
@@ -455,6 +463,10 @@ final class AppState: ObservableObject {
             meetings = MeetingsViewModel(
                 meetingsFetcher: { DemoData.meetingsResponse() },
                 joinRunner: { DemoData.demoJoinResult(threadID: $0) })
+            calWeek = CalendarWeekStore(
+                weekFetcher: { _ in Self.calWeekDemoResponse() },
+                localEdits: true)
+            shifts = ShiftsStore(week: { Self.shiftsDemoResponse(teamID: $0) })
             presence.adoptOwn(DemoData.ownPresence())
             for (chatID, peer) in DemoData.peerPresence() {
                 presence.adoptChatPeer(chatID: chatID, response: peer)
@@ -467,6 +479,8 @@ final class AppState: ObservableObject {
             reminders = RemindersViewModel()
             planner = PlannerViewModel()
             meetings = MeetingsViewModel()
+            calWeek = CalendarWeekStore()
+            shifts = ShiftsStore()
         }
         // om-leave-block: a locally-removed row drops its satellite
         // state (unread, mention flags) — never a list refresh.
@@ -557,6 +571,7 @@ final class AppState: ObservableObject {
         await reminders.load()
         await planner.load()
         await meetings.load()
+        seedShifts() // team picker + first-week grid (demo + live)
         if chats.state == .loaded {
             // Core's signed_in is aad-centric; a loaded list proves
             // working auth regardless.
@@ -1257,6 +1272,94 @@ final class AppState: ObservableObject {
         if !isDemo { call.refresh() } // re-read slot (place/accept landed?)
     }
 
+    /// Seed the Shifts team picker from the loaded teams and open the
+    /// selected (or first) team (B1 merge; demo + live share the path).
+    private func seedShifts() {
+        let items = teams.teams.map { ShiftTeam(id: $0.teamId, name: $0.name) }
+        guard !items.isEmpty else { return }
+        shifts.setTeams(items)
+        shifts.open(teamID: shifts.selectedTeamID ?? items[0].id)
+    }
+
+    /// Demo week-grid meetings dated inside the current week (B1 merge).
+    /// Nonisolated: runs inside the store's off-main fetch closure.
+    private nonisolated static func calWeekDemoResponse() -> CalWeekResponse {
+        let monday = CalWeek.startOfWeek(containing: Date())
+        let cal = Calendar.current
+        let fmt = DateFormatter()
+        fmt.locale = Locale(identifier: "en_US_POSIX")
+        fmt.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+        func at(dayOffset: Int, hour: Int, minute: Int) -> String {
+            let base = cal.date(byAdding: .day, value: dayOffset, to: monday) ?? monday
+            let parts = cal.dateComponents([.year, .month, .day], from: base)
+            let date = cal.date(from: DateComponents(
+                year: parts.year, month: parts.month, day: parts.day,
+                hour: hour, minute: minute)) ?? base
+            return fmt.string(from: date)
+        }
+        return CalWeekResponse(
+            ok: true,
+            weekStart: Int64(monday.timeIntervalSince1970), days: 7,
+            meetings: [
+                MeetingItem(
+                    meetingId: "demo-cal-standup", subject: "Engineering standup",
+                    start: at(dayOffset: 0, hour: 9, minute: 0),
+                    end: at(dayOffset: 0, hour: 9, minute: 15),
+                    joinURL: "https://teams.microsoft.com/l/meetup-join/19:demo_standup@thread.v2/0",
+                    organizer: "Doe, Jane", isOnline: true),
+                MeetingItem(
+                    meetingId: "demo-cal-crit", subject: "Design crit (Room 3B)",
+                    start: at(dayOffset: 1, hour: 14, minute: 0),
+                    end: at(dayOffset: 1, hour: 15, minute: 0),
+                    organizer: "Lee, Sam"),
+            ])
+    }
+
+    /// Demo Shifts week dated inside the current week (B1 merge; shift
+    /// labels only, no person names). Nonisolated: runs inside the
+    /// store's off-main fetch closure (Monday calc mirrors
+    /// `ShiftsStore.currentWeekStart`, which is MainActor-bound).
+    private nonisolated static func shiftsDemoResponse(teamID: String) -> ShiftWeekResponse {
+        var mcal = Calendar.current
+        mcal.firstWeekday = 2 // Monday
+        let comps = mcal.dateComponents([.yearForWeekOfYear, .weekOfYear], from: Date())
+        let monday = mcal.date(from: comps) ?? mcal.startOfDay(for: Date())
+        let cal = Calendar.current
+        let fmt = DateFormatter()
+        fmt.locale = Locale(identifier: "en_US_POSIX")
+        fmt.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+        func at(dayOffset: Int, hour: Int, minute: Int = 0) -> String {
+            let base = cal.date(byAdding: .day, value: dayOffset, to: monday) ?? monday
+            let parts = cal.dateComponents([.year, .month, .day], from: base)
+            let date = cal.date(from: DateComponents(
+                year: parts.year, month: parts.month, day: parts.day,
+                hour: hour, minute: minute)) ?? base
+            return fmt.string(from: date)
+        }
+        return ShiftWeekResponse(
+            ok: true, team_id: teamID,
+            schedule: ShiftSchedule(enabled: true, timeZone: TimeZone.current.identifier),
+            shifts: [
+                ShiftItem(
+                    id: "demo-shift-morning", userId: "u1", displayName: "Morning",
+                    start: at(dayOffset: 0, hour: 9), end: at(dayOffset: 0, hour: 17),
+                    theme: "blue"),
+                ShiftItem(
+                    id: "demo-shift-evening", userId: "u2", displayName: "Evening",
+                    start: at(dayOffset: 1, hour: 17), end: at(dayOffset: 1, hour: 23),
+                    isDraft: true),
+            ],
+            timesOff: [
+                TimeOffItem(
+                    id: "demo-off-1", userId: "u1", reasonId: "r1",
+                    start: at(dayOffset: 2, hour: 0), end: at(dayOffset: 3, hour: 0)),
+            ],
+            reasons: [
+                TimeOffReason(id: "r1", name: "Vacation", code: "V"),
+                TimeOffReason(id: "r2", name: "Sick"),
+            ])
+    }
+
     /// Gate transition (fired from the $state sink for every auth
     /// change, whichever surface drove it): signed in → open deferred
     /// content (or reload the list + restart the feed when already
@@ -1272,6 +1375,12 @@ final class AppState: ObservableObject {
                 reminders.refresh()
                 planner.refresh()
                 meetings.refresh()
+                calWeek.refresh()
+                if shifts.selectedTeamID == nil {
+                    seedShifts()
+                } else {
+                    shifts.refresh()
+                }
                 if !isDemo {
                     feed.start()
                     presence.refreshOwnSoon()
@@ -1325,6 +1434,7 @@ struct RootView: View {
                     SidebarColumn(
                         chats: state.chats, teams: state.teams,
                         reminders: state.reminders, planner: state.planner,
+                        shifts: state.shifts,
                         presence: state.presence,
                         unread: state.unread,
                         mentions: state.mentions,

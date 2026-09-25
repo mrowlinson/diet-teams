@@ -280,6 +280,13 @@ char *ostmac_cal_schedule(
 // Cancel one meeting (requires sign-in): {ok,id}. Caller frees.
 char *ostmac_cal_cancel(const char *event_id);
 
+// One team's schedule week JSON (Graph schedule API, read-only,
+// requires sign-in): {ok,team_id,schedule:{enabled,time_zone,
+// provision_status},shifts:[{id,user_id?,display_name,start?,end?,
+// theme?,notes?,is_draft}],times_off:[...],reasons:[{id,name,
+// code?}]}. Empty team_id yields {ok:false} pre-network. Caller frees.
+char *ostmac_schedule_week(const char *team_id);
+
 // Start background Trouter push: 0 ok, -1 running, -2 no auth, -3 rt fail.
 int ostmac_trouter_start(void);
 

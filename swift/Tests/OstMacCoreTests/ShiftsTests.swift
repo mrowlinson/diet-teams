@@ -151,12 +151,13 @@ final class ShiftsTests: XCTestCase {
         XCTAssertNil(store.week)
     }
 
-    func testDefaultFetcherThrowsWiringError() {
-        XCTAssertThrowsError(try RustCore.shiftsWeek(teamID: "team-1")) { error in
+    func testShiftsWeekWiredToCore() {
+        // Blank ids are rejected by core pre-network (no stub left).
+        XCTAssertThrowsError(try RustCore.shiftsWeek(teamID: "   ")) { error in
             guard case CoreCallError.failed(let m) = error else {
                 return XCTFail("wrong error: \(error)")
             }
-            XCTAssertTrue(m.contains("merge-finish"))
+            XCTAssertTrue(m.contains("team_id"))
         }
     }
 }
