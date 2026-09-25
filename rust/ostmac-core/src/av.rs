@@ -111,17 +111,8 @@ pub fn tone_play_json(msecs: u64) -> String {
     }
 }
 
-/// Deterministic tone echo self-check (no hardware).
-pub fn tone_check_json() -> String {
-    let r = macav::tone_check();
-    json!({
-        "ok": true,
-        "detected": r.detected,
-        "delay_ms": r.delay_ms,
-        "correlation_peak": r.correlation_peak,
-    })
-    .to_string()
-}
+// NOTE (R12 ffi-move-now B2): tone_check moved to Swift (ToneDsp);
+// backing fn + export deleted.
 
 /// Audio device display names for UI pickers (+ system defaults).
 pub fn audio_devices_json() -> String {
@@ -309,11 +300,6 @@ pub extern "C" fn ostmac_tone_play(msecs: c_int) -> *mut c_char {
 }
 
 #[no_mangle]
-pub extern "C" fn ostmac_tone_check() -> *mut c_char {
-    string_to_c(tone_check_json())
-}
-
-#[no_mangle]
 pub extern "C" fn ostmac_audio_devices() -> *mut c_char {
     string_to_c(audio_devices_json())
 }
@@ -455,13 +441,8 @@ mod tests {
     // NOTE (R12 ffi-move-now B1): av_info shape test moved to Swift
     // (FfiMoveNowTests).
 
-    #[test]
-    fn av_tone_check_detects() {
-        let v: serde_json::Value = serde_json::from_str(&tone_check_json()).unwrap();
-        assert_eq!(v["ok"], true);
-        assert_eq!(v["detected"], true);
-        assert!(v["correlation_peak"].as_f64().unwrap().abs() > 0.3);
-    }
+    // NOTE (R12 ffi-move-now B2): tone_check detect test moved to
+    // Swift (FfiMoveNowTests).
 
     #[test]
     fn av_camera_push_stats_roundtrip() {

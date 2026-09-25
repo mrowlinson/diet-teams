@@ -479,8 +479,8 @@ char *ostmac_mic_test(int seconds);
 // {ok:false, error:"no_output"}. Caller frees. Blocks while playing.
 char *ostmac_tone_play(int msecs);
 
-// Deterministic tone echo self-check (no hardware). Caller frees.
-char *ostmac_tone_check(void);
+// NOTE (R12 ffi-move-now B2): tone_check moved to Swift (ToneDsp);
+// decl deleted.
 
 // Audio device display names + system defaults:
 // {ok, inputs[], outputs[], default_input, default_output}. Caller frees.

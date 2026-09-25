@@ -442,6 +442,67 @@ final class FfiMoveNowTests: XCTestCase {
         XCTAssertLessThan(Date().timeIntervalSince(t0), 2.0)
     }
 
+    // MARK: - B2: tone_check (mirror of Rust av_tone_check_detects + test_tone)
+
+    func testToneCheckDetects() throws {
+        let v = try RustCore.toneCheck()
+        XCTAssertTrue(v.ok)
+        XCTAssertTrue(v.detected, "peak=\(v.correlation_peak)")
+        XCTAssertGreaterThan(abs(v.correlation_peak), 0.3)
+    }
+
+    func testToneCheckDeterministic() throws {
+        let a = try RustCore.toneCheck()
+        let b = try RustCore.toneCheck()
+        XCTAssertEqual(a.correlation_peak, b.correlation_peak)
+        XCTAssertEqual(a.delay_ms, b.delay_ms)
+        XCTAssertEqual(a.detected, b.detected)
+    }
+
+    func testToneGeneratorFrame() {
+        var gen = ToneDsp.ToneGenerator()
+        let frame = gen.nextFrame()
+        XCTAssertEqual(frame.count, 160)
+        XCTAssertTrue(frame.contains(where: { $0 > 1000 }))
+        XCTAssertTrue(frame.contains(where: { $0 < -1000 }))
+    }
+
+    func testDetectEchoSilence() {
+        let r = ToneDsp.detectEcho(
+            received: [Int16](repeating: 0, count: 8000),
+            toneFreq: 1000.0, sampleRate: 8000.0
+        )
+        XCTAssertFalse(r.detected)
+        XCTAssertEqual(r.correlationPeak, 0)
+    }
+
+    func testDetectEchoShortInputIsZero() {
+        let r = ToneDsp.detectEcho(
+            received: [Int16](repeating: 100, count: 8),
+            toneFreq: 1000.0, sampleRate: 8000.0
+        )
+        XCTAssertFalse(r.detected)
+        XCTAssertEqual(r.delayMs, 0)
+        XCTAssertEqual(r.correlationPeak, 0)
+    }
+
+    func testDetectEchoToneAfterSilence() {
+        var gen = ToneDsp.ToneGenerator()
+        var samples = [Int16](repeating: 0, count: 400)
+        for _ in 0 ..< 25 { samples.append(contentsOf: gen.nextFrame()) }
+        let r = ToneDsp.detectEcho(received: samples, toneFreq: 1000.0, sampleRate: 8000.0)
+        XCTAssertTrue(r.detected, "peak=\(r.correlationPeak)")
+        XCTAssertGreaterThan(r.delayMs, 0)
+    }
+
+    func testToneCheckPerf() throws {
+        // Release tier: ~26µs/run (measured standalone); debug is ~40ms.
+        // Loose bound guards against algorithmic regressions only.
+        let t0 = Date()
+        for _ in 0 ..< 30 { _ = try RustCore.toneCheck() }
+        XCTAssertLessThan(Date().timeIntervalSince(t0), 5.0)
+    }
+
     func testJoinParsePerf() {
         let urls = [
             "https://teams.microsoft.com/l/meetup-join/19%3Ameeting_abc%40thread.v2/0",

@@ -289,8 +289,9 @@ public extension RustCore {
         try call(ostmac_tone_play(msecs), as: TonePlayResult.self)
     }
 
+    /// Swift-native (R12 ffi-move-now B2; was `ostmac_tone_check`).
     static func toneCheck() throws -> ToneCheckResult {
-        try call(ostmac_tone_check(), as: ToneCheckResult.self)
+        try CoreLocal.toneCheck()
     }
 
     static func audioDevices() throws -> AudioDevices {
