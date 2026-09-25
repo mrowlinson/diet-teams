@@ -1925,7 +1925,12 @@ private struct PopoutTitleProbe: NSViewRepresentable {
     let name: String
     func makeNSView(context: Context) -> NSView { NSView() }
     func updateNSView(_ view: NSView, context: Context) {
-        if view.window?.title != name { view.window?.title = name }
+        // SwiftUI stamps the static scene title at creation; the async
+        // hop lands after it so the chat name wins and sticks.
+        let name = name
+        DispatchQueue.main.async {
+            if view.window?.title != name { view.window?.title = name }
+        }
     }
 }
 
