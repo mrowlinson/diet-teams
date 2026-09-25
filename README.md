@@ -13,49 +13,51 @@ in `--demo` with canned data; sign in via device code or browser to go live.
 
 ## Features
 
+Ten headline features:
+
+1. Native macOS app — SwiftUI over a Rust core, runs fully offline
+   in `--demo` with canned data.
+2. Chat sidebar — Chats / Teams / Reminders, pins, chat folders with
+   auto-rules, filters, ⌘K search palette (chats, messages, files, people).
+3. Full messaging — send, edit, delete, quote replies, emoji
+   reactions, scheduled send + pending queue, per-chat snooze.
+4. Rich conversation — mentions, code, inline images, bot posts,
+   adaptive cards, link previews, read receipts, typing indicators.
+5. Teams & channels browser — join/create team, create channel,
+   channel detail + tabs, team roster.
+6. Meetings — upcoming list, join parsing + lobby, recordings browser
+   + playback, transcripts browser (turns + matching recording).
+7. Calls — place/accept/end, live A/V banner, mic/speaker/camera
+   panel, screen sharing, echo-bot test, call history.
+8. Native notifications — banners with rules, quiet hours, @me/@team
+   and keyword alerts, per-chat levels, presence.
+9. AI thread catch-up — OpenCode CLI, on-device Apple Intelligence,
+   or bring-your-own key (macOS keychain).
+10. Easy sign-in — device code or browser (PKCE), multi-account
+    switcher, persisted session.
+
+Everything else, by area:
+
 Chat & conversation
-: Sidebar (Chats / Teams / Reminders, pinned Mentions/Notifications,
-  user chat pins, mark-unread, hide, leave/block) + user chat folders
-  with auto-rules + conversation with Chat / Shared / Notes tabs, live
-  Trouter feed, paged history, ⌘K search palette (chats, messages,
-  files, people), filters.
-: Send, edit, delete, quote replies, emoji reactions, forward/copy/save,
-  pinned messages, @-mention picker, scheduled send + pending queue,
-  per-chat snooze, rich rendering (mentions, code, inline images, bot
-  posts, adaptive cards, link previews), read receipts, typing
-  indicators.
-: Shared files (list/upload/download, folders + drill-in, share links,
-  versions, move/copy/rename/delete, resumable big uploads, drag-drop +
-  QuickLook, sort/filter, save-as) + composer attachments; GIF picker
-  (bring-your-own Klipy key, kept in the macOS keychain).
+: Sidebar extras: pinned Mentions/Notifications, user chat pins,
+  mark-unread, hide, leave/block; conversation with Chat / Shared /
+  Notes tabs, live Trouter feed, paged history.
+: Composer extras: forward/copy/save, pinned messages, @-mention
+  picker; GIF picker (bring-your-own Klipy key, kept in the macOS
+  keychain).
+: Shared files: list/upload/download, folders + drill-in, share
+  links, versions, move/copy/rename/delete, resumable big uploads,
+  drag-drop + QuickLook, sort/filter, save-as; composer attachments.
 
-Teams, meetings, reminders, notes
-: Teams/channels browser (join/create team, create channel, channel
-  detail + tabs, team roster); upcoming meetings + join-string parsing
-  + lobby; meeting recordings browser + playback; meeting transcripts
-  browser (OneDrive/channel .vtt, turns + matching recording);
-  To Do lists/tasks; OneNote notebooks/sections/pages read + paragraph append.
+Productivity
+: To Do lists/tasks; OneNote notebooks/sections/pages read +
+  paragraph append.
+: Offline message archive (compressed export + local search index).
 
-Calls
-: Signaling (place/accept/end, echo-bot test), live A/V banner,
-  mic/speaker/camera panel with probes, screen sharing, recent call history.
-
-Notifications & presence
-: Native banners with rules, quiet hours, @me/@team mention alerts,
-  keyword alerts (always/never words), per-chat levels (all /
-  mentions-only / muted); own + per-user presence.
-
-Auth & session
-: Device-code + browser (PKCE capture) sign-in, 13-state auth gate,
-  multi-account switcher with per-profile tokens, refresh/expiry
-  handling, persisted on-disk session.
-
-Extras
-: AI thread catch-up (OpenCode CLI, on-device Apple Intelligence, or
-  bring-your-own key, kept in the macOS keychain), offline message
-  archive (compressed export + local search index),
-  diagnostics/health windows, MCP server (`ostmac-mcp`,
-  see `docs/mcp.md`).
+Session, diagnostics, integration
+: 13-state auth gate, per-profile tokens, refresh/expiry handling.
+: Diagnostics/health windows; MCP server (`ostmac-mcp`, see
+  `docs/mcp.md`) reusing the app's session.
 
 ## Requirements
 
