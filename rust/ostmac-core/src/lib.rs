@@ -537,26 +537,8 @@ fn chat_to_json(c: &ost::api::ChatInfo) -> serde_json::Value {
     })
 }
 
-/// Structured chat list as JSON. Requires sign-in; unsigned yields `{ok:false}`.
-pub fn chats_json(limit: usize) -> String {
-    let run = || -> Result<String, String> {
-        let rt = rt()?;
-        rt.block_on(async {
-            let client = ost::api::client::TeamsClient::new()
-                .await
-                .map_err(|e| format!("{:#}", e))?;
-            let chats = ost::api::list_chats_data(&client, limit)
-                .await
-                .map_err(|e| format!("{:#}", e))?;
-            let items: Vec<_> = chats.iter().map(chat_to_json).collect();
-            Ok(json!({"ok": true, "chats": items}).to_string())
-        })
-    };
-    match run() {
-        Ok(s) => s,
-        Err(e) => err_json("chats", e),
-    }
-}
+// NOTE (R14 om-later-b4 B4): chats moved to Swift (CoreReads);
+// backing fn + export deleted. chat_to_json stays (1:1 create).
 
 /// Create (or re-open) a 1:1 chat with `user` (AAD id or UPN).
 /// Requires sign-in; unsigned yields `{ok:false}`. Empty refs are
@@ -2711,13 +2693,6 @@ pub extern "C" fn ostmac_authcode_start_for(profile: *const c_char) -> *mut c_ch
         Ok(p) => string_to_c(browser_auth::authcode_start_json_for(&p)),
         Err(e) => string_to_c(err_json("arg", e)),
     }
-}
-
-/// Chat list JSON. See [`chats_json`].
-#[no_mangle]
-pub extern "C" fn ostmac_chats(limit: c_int) -> *mut c_char {
-    let lim = if limit <= 0 { 20 } else { limit as usize };
-    string_to_c(chats_json(lim))
 }
 
 /// Create a 1:1 chat with one user ref (AAD id or UPN). See

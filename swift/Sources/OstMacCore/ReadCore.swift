@@ -139,6 +139,45 @@ public enum CoreReads {
     static func graphToken(
         profile: String, code: String, ctx: ReadContext
     ) throws -> String {
+        let slots = try ensureFresh(profile: profile, code: code, ctx: ctx)
+        guard let g = slots.graphToken else {
+            throw CoreCallError.failed(
+                "\(code): No Graph token. Run 'teams-cli login' first."
+            )
+        }
+        if g.isExpired(now: ctx.now()) {
+            throw CoreCallError.failed(
+                "\(code): Graph token expired. Run 'teams-cli login'."
+            )
+        }
+        return g.token
+    }
+
+    /// Skype token for the native chat stack. Like Rust, skype expiry
+    /// alone never triggers a refresh (only AAD/graph do) — an expired
+    /// skype slot fails the read.
+    static func skypeToken(
+        profile: String, code: String, ctx: ReadContext
+    ) throws -> (String, TokenSlots) {
+        let slots = try ensureFresh(profile: profile, code: code, ctx: ctx)
+        guard let s = slots.skypeToken else {
+            throw CoreCallError.failed(
+                "\(code): No Skype token. Run 'teams-cli login' first."
+            )
+        }
+        if s.isExpired(now: ctx.now()) {
+            throw CoreCallError.failed(
+                "\(code): Skype token expired. Run 'teams-cli login'."
+            )
+        }
+        return (s.token, slots)
+    }
+
+    /// Refresh-on-expiry (mirrors `TeamsClient::new_for_profile`) and
+    /// return the reloaded slots.
+    static func ensureFresh(
+        profile: String, code: String, ctx: ReadContext
+    ) throws -> TokenSlots {
         let name = TomlConfig.normalize(profile)
         var slots = ctx.store.load(profile: name)
         let now = ctx.now()
@@ -170,17 +209,7 @@ public enum CoreReads {
             }
             slots = ctx.store.load(profile: name)
         }
-        guard let g = slots.graphToken else {
-            throw CoreCallError.failed(
-                "\(code): No Graph token. Run 'teams-cli login' first."
-            )
-        }
-        if g.isExpired(now: ctx.now()) {
-            throw CoreCallError.failed(
-                "\(code): Graph token expired. Run 'teams-cli login'."
-            )
-        }
-        return g.token
+        return slots
     }
 
     // MARK: Graph GET (mirrors client::graph_get + check_response)
@@ -453,5 +482,460 @@ public enum CoreReads {
         let path = calendarViewPath(now: ctx.now(), days: 7, limit: lim)
         let data = try graphGET(path, code: "meetings", token: token, http: ctx.http)
         return MeetingsResponse(ok: true, meetings: try parseCalendarView(data))
+    }
+
+    // MARK: chats (native chat stack: CSA → chatsvcagg → chat service)
+
+    static let csaConversations =
+        "https://teams.microsoft.com/api/csa/api/v1/teams/users/ME/conversations"
+    static let defaultChatService = "https://amer.ng.msg.teams.microsoft.com"
+    static let defaultChatsvcagg = "https://chatsvcagg.teams.microsoft.com"
+    static let csaClientVersion = "1416/1.0.0.2024050301"
+
+    public static func chats(limit: Int32 = 20) throws -> ChatsResponse {
+        try chats(limit: limit, ctx: production())
+    }
+
+    /// Region base URLs from the stored gtms JSON (verbatim port of
+    /// `chat_service_url` / `chatsvcagg_url`; unparseable → defaults).
+    static func regionGTMS(_ slots: TokenSlots) -> [String: String] {
+        guard let raw = slots.regionGtms,
+              let data = raw.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data)
+              as? [String: String]
+        else { return [:] }
+        return obj
+    }
+
+    static func chatServiceURL(_ slots: TokenSlots) -> String {
+        regionGTMS(slots)["chatService"] ?? defaultChatService
+    }
+
+    static func chatsvcaggURL(_ slots: TokenSlots) -> String {
+        regionGTMS(slots)["chatServiceAggregator"] ?? defaultChatsvcagg
+    }
+
+    /// Checked GET with explicit headers (mirrors `check_response`).
+    static func checkedGET(
+        _ urlString: String, code: String,
+        headers: [String: String], http: any ReadFetcher
+    ) throws -> Data {
+        guard let url = URL(string: urlString) else {
+            throw CoreCallError.failed("\(code): bad URL \(urlString)")
+        }
+        let resp: ReadHTTPResponse
+        do {
+            resp = try http.get(url: url, headers: headers)
+        } catch {
+            throw CoreCallError.failed("\(code): GET \(url) failed: \(error)")
+        }
+        if resp.status == 401 {
+            throw CoreCallError.failed(
+                "\(code): 401 Unauthorized for \(url). Token may be invalid -- run 'teams-cli login'."
+            )
+        }
+        if !(200 ... 299).contains(resp.status) {
+            let body = String(data: resp.data, encoding: .utf8) ?? ""
+            throw CoreCallError.failed(
+                "\(code): HTTP \(resp.status) for \(url): \(body)"
+            )
+        }
+        return resp.data
+    }
+
+    static func csaGET(
+        _ urlString: String, code: String,
+        skype: String, http: any ReadFetcher
+    ) throws -> Data {
+        try checkedGET(
+            urlString, code: code,
+            headers: [
+                "Authorization": "Bearer \(skype)",
+                "x-ms-client-version": csaClientVersion,
+            ],
+            http: http
+        )
+    }
+
+    static func chatGET(
+        _ urlString: String, code: String,
+        skype: String, http: any ReadFetcher
+    ) throws -> Data {
+        try checkedGET(
+            urlString, code: code,
+            headers: ["Authentication": "skypetoken=\(skype)"],
+            http: http
+        )
+    }
+
+    private struct ChatConversationsPayload: Decodable {
+        struct ThreadProps: Decodable {
+            let topic: String?
+            let lastjoinat: String?
+            let members: String?
+        }
+        struct NativeMsg: Decodable {
+            let id: String?
+            let composetime: String?
+            let originalarrivaltime: String?
+            let imdisplayname: String?
+            let content: String?
+            let messagetype: String?
+            let from: String?
+        }
+        struct Conversation: Decodable {
+            let id: String?
+            let threadProperties: ThreadProps?
+            let lastMessage: NativeMsg?
+        }
+        let conversations: [Conversation]?
+    }
+
+    private struct ThreadMembersPayload: Decodable {
+        struct Member: Decodable {
+            let id: String?
+        }
+        let members: [Member]?
+    }
+
+    private struct ChatMessagesPayload: Decodable {
+        struct Msg: Decodable {
+            let id: String?
+            let composetime: String?
+            let originalarrivaltime: String?
+            let imdisplayname: String?
+            let content: String?
+            let messagetype: String?
+            let from: String?
+        }
+        let messages: [Msg]?
+    }
+
+    static func chats(limit: Int32, ctx: ReadContext) throws -> ChatsResponse {
+        let lim = limit <= 0 ? 20 : Int(limit)
+        let profile = CoreLocal.activeProfileID()
+        let (skype, slots) = try skypeToken(
+            profile: profile, code: "chats", ctx: ctx
+        )
+        let svc = chatServiceURL(slots)
+        let agg = chatsvcaggURL(slots)
+        // Three strategies, first success wins (verbatim order); the
+        // last error propagates when all fail.
+        var lastError: Error?
+        let attempts: [(String, [String: String])] = [
+            (
+                "\(csaConversations)?view=mychats&pageSize=\(lim)",
+                [
+                    "Authorization": "Bearer \(skype)",
+                    "x-ms-client-version": csaClientVersion,
+                ]
+            ),
+            (
+                "\(agg)/api/v2/users/ME/conversations?view=mychats&pageSize=\(lim)",
+                ["Authentication": "skypetoken=\(skype)"]
+            ),
+            (
+                "\(svc)/v1/users/ME/conversations?view=mychats&pageSize=\(lim)",
+                ["Authentication": "skypetoken=\(skype)"]
+            ),
+        ]
+        var data = Data()
+        for (urlString, headers) in attempts {
+            do {
+                data = try checkedGET(
+                    urlString, code: "chats",
+                    headers: headers, http: ctx.http
+                )
+                lastError = nil
+                break
+            } catch {
+                lastError = error
+            }
+        }
+        if let lastError { throw lastError }
+        let payload: ChatConversationsPayload
+        do {
+            payload = try JSONDecoder().decode(
+                ChatConversationsPayload.self, from: data
+            )
+        } catch {
+            throw CoreCallError.failed(
+                "chats: Failed to parse conversations response: \(error)"
+            )
+        }
+        let conversations = payload.conversations ?? []
+        var items: [ChatItem] = []
+        var needsMate: [(chat: Int, conv: Int)] = []
+        for (ci, conv) in conversations.enumerated() {
+            let id = conv.id ?? ""
+            if id.isEmpty { continue }
+            let topicMissing = (conv.threadProperties?.topic ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            if topicMissing, isOneToOneID(id) {
+                needsMate.append((items.count, ci))
+            }
+            let msg = conv.lastMessage
+            let preview = msg?.content.map {
+                truncatePreview(stripHTML($0))
+            }
+            items.append(ChatItem(
+                chatId: id,
+                name: conversationName(topic: conv.threadProperties?.topic, mate: nil, sender: msg?.imdisplayname, chatID: id),
+                is_group: id.contains("thread") || id.contains("meeting"),
+                last_message_time: msg?.originalarrivaltime ?? msg?.composetime,
+                last_message_sender: msg?.imdisplayname,
+                last_message_preview: preview
+            ))
+        }
+        // Second pass: 1:1 mate names. Any failure keeps the first-pass
+        // name — the list never fails here.
+        if !needsMate.isEmpty,
+           let me = try? whoami(profile: profile, ctx: ctx)
+        {
+            for (chatIdx, convIdx) in needsMate {
+                let chatID = items[chatIdx].chatId
+                if let mate = resolveMateName(
+                    chatID: chatID, selfOID: me.id,
+                    skype: skype, svc: svc, ctx: ctx
+                ) {
+                    let conv = conversations[convIdx]
+                    let renamed = conversationName(
+                        topic: conv.threadProperties?.topic, mate: mate,
+                        sender: conv.lastMessage?.imdisplayname, chatID: chatID
+                    )
+                    let old = items[chatIdx]
+                    items[chatIdx] = ChatItem(
+                        chatId: old.chatId, name: renamed,
+                        is_group: old.is_group,
+                        last_message_time: old.last_message_time,
+                        last_message_sender: old.last_message_sender,
+                        last_message_preview: old.last_message_preview
+                    )
+                }
+            }
+        }
+        return ChatsResponse(ok: true, chats: items)
+    }
+
+    /// Mate display name for a 1:1 chat (verbatim port of
+    /// `resolve_mate_name`): exactly one non-self roster MRI with at
+    /// least one message, else nil.
+    static func resolveMateName(
+        chatID: String, selfOID: String,
+        skype: String, svc: String, ctx: ReadContext
+    ) -> String? {
+        guard let membersData = try? chatGET(
+            "\(svc)/v1/threads/\(chatID)/members", code: "chats",
+            skype: skype, http: ctx.http
+        ),
+            let members = try? JSONDecoder().decode(
+                ThreadMembersPayload.self, from: membersData
+            )
+        else { return nil }
+        let mates = (members.members ?? []).compactMap(\.id)
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .filter { !mriIsSelf($0, selfOID: selfOID) }
+        guard mates.count == 1 else { return nil }
+        let mate = mates[0].lowercased()
+        guard let pageData = try? chatGET(
+            "\(svc)/v1/users/ME/conversations/\(chatID)/messages?pageSize=25",
+            code: "chats", skype: skype, http: ctx.http
+        ),
+            let page = try? JSONDecoder().decode(
+                ChatMessagesPayload.self, from: pageData
+            )
+        else { return nil }
+        // Wire is newest-first; oldest-first, then newest match wins.
+        for msg in (page.messages ?? []).reversed() {
+            let msgtype = msg.messagetype ?? ""
+            guard messageTypeKept(msgtype) else { continue }
+            let sender = (msg.imdisplayname ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? "?" : msg.imdisplayname!
+            let mri = mriFromUserLink(msg.from)
+            guard mri.lowercased() == mate else { continue }
+            guard !sender.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  sender != "?"
+            else { continue }
+            let body = splitReplyQuote(msg.content ?? "")
+            let text = stripHTML(body)
+            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || hasImage(msg.content ?? "")
+                || hasCardPayload(msg.content ?? "")
+            else { continue }
+            return sender
+        }
+        return nil
+    }
+
+    // MARK: chat naming + text (verbatim ports from ost chat.rs)
+
+    /// 1:1-shaped thread ids (`19:…@unq.…`).
+    static func isOneToOneID(_ chatID: String) -> Bool {
+        chatID.hasPrefix("19:") && !chatID.contains("@thread")
+            && !chatID.contains("meeting")
+    }
+
+    /// Display name: topic → mate → last sender → system label.
+    static func conversationName(
+        topic: String?, mate: String?, sender: String?, chatID: String
+    ) -> String {
+        if let topic,
+           !topic.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        {
+            return topic
+        }
+        if let mate,
+           !mate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        {
+            return mate
+        }
+        if let sender,
+           !sender.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        {
+            return sender
+        }
+        return systemLabelFor(chatID)
+    }
+
+    /// Human label for a chat with no topic, mate, or sender.
+    static func systemLabelFor(_ chatID: String) -> String {
+        if chatID.hasPrefix("48:") {
+            let rest = String(chatID.dropFirst(3))
+            guard let first = rest.first else { return "[System chat]" }
+            return first.uppercased() + rest.dropFirst()
+        }
+        if chatID.contains("meeting") { return "[Meeting chat]" }
+        if chatID.contains("@thread") { return "[Group chat]" }
+        if chatID.hasPrefix("19:") { return "[Direct message]" }
+        return "[Chat]"
+    }
+
+    /// Block-level tags yield one pending space; inline tags vanish.
+    static let blockTags: Set<String> = [
+        "p", "div", "br", "section", "article", "header", "footer",
+        "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "li", "dl",
+        "dt", "dd", "table", "tr", "td", "th", "blockquote", "pre", "hr",
+    ]
+
+    static func tagName(_ body: String) -> String {
+        let b = body.hasPrefix("/") ? String(body.dropFirst()) : body
+        let end = b.firstIndex(where: { $0.isWhitespace || $0 == "/" })
+            ?? b.endIndex
+        return String(b[..<end])
+    }
+
+    /// Spacing-aware HTML strip (verbatim port of `strip_html`).
+    static func stripHTML(_ html: String) -> String {
+        var result = ""
+        result.reserveCapacity(html.count)
+        var tag = ""
+        var inTag = false
+        var pendingSpace = false
+        for ch in html {
+            if inTag {
+                if ch == ">" {
+                    inTag = false
+                    if blockTags.contains(tagName(tag).lowercased()) {
+                        pendingSpace = true
+                    }
+                    tag = ""
+                } else {
+                    tag.append(ch)
+                }
+            } else if ch == "<" {
+                inTag = true
+            } else {
+                if pendingSpace {
+                    pendingSpace = false
+                    if !result.isEmpty,
+                       !(result.last?.isWhitespace ?? false),
+                       !ch.isWhitespace
+                    {
+                        result.append(" ")
+                    }
+                }
+                result.append(ch)
+            }
+        }
+        return result
+            .replacingOccurrences(of: "&amp;", with: "&")
+            .replacingOccurrences(of: "&lt;", with: "<")
+            .replacingOccurrences(of: "&gt;", with: ">")
+            .replacingOccurrences(of: "&quot;", with: "\"")
+            .replacingOccurrences(of: "&#39;", with: "'")
+            .replacingOccurrences(of: "&nbsp;", with: " ")
+    }
+
+    /// Preview cut: byte length > 80 → cut at the last char boundary
+    /// at byte offset ≤ 77 + "..." (verbatim port).
+    static func truncatePreview(_ text: String) -> String {
+        guard text.utf8.count > 80 else { return text }
+        var end = text.startIndex
+        var offset = 0
+        for idx in text.indices {
+            if offset <= 77 {
+                end = idx
+            } else {
+                break
+            }
+            offset += text[idx].utf8.count
+        }
+        return String(text[..<end]) + "..."
+    }
+
+    /// Sender MRI from a message `from` user link (verbatim port).
+    static func mriFromUserLink(_ from: String?) -> String {
+        // components (not split): a trailing "/" yields "" like rsplit.
+        let seg = (from ?? "").components(separatedBy: "/").last?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if seg.isEmpty { return "" }
+        return seg.removingPercentEncoding ?? seg
+    }
+
+    /// True when `mri` is the signed-in user (verbatim port).
+    static func mriIsSelf(_ mri: String, selfOID: String) -> Bool {
+        if selfOID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || mri.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        {
+            return false
+        }
+        let m = mri.lowercased()
+        let o = selfOID.lowercased()
+        return m == o || m.hasSuffix(o)
+    }
+
+    static func messageTypeKept(_ messagetype: String) -> Bool {
+        if !messagetype.contains("Text"), !messagetype.contains("RichText") {
+            return false
+        }
+        if messagetype.contains("Media_"), !messagetype.contains("Media_Card") {
+            return false
+        }
+        return true
+    }
+
+    static func hasCardPayload(_ html: String) -> Bool {
+        let lower = html.lowercased()
+        return lower.contains("<attachment")
+            || lower.contains("o365connector")
+            || lower.contains("adaptivecard")
+            || lower.contains("messagecard")
+            || lower.contains("application/vnd.microsoft")
+    }
+
+    static func hasImage(_ html: String) -> Bool {
+        html.lowercased().contains("<img")
+    }
+
+    /// Split the `<quote>` block; returns the reply body (verbatim port
+    /// of `split_reply_quote`, id discarded — chats list needs no parent).
+    static func splitReplyQuote(_ content: String) -> String {
+        guard let open = content.range(of: "<quote") else { return content }
+        let rest = content[open.lowerBound...]
+        guard let tagEnd = rest.firstIndex(of: ">") else { return content }
+        let afterTag = rest[rest.index(after: tagEnd)...]
+        guard let close = afterTag.range(of: "</quote>") else { return content }
+        return String(content[..<open.lowerBound]) + String(afterTag[close.upperBound...])
     }
 }

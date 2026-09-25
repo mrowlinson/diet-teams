@@ -128,8 +128,9 @@ public enum RustCore {
         try CoreReads.whoami()
     }
 
+    /// Swift-native (R14 om-later-b4 B4; was `ostmac_chats`).
     public static func chats(limit: Int32 = 20) throws -> ChatsResponse {
-        try call(ostmac_chats(limit), as: ChatsResponse.self)
+        try CoreReads.chats(limit: limit)
     }
 
     /// Swift-native (R14 om-later-b4 B4; was `ostmac_teams`).

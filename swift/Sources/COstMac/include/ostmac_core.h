@@ -46,11 +46,8 @@ char *ostmac_authcode_cancel(const char *session);
 // there). No network. Caller frees.
 char *ostmac_authcode_start_for(const char *profile);
 
-// NOTE (R14 om-later-b4 B4): whoami/teams moved to Swift (CoreReads);
-// decls deleted.
-
-// Chat list JSON (requires sign-in). Caller frees.
-char *ostmac_chats(int limit);
+// NOTE (R14 om-later-b4 B4): whoami/teams/chats moved to Swift
+// (CoreReads); decls deleted.
 
 // Create (or re-open) a 1:1 chat with one user ref, AAD id or UPN
 // (Graph POST /me/chats, requires sign-in): {ok,chat:{id,name,
