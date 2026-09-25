@@ -457,9 +457,20 @@ public struct ConversationView: View {
             // All 5 tool buttons share the ComposerMetrics cell.
             HStack(alignment: .center, spacing: DietSpace.sm) {
                 TextField("Message", text: $draft, axis: .vertical)
-                    .textFieldStyle(.roundedBorder)
+                    .textFieldStyle(.plain)
                     .font(DietType.body)
                     .lineLimit(ComposerMetrics.inputMinLines...)
+                    .padding(DietSpace.sm)
+                    .frame(minHeight: ComposerMetrics.inputMinHeight)
+                    .background(
+                        DietColor.wellColor,
+                        in: RoundedRectangle(cornerRadius: DietRadius.control)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: DietRadius.control)
+                            .stroke(DietColor.dividerColor, lineWidth: 1)
+                    )
+                    .plainFocusRing()
                     .focused($boxFocused)
                     .onSubmit { submit() }
                     .onChange(of: draft) { onDraftChange?(draft) }

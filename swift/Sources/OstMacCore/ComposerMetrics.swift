@@ -10,6 +10,10 @@ public enum ComposerMetrics {
     /// Resting input height in lines; the field grows past this
     /// (lineLimit inputMinLines...).
     public static let inputMinLines = 2
+    /// Resting input min-height in points: two single-line rows.
+    /// lineLimit alone does not reserve the second row under the
+    /// roundedBorder style, so the frame enforces it.
+    public static let inputMinHeight: CGFloat = DietSpace.xxl
     /// Uniform tool-button cell width. Fits the "GIF" caption-bold
     /// label; icon buttons center in the same cell.
     public static let toolButtonWidth: CGFloat = 32

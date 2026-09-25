@@ -9,6 +9,8 @@ final class ComposerLayoutTests: XCTestCase {
     /// Input is 2 lines tall at rest, grows past that (lineLimit 2...).
     func testInputMinLinesIsTwo() {
         XCTAssertEqual(ComposerMetrics.inputMinLines, 2)
+        XCTAssertEqual(ComposerMetrics.inputMinHeight, DietSpace.xxl)
+        XCTAssertEqual(ComposerMetrics.inputMinHeight, 48)
     }
 
     /// All 5 tool buttons share one width + one height (GIF matched).
