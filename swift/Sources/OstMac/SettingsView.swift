@@ -84,220 +84,231 @@ struct SettingsView: View {
     }
 
     public var body: some View {
-        ScrollView {
-            Form {
-                Section("Account") {
-                    LabeledContent("Status", value: account.detail)
-                        .textSelection(.enabled)
-                }
-                if fixedAccount == nil {
-                    Section("Accounts") {
-                        if accounts.accounts.isEmpty {
-                            Text("No accounts yet — sign in below to add the first.")
+        ScrollViewReader { proxy in
+            ScrollView {
+                Form {
+                    Section("Account") {
+                        LabeledContent("Status", value: account.detail)
+                            .textSelection(.enabled)
+                    }
+                    if fixedAccount == nil {
+                        Section("Accounts") {
+                            if accounts.accounts.isEmpty {
+                                Text("No accounts yet — sign in below to add the first.")
+                                    .font(DietType.caption1)
+                                    .foregroundStyle(DietColor.textSecondaryColor)
+                            } else {
+                                ForEach(accounts.accounts) { record in
+                                    SettingsAccountRow(
+                                        record: record,
+                                        vm: accounts.vm(for: record.id),
+                                        isActive: record.id == accounts.activeID,
+                                        onRemove: { removeCandidate = record })
+                                }
+                                Button("Add Account…") {
+                                    pendingAddVM = accounts.beginAdd()
+                                    showAddAccount = true
+                                }
+                            }
+                        }
+                        .sheet(isPresented: $showAddAccount) {
+                            if let vm = pendingAddVM {
+                                AddAccountSheet(vm: vm, onAdded: onAccountAdded)
+                            }
+                        }
+                        .confirmationDialog(
+                            "Remove this account?",
+                            isPresented: Binding(
+                                get: { removeCandidate != nil },
+                                set: { if !$0 { removeCandidate = nil } }),
+                            titleVisibility: .visible
+                        ) {
+                            Button("Remove Account", role: .destructive) {
+                                if let id = removeCandidate?.id {
+                                    onRemoveAccount(id)
+                                }
+                                removeCandidate = nil
+                            }
+                            Button("Cancel", role: .cancel) { removeCandidate = nil }
+                        } message: {
+                            Text("Its sign-in and per-account caches are deleted from this Mac. Other accounts are unaffected.")
+                        }
+                        Section("Sign in") {
+                            AuthView(model: auth, embedded: true)
+                        }
+                    }
+                    Section("Notifications") {
+                        Toggle("Message banners", isOn: $notifs.enabled)
+                            .help("When off, no chat banners are posted")
+                        Toggle("Show message preview", isOn: $notifs.showPreview)
+                            .help("When off, banners show who wrote, never the text")
+                        Toggle("Play banner sound", isOn: $notifs.sound)
+                            .help("When off, banners post silent")
+                        LabeledContent("System permission", value: permissionText)
+                    }
+                    Section("Keyword alerts") {
+                    EmptyView().id("shot-keywords")
+                        keywordGroup(
+                            title: "Always notify",
+                            words: rules.config.allowKeywords,
+                            draft: $allowDraft,
+                            error: allowError,
+                            placeholder: "Add word, e.g. outage",
+                            emptyText: "No always-notify words yet.",
+                            remove: rules.removeAllowKeyword,
+                            add: submitAllow)
+                        keywordGroup(
+                            title: "Never notify",
+                            words: rules.config.blockKeywords,
+                            draft: $blockDraft,
+                            error: blockError,
+                            placeholder: "Add word, e.g. lunch",
+                            emptyText: "No never-notify words yet.",
+                            remove: rules.removeBlockKeyword,
+                            add: submitBlock)
+                        Text("Always words banner even in noisy or mentions-only chats (subtitle “Keyword alert”); never words silence. Case-insensitive whole words; re: prefix is a regex. Never wins over always; muted chats, DND, and quiet hours still hold everything.")
+                            .font(DietType.caption1)
+                            .foregroundStyle(DietColor.textSecondaryColor)
+                    }
+                    Section("Per-chat overrides") {
+                        if chats.chats.isEmpty, rules.config.mutedChatIDs.isEmpty, rules.config.mentionOnlyChatIDs.isEmpty {
+                            Text("No chats loaded yet. Overridden chats appear here once the chat list loads.")
                                 .font(DietType.caption1)
                                 .foregroundStyle(DietColor.textSecondaryColor)
                         } else {
-                            ForEach(accounts.accounts) { record in
-                                SettingsAccountRow(
-                                    record: record,
-                                    vm: accounts.vm(for: record.id),
-                                    isActive: record.id == accounts.activeID,
-                                    onRemove: { removeCandidate = record })
+                            ForEach(chats.chats) { chat in
+                                Picker(chat.name, selection: levelBinding(chat.id)) {
+                                    ForEach(ChatNotifyLevel.allCases, id: \.self) { level in
+                                        Text(level.displayName).tag(level)
+                                    }
+                                }
+                                .pickerStyle(.menu)
+                                .help(levelHelp(chatID: chat.id))
                             }
-                            Button("Add Account…") {
-                                pendingAddVM = accounts.beginAdd()
-                                showAddAccount = true
+                            ForEach(orphanedOverrideIDs, id: \.self) { chatID in
+                                HStack {
+                                    Text(chatID)
+                                        .font(DietType.caption1)
+                                        .foregroundStyle(DietColor.textSecondaryColor)
+                                        .textSelection(.enabled)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                    Spacer()
+                                    Button("Reset") {
+                                        rules.setLevel(chatID: chatID, level: .all)
+                                    }
+                                }
+                                .help("Overridden, but no longer in the chat list")
                             }
                         }
-                    }
-                    .sheet(isPresented: $showAddAccount) {
-                        if let vm = pendingAddVM {
-                            AddAccountSheet(vm: vm, onAdded: onAccountAdded)
-                        }
-                    }
-                    .confirmationDialog(
-                        "Remove this account?",
-                        isPresented: Binding(
-                            get: { removeCandidate != nil },
-                            set: { if !$0 { removeCandidate = nil } }),
-                        titleVisibility: .visible
-                    ) {
-                        Button("Remove Account", role: .destructive) {
-                            if let id = removeCandidate?.id {
-                                onRemoveAccount(id)
-                            }
-                            removeCandidate = nil
-                        }
-                        Button("Cancel", role: .cancel) { removeCandidate = nil }
-                    } message: {
-                        Text("Its sign-in and per-account caches are deleted from this Mac. Other accounts are unaffected.")
-                    }
-                    Section("Sign in") {
-                        AuthView(model: auth, embedded: true)
-                    }
-                }
-                Section("Notifications") {
-                    Toggle("Message banners", isOn: $notifs.enabled)
-                        .help("When off, no chat banners are posted")
-                    Toggle("Show message preview", isOn: $notifs.showPreview)
-                        .help("When off, banners show who wrote, never the text")
-                    Toggle("Play banner sound", isOn: $notifs.sound)
-                        .help("When off, banners post silent")
-                    LabeledContent("System permission", value: permissionText)
-                }
-                Section("Keyword alerts") {
-                    keywordGroup(
-                        title: "Always notify",
-                        words: rules.config.allowKeywords,
-                        draft: $allowDraft,
-                        error: allowError,
-                        placeholder: "Add word, e.g. outage",
-                        emptyText: "No always-notify words yet.",
-                        remove: rules.removeAllowKeyword,
-                        add: submitAllow)
-                    keywordGroup(
-                        title: "Never notify",
-                        words: rules.config.blockKeywords,
-                        draft: $blockDraft,
-                        error: blockError,
-                        placeholder: "Add word, e.g. lunch",
-                        emptyText: "No never-notify words yet.",
-                        remove: rules.removeBlockKeyword,
-                        add: submitBlock)
-                    Text("Always words banner even in noisy or mentions-only chats (subtitle “Keyword alert”); never words silence. Case-insensitive whole words; re: prefix is a regex. Never wins over always; muted chats, DND, and quiet hours still hold everything.")
-                        .font(DietType.caption1)
-                        .foregroundStyle(DietColor.textSecondaryColor)
-                }
-                Section("Per-chat overrides") {
-                    if chats.chats.isEmpty, rules.config.mutedChatIDs.isEmpty, rules.config.mentionOnlyChatIDs.isEmpty {
-                        Text("No chats loaded yet. Overridden chats appear here once the chat list loads.")
+                        Text("Muted chats never banner and never accrue unread (rules reason “chat-muted”); mentions-only chats banner on mention alone.")
                             .font(DietType.caption1)
                             .foregroundStyle(DietColor.textSecondaryColor)
-                    } else {
-                        ForEach(chats.chats) { chat in
-                            Picker(chat.name, selection: levelBinding(chat.id)) {
-                                ForEach(ChatNotifyLevel.allCases, id: \.self) { level in
-                                    Text(level.displayName).tag(level)
-                                }
-                            }
-                            .pickerStyle(.menu)
-                            .help(levelHelp(chatID: chat.id))
-                        }
-                        ForEach(orphanedOverrideIDs, id: \.self) { chatID in
-                            HStack {
-                                Text(chatID)
-                                    .font(DietType.caption1)
-                                    .foregroundStyle(DietColor.textSecondaryColor)
-                                    .textSelection(.enabled)
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                                Spacer()
-                                Button("Reset") {
-                                    rules.setLevel(chatID: chatID, level: .all)
-                                }
-                            }
-                            .help("Overridden, but no longer in the chat list")
-                        }
                     }
-                    Text("Muted chats never banner and never accrue unread (rules reason “chat-muted”); mentions-only chats banner on mention alone.")
-                        .font(DietType.caption1)
-                        .foregroundStyle(DietColor.textSecondaryColor)
-                }
-                Section("Blocked users") {
-                    if blocked.users.isEmpty {
-                        Text("No blocked users. Block someone from a 1:1 chat in the sidebar (right-click).")
+                    Section("Blocked users") {
+                        if blocked.users.isEmpty {
+                            Text("No blocked users. Block someone from a 1:1 chat in the sidebar (right-click).")
+                                .font(DietType.caption1)
+                                .foregroundStyle(DietColor.textSecondaryColor)
+                        } else {
+                            ForEach(blocked.sortedUsers) { user in
+                                HStack {
+                                    Text(user.displayName)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                    Spacer()
+                                    Button("Unblock") {
+                                        blocked.unblock(chatID: user.chatID)
+                                    }
+                                }
+                                .help("Unblock \(user.displayName)")
+                            }
+                        }
+                        Text("Blocked users never banner and never accrue unread. Unblocked chats reappear when the list next loads.")
                             .font(DietType.caption1)
                             .foregroundStyle(DietColor.textSecondaryColor)
-                    } else {
-                        ForEach(blocked.sortedUsers) { user in
+                    }
+                    Section("Quiet hours") {
+                        Toggle("Scheduled quiet hours", isOn: $quiet.windowEnabled)
+                            .help("Pause banners and sounds on a daily schedule")
+                        DatePicker(
+                            "Start",
+                            selection: startBinding,
+                            displayedComponents: .hourAndMinute)
+                            .disabled(!quiet.windowEnabled)
+                        DatePicker(
+                            "End",
+                            selection: endBinding,
+                            displayedComponents: .hourAndMinute)
+                            .disabled(!quiet.windowEnabled)
+                        LabeledContent("Days") {
                             HStack {
-                                Text(user.displayName)
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                                Spacer()
-                                Button("Unblock") {
-                                    blocked.unblock(chatID: user.chatID)
+                                ForEach(1 ... 7, id: \.self) { day in
+                                    Toggle(
+                                        dayLetter(day),
+                                        isOn: dayBinding(day))
+                                        .toggleStyle(.checkbox)
+                                        .help(dayName(day))
                                 }
                             }
-                            .help("Unblock \(user.displayName)")
                         }
+                        .disabled(!quiet.windowEnabled)
+                        Text("Banners and sounds pause on schedule (overnight ranges like 22:00–07:00 wrap past midnight), mentions included. Unread pauses too while quiet — the Mentions row still tracks threads for review; suppressions are counted in Diagnostics.")
+                            .font(DietType.caption1)
+                            .foregroundStyle(DietColor.textSecondaryColor)
                     }
-                    Text("Blocked users never banner and never accrue unread. Unblocked chats reappear when the list next loads.")
-                        .font(DietType.caption1)
-                        .foregroundStyle(DietColor.textSecondaryColor)
-                }
-                Section("Quiet hours") {
-                    Toggle("Scheduled quiet hours", isOn: $quiet.windowEnabled)
-                        .help("Pause banners and sounds on a daily schedule")
-                    DatePicker(
-                        "Start",
-                        selection: startBinding,
-                        displayedComponents: .hourAndMinute)
-                        .disabled(!quiet.windowEnabled)
-                    DatePicker(
-                        "End",
-                        selection: endBinding,
-                        displayedComponents: .hourAndMinute)
-                        .disabled(!quiet.windowEnabled)
-                    LabeledContent("Days") {
-                        HStack {
-                            ForEach(1 ... 7, id: \.self) { day in
-                                Toggle(
-                                    dayLetter(day),
-                                    isOn: dayBinding(day))
-                                    .toggleStyle(.checkbox)
-                                    .help(dayName(day))
+                    Section("Do Not Disturb") {
+                        Toggle("Do Not Disturb", isOn: dndBinding)
+                            .help("Silence banners and sounds now, until the auto-expiry below")
+                        Picker("Auto-expire", selection: $quiet.pendingDNDOption) {
+                            ForEach(DNDDuration.allCases, id: \.self) { opt in
+                                Text(opt.label).tag(opt)
                             }
                         }
-                    }
-                    .disabled(!quiet.windowEnabled)
-                    Text("Banners and sounds pause on schedule (overnight ranges like 22:00–07:00 wrap past midnight), mentions included. Unread pauses too while quiet — the Mentions row still tracks threads for review; suppressions are counted in Diagnostics.")
-                        .font(DietType.caption1)
-                        .foregroundStyle(DietColor.textSecondaryColor)
-                }
-                Section("Do Not Disturb") {
-                    Toggle("Do Not Disturb", isOn: dndBinding)
-                        .help("Silence banners and sounds now, until the auto-expiry below")
-                    Picker("Auto-expire", selection: $quiet.pendingDNDOption) {
-                        ForEach(DNDDuration.allCases, id: \.self) { opt in
-                            Text(opt.label).tag(opt)
+                        .onChange(of: quiet.pendingDNDOption) { _, next in
+                            // Re-clock a live DND when the choice changes.
+                            if quiet.dndOn { quiet.enableDND(next) }
                         }
+                        LabeledContent("Status", value: quiet.dndStatus())
+                        Text("Manual silence with auto-expiry. Like the schedule, it holds banners and sounds — unread pauses too while on.")
+                            .font(DietType.caption1)
+                            .foregroundStyle(DietColor.textSecondaryColor)
                     }
-                    .onChange(of: quiet.pendingDNDOption) { _, next in
-                        // Re-clock a live DND when the choice changes.
-                        if quiet.dndOn { quiet.enableDND(next) }
+                    Section("GIFs (KLIPY)") {
+                        SecureField("KLIPY API key", text: $klipyAPIKey)
+                            .onChange(of: klipyAPIKey) { _, next in
+                                KlipyClient.saveKey(next)
+                            }
+                        Text("Bring your own free key (klipy.com → Developers; stored in your keychain). Empty = GIF picker stays off; nothing is sent anywhere.")
+                            .font(DietType.caption1)
+                            .foregroundStyle(DietColor.textSecondaryColor)
                     }
-                    LabeledContent("Status", value: quiet.dndStatus())
-                    Text("Manual silence with auto-expiry. Like the schedule, it holds banners and sounds — unread pauses too while on.")
-                        .font(DietType.caption1)
-                        .foregroundStyle(DietColor.textSecondaryColor)
+                    CatchUpSettingsSection(catchUp: catchUp)
                 }
-                Section("GIFs (KLIPY)") {
-                    SecureField("KLIPY API key", text: $klipyAPIKey)
-                        .onChange(of: klipyAPIKey) { _, next in
-                            KlipyClient.saveKey(next)
-                        }
-                    Text("Bring your own free key (klipy.com → Developers; stored in your keychain). Empty = GIF picker stays off; nothing is sent anywhere.")
-                        .font(DietType.caption1)
-                        .foregroundStyle(DietColor.textSecondaryColor)
-                }
-                CatchUpSettingsSection(catchUp: catchUp)
+                .formStyle(.grouped)
+                .padding()
             }
-            .formStyle(.grouped)
-            .padding()
-        }
-        // Live embeds the full AuthView (min 420 tall); fixed stays compact.
-        .frame(width: 460, height: fixedAccount == nil ? 760 : nil)
-        .task {
-            // Fixed (preview/shot) view must not touch the real keychain.
-            // --shot-no-klipy also skips it (a prompting klipy item
-            // parks the main thread on SecurityAgent and freezes
-            // shot automation).
-            if fixedAccount == nil {
-                if !CommandLine.arguments.contains("--shot-no-klipy") {
-                    klipyAPIKey = KlipyClient.storedKey()
+            // Live embeds the full AuthView (min 420 tall); fixed stays compact.
+            // The keywords shot pins the live height so the section scroll lands visibly.
+            .frame(width: 460, height: (fixedAccount == nil || Self.isKeywordsShot) ? 760 : nil)
+            .task {
+                // Fixed (preview/shot) view must not touch the real keychain.
+                // --shot-no-klipy also skips it (a prompting klipy item
+                // parks the main thread on SecurityAgent and freezes
+                // shot automation).
+                if fixedAccount == nil {
+                    if !CommandLine.arguments.contains("--shot-no-klipy") {
+                        klipyAPIKey = KlipyClient.storedKey()
+                    }
+                    await auth.refreshStatus()
                 }
-                await auth.refreshStatus()
+            }
+            .onAppear {
+                // Shot hook: --show-settings-keywords lands the
+                // Keyword alerts section at the top (no input path).
+                if Self.isKeywordsShot {
+                    proxy.scrollTo("shot-keywords", anchor: .top)
+                }
             }
         }
     }
@@ -377,6 +388,11 @@ struct SettingsView: View {
     private func submitBlock() {
         blockError = rules.addBlockKeyword(blockDraft)
         if blockError == nil { blockDraft = "" }
+    }
+
+    /// Shot hook flag (R6): fixed sanitized view, scrolled to keywords.
+    fileprivate static var isKeywordsShot: Bool {
+        CommandLine.arguments.contains("--show-settings-keywords")
     }
 
     private var account: AccountInfo {
