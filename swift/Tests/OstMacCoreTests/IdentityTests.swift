@@ -82,4 +82,30 @@ final class IdentityTests: XCTestCase {
             // Unsigned: core correctly refused before/after network.
         }
     }
+
+    /// d1-accounts: adopting the new account's identity re-stamps every
+    /// bubble (sent-message alignment follows the active account).
+    func testAdoptIdentityRestampsForNewAccount() {
+        let store = ConversationStore()
+        store.adoptIdentity(displayName: "Alice Barrett")
+        store.ingest(ChatMessage(id: "m1", sender: "Alice Barrett", timestamp: "t", content: "mine"))
+        store.ingest(ChatMessage(id: "m2", sender: "Bob Carpenter", timestamp: "t", content: "theirs"))
+        XCTAssertTrue(store.messages[0].isOwn)
+        // Switch: the same rows re-stamp for the new identity.
+        store.adoptIdentity(displayName: "Bob Carpenter")
+        XCTAssertFalse(store.messages[0].isOwn)
+        XCTAssertTrue(store.messages[1].isOwn)
+    }
+
+    /// d1-accounts live FFI: profile twins link + decode. Pure reads
+    /// (no network): active id round-trips, unknown profiles read
+    /// unsigned without touching the real session.
+    func testLiveFFIProfileTwinsLink() {
+        let active = try! RustCore.profileActive()
+        XCTAssertTrue(active.ok)
+        XCTAssertFalse(active.profile.isEmpty)
+        let st = try! RustCore.status(profile: "d1-accounts-no-such-profile")
+        XCTAssertTrue(st.ok)
+        XCTAssertFalse(st.signed_in)
+    }
 }

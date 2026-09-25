@@ -443,4 +443,46 @@ final class AuthTests: XCTestCase {
         XCTAssertFalse(
             AuthViewModel.defaultOpenURL(URL(string: "https://example.com/device")!))
     }
+
+    // MARK: - Profiles (d1-accounts: one VM per account)
+
+    func testProfileDefaultsToLegacy() {
+        XCTAssertEqual(AuthViewModel().profile, AccountProfile.defaultID)
+        XCTAssertEqual(
+            AuthViewModel(status: { Self.status(signedIn: true) }).profile,
+            AccountProfile.defaultID)
+    }
+
+    func testTwoProfileVMsCoexistAndRefreshFailedIsolates() async {
+        let ok = Self.status(signedIn: true)
+        let good = AuthViewModel(profile: "acct-a", status: { ok })
+        let bad = AuthViewModel(
+            profile: "acct-b",
+            status: {
+                Self.status(
+                    signedIn: false, aadPresent: true, aadExpired: true,
+                    refresh: true)
+            },
+            refresh: { throw CoreCallError.failed("stale grant") })
+        await good.refreshStatus()
+        await bad.refreshStatus()
+        XCTAssertEqual(good.state, .signedIn)
+        XCTAssertEqual(bad.state, .expired)
+        // Refresh-failed on B leaves A signed in.
+        await bad.retryRefresh()
+        if case .refreshFailed = bad.state {} else {
+            XCTFail("expected refreshFailed, got \(bad.state)")
+        }
+        XCTAssertEqual(good.state, .signedIn)
+    }
+
+    func testRepointSwapsProfileAndResetsState() async {
+        let vm = AuthViewModel(
+            profile: "acct-a", status: { Self.status(signedIn: true) })
+        await vm.refreshStatus()
+        XCTAssertEqual(vm.state, .signedIn)
+        vm.repoint(profile: "acct-b", live: false)
+        XCTAssertEqual(vm.profile, "acct-b")
+        XCTAssertEqual(vm.state, .unknown)
+    }
 }
