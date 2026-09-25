@@ -276,6 +276,7 @@ struct OstMacAppMain: App {
                     sched: state.presenceSchedule, blocked: state.blocked,
                     accounts: state.accounts, call: state.call,
                     canned: state.canned, ghost: state.ghost,
+                    density: state.density,
                     onAccountAdded: { state.completePendingAdd($0) },
                     onRemoveAccount: { state.removeAccount($0) })
             }
@@ -415,6 +416,10 @@ final class AppState: ObservableObject {
     /// presence writes while on (injected into receipts/presence/
     /// presenceSchedule below; toggles persist, counters clear out).
     let ghost = GhostStore()
+    /// Message density (f2-density): Comfortable/Compact spacing.
+    /// Published into the environment via DensityHost (RootView +
+    /// pop-outs) and bound in Settings → Chats → Appearance.
+    let density = DensityStore()
     let call: CallStore
     /// Rebuilt per account on switch (d1-accounts).
     @Published var history = CallHistoryStore()
@@ -2323,19 +2328,20 @@ struct PopOutRootView: View {
     @StateObject private var notes = NotesStore()
 
     var body: some View {
-        ConversationView(
-            store: state.popouts.store(for: chatID),
-            presence: state.presence,
-            call: state.call, shared: shared, notes: notes,
-            catchUp: state.catchUp, typing: state.typing,
-            receipts: state.receipts,
-            pins: state.pinnedMessages,
-            scheduled: state.scheduled,
-            canned: state.canned,
-            isGroup: state.chats.chat(id: chatID)?.is_group ?? true,
-            onForward: { state.beginForward($0) },
-            initialDraft: state.popouts.draft(for: chatID),
-            onDraftChange: { state.popouts.saveDraft($0, for: chatID) })
+        DensityHost(density: state.density) {
+            ConversationView(
+                store: state.popouts.store(for: chatID),
+                presence: state.presence,
+                call: state.call, shared: shared, notes: notes,
+                catchUp: state.catchUp, typing: state.typing,
+                receipts: state.receipts,
+                pins: state.pinnedMessages,
+                scheduled: state.scheduled,
+                canned: state.canned,
+                isGroup: state.chats.chat(id: chatID)?.is_group ?? true,
+                onForward: { state.beginForward($0) },
+                initialDraft: state.popouts.draft(for: chatID),
+                onDraftChange: { state.popouts.saveDraft($0, for: chatID) })
             .popoutWindowTitle(state.popoutName(for: chatID))
             .onAppear {
                 state.openPopout(chatID: chatID)
@@ -2349,6 +2355,7 @@ struct PopOutRootView: View {
                 }
             }
             .onDisappear { state.popouts.close(chatID: chatID) }
+        }
     }
 }
 
@@ -2430,7 +2437,12 @@ struct RootView: View {
                 messages: DemoData.messages(for: DemoData.demoID),
                 chatID: DemoData.demoID, autoRun: true)
         } else {
-            mainBody
+            // Message density (f2-density): one host publishes the
+            // mode to sidebar + timeline (instant re-layout, no
+            // reload, no scroll calls).
+            DensityHost(density: state.density) {
+                mainBody
+            }
         }
     }
 

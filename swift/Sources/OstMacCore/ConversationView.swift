@@ -984,6 +984,10 @@ struct MessageBubble: View {
     var translation: TranslatedEntry? = nil
     /// Translate tap (e1-translation): the host toggles/translates.
     var onTranslate: () -> Void = {}
+    /// Message density (f2-density): bubble inner padding. Plain
+    /// environment value — no new init param, existing callers
+    /// untouched.
+    @Environment(\.messageDensity) private var density
 
     var body: some View {
         HStack(spacing: DietSpace.xs) {
@@ -1102,7 +1106,7 @@ struct MessageBubble: View {
                         .accessibilityLabel("Seen")
                     }
             }
-            .padding(DietSpace.sm + DietSpace.xs)
+            .padding(density.metrics.bubblePad)
             .background(
                 message.isOwn ? DietColor.bubbleOutColor : DietColor.bubbleInColor,
                 in: RoundedRectangle(cornerRadius: DietRadius.bubble))

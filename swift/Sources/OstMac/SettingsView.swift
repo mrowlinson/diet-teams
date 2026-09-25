@@ -8,7 +8,8 @@
 //   Notifications: banners, Keyword alerts, Quiet hours, DND,
 //     Focus sync, Presence schedules (the Attention surface).
 //   Chats: Per-chat overrides, Blocked users, Translation,
-//     Templates (message templates, composer picker source).
+//     Appearance (density), Templates (message templates, composer
+//     picker source).
 //   Calls: echo-bot test call (shared slot).
 //   Summaries: Thread catch-up (provider picker + BYO key).
 //   GIFs: KLIPY key (keychain).
@@ -54,6 +55,9 @@ struct SettingsView: View {
     @ObservedObject private var canned: CannedResponsesStore
     /// Ghost mode (f1-ghost): read-privacy toggles (Notifications).
     @ObservedObject private var ghost: GhostStore
+    /// Message density (f2-density): Comfortable/Compact (Chats →
+    /// Appearance). Bound live; flips re-layout instantly.
+    @ObservedObject private var density: DensityStore
     private let onAccountAdded: (AuthViewModel) -> Void
     private let onRemoveAccount: (String) -> Void
     @State private var pendingAddVM: AuthViewModel?
@@ -91,6 +95,7 @@ struct SettingsView: View {
         call: CallStore = CallStore(),
         canned: CannedResponsesStore = CannedResponsesStore(),
         ghost: GhostStore = GhostStore(),
+        density: DensityStore = DensityStore(),
         onAccountAdded: @escaping (AuthViewModel) -> Void = { _ in },
         onRemoveAccount: @escaping (String) -> Void = { _ in }
     ) {
@@ -107,6 +112,7 @@ struct SettingsView: View {
         _call = ObservedObject(wrappedValue: call)
         _canned = ObservedObject(wrappedValue: canned)
         _ghost = ObservedObject(wrappedValue: ghost)
+        _density = ObservedObject(wrappedValue: density)
         self.onAccountAdded = onAccountAdded
         self.onRemoveAccount = onRemoveAccount
         fixedAccount = nil
@@ -149,6 +155,14 @@ struct SettingsView: View {
             _canned = ObservedObject(wrappedValue: CannedResponsesStore())
         }
         _ghost = ObservedObject(wrappedValue: GhostStore())
+        if Self.isChatsShot {
+            // Chats shot: throwaway suite (never the real defaults),
+            // deterministic Comfortable.
+            let suite = UserDefaults(suiteName: "shot-chats") ?? .standard
+            _density = ObservedObject(wrappedValue: DensityStore(defaults: suite))
+        } else {
+            _density = ObservedObject(wrappedValue: DensityStore())
+        }
         onAccountAdded = { _ in }
         onRemoveAccount = { _ in }
         fixedAccount = account
@@ -478,6 +492,18 @@ struct SettingsView: View {
                     .font(DietType.caption1)
                     .foregroundStyle(DietColor.textSecondaryColor)
             }
+        }
+        Section("Appearance") {
+            Picker("Density", selection: $density.mode) {
+                ForEach(MessageDensity.allCases, id: \.self) { mode in
+                    Text(mode.displayName).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+            .help("Message spacing: Comfortable (roomy) or Compact (more fits on screen)")
+            Text("Compact tightens message and chat-row spacing so more fits on screen. Text size never changes.")
+                .font(DietType.caption1)
+                .foregroundStyle(DietColor.textSecondaryColor)
         }
         TemplatesSettingsSection(canned: canned)
         QuickComposerSettingsSection()
