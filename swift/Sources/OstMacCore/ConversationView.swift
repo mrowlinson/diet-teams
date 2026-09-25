@@ -452,28 +452,11 @@ public struct ConversationView: View {
             replyChip
             attachmentStrip
             scheduledStrip
-            // (composer-2line): 2-line input left, buttons stacked
-            // vertically beside it (tool row over Send), centered.
-            // All 5 tool buttons share the ComposerMetrics cell.
+            // (composer-rearrange): 5 controls lead in a 3-over-2 stack,
+            // 2-line input center, Send trailing right. Stack height (two
+            // rows + xs gap) matches the 48pt field. All 5 tool buttons
+            // share the ComposerMetrics cell.
             HStack(alignment: .center, spacing: DietSpace.sm) {
-                TextField("Message", text: $draft, axis: .vertical)
-                    .textFieldStyle(.plain)
-                    .font(DietType.body)
-                    .lineLimit(ComposerMetrics.inputMinLines...)
-                    .padding(DietSpace.sm)
-                    .frame(minHeight: ComposerMetrics.inputMinHeight)
-                    .background(
-                        DietColor.wellColor,
-                        in: RoundedRectangle(cornerRadius: DietRadius.control)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: DietRadius.control)
-                            .stroke(DietColor.dividerColor, lineWidth: 1)
-                    )
-                    .plainFocusRing()
-                    .focused($boxFocused)
-                    .onSubmit { submit() }
-                    .onChange(of: draft) { onDraftChange?(draft) }
                 VStack(spacing: DietSpace.xs) {
                     HStack(spacing: DietSpace.sm) {
                         Button {
@@ -529,6 +512,8 @@ public struct ConversationView: View {
                                 showGIFs = false
                             }
                         }
+                    }
+                    HStack(spacing: DietSpace.sm) {
                         // Schedule-send clock (d2-send, additive): opens the preset +
                         // custom-time popover. Queued sends fire while the app runs.
                         Button {
@@ -549,7 +534,7 @@ public struct ConversationView: View {
                             schedulePopover
                         }
                         // Templates button (e2-canned): same bordered-icon recipe
-                        // as the tool row; picking appends to the draft, never sends.
+                        // as the tool stack; picking appends to the draft, never sends.
                         Button {
                             showTemplates = true
                         } label: {
@@ -569,14 +554,32 @@ public struct ConversationView: View {
                             }
                         }
                     }
-                    Button("Send", systemImage: "paperplane.fill") { submit() }
-                        .buttonStyle(.borderedProminent)
-                        .keyboardShortcut(.return, modifiers: .command)
-                        .disabled(
-                            attachments.uploading
-                                || (draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                                    && !attachments.hasStaged))
                 }
+                TextField("Message", text: $draft, axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .font(DietType.body)
+                    .lineLimit(ComposerMetrics.inputMinLines...)
+                    .padding(DietSpace.sm)
+                    .frame(minHeight: ComposerMetrics.inputMinHeight)
+                    .background(
+                        DietColor.wellColor,
+                        in: RoundedRectangle(cornerRadius: DietRadius.control)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: DietRadius.control)
+                            .stroke(DietColor.dividerColor, lineWidth: 1)
+                    )
+                    .plainFocusRing()
+                    .focused($boxFocused)
+                    .onSubmit { submit() }
+                    .onChange(of: draft) { onDraftChange?(draft) }
+                Button("Send", systemImage: "paperplane.fill") { submit() }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.return, modifiers: .command)
+                    .disabled(
+                        attachments.uploading
+                            || (draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                && !attachments.hasStaged))
             }
             .padding(DietSpace.md)
         }
