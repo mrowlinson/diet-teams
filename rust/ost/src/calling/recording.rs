@@ -883,6 +883,15 @@ mod tests {
     }
 
     #[test]
+    fn test_recorder_base_eu_aliases() {
+        let euwe = recorder_service_base_for_region("euwe");
+        assert_eq!(recorder_service_base_for_region("eu"), euwe);
+        assert_eq!(recorder_service_base_for_region("emea"), euwe);
+        assert_eq!(recorder_service_base_for_region(" EMEA "), euwe);
+        assert_eq!(recorder_service_base_for_region("Eu"), euwe);
+    }
+
+    #[test]
     fn test_recorder_base_unknown_falls_back_to_usea() {
         assert_eq!(recorder_service_base_for_region(""), RECORDER_SERVICE_BASE);
         assert_eq!(
