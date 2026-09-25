@@ -106,17 +106,10 @@ public struct RemindersBrowser: View {
             DietSeamH()
             HStack(spacing: DietSpace.sm) {
                 TextField("New task", text: $newTitle, onCommit: submit)
-                    .textFieldStyle(.plain)
+                    .textFieldStyle(.roundedBorder)
                     .font(DietType.body)
-                    .padding(.horizontal, DietSpace.sm)
-                    .frame(minHeight: DietSize.controlHeight)
-                    .background(DietColor.wellColor)
-                    .clipShape(RoundedRectangle(cornerRadius: DietRadius.control))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: DietRadius.control)
-                            .stroke(DietColor.dividerColor, lineWidth: 1))
                 Button("Add", action: submit)
-                    .buttonStyle(.dietSecondary)
+                    .buttonStyle(.bordered)
                     .disabled(newTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
             .padding(.horizontal, DietSpace.sm)

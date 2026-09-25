@@ -45,20 +45,12 @@ struct ReactionPickerView: View {
                     .font(.system(size: DietSize.iconMD))
                     .foregroundStyle(DietColor.textTertiaryColor)
                 TextField("Search emoji", text: $query)
-                    .textFieldStyle(.plain)
+                    .textFieldStyle(.roundedBorder)
                     .font(DietType.body)
-                    .foregroundStyle(DietColor.textPrimaryColor)
                     .focused($fieldFocused)
                     .onSubmit { pickHighlighted() }
                     .onAppear { DispatchQueue.main.async { fieldFocused = true } }
             }
-            .padding(.horizontal, DietSpace.sm)
-            .frame(minHeight: DietSize.controlHeight)
-            .background(DietColor.wellColor)
-            .clipShape(RoundedRectangle(cornerRadius: DietRadius.control))
-            .overlay(
-                RoundedRectangle(cornerRadius: DietRadius.control)
-                    .stroke(DietColor.dividerColor, lineWidth: 1))
             if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 Picker("Category", selection: $category) {
                     Text("Recents").tag("recents")

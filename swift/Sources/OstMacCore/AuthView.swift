@@ -5,7 +5,7 @@
 // failure states with retry. The browser step is user-driven (no automation).
 //
 // om-reskin-chrome: Diet tokens only — DietType/DietSpace/DietColor,
-// .dietPrimary/.dietSecondary buttons, link actions in accent.
+// system .borderedProminent/.bordered buttons, link actions in accent.
 import DietDesign
 import SwiftUI
 
@@ -78,7 +78,7 @@ public struct AuthView: View {
                 .foregroundStyle(DietColor.textSecondaryColor)
                 .multilineTextAlignment(.center)
             Button("Sign in") { Task { await model.signIn() } }
-                .buttonStyle(.dietPrimary)
+                .buttonStyle(.borderedProminent)
                 .padding(.top, DietSpace.xs)
             Button("Device code not working? Use browser sign-in") {
                 Task { await model.startBrowserSignIn() }
@@ -124,9 +124,9 @@ public struct AuthView: View {
                         Text("Copy code")
                     }
                 }
-                .buttonStyle(.dietSecondary)
+                .buttonStyle(.bordered)
                 Button("Open browser") { model.openBrowser() }
-                    .buttonStyle(.dietPrimary)
+                    .buttonStyle(.borderedProminent)
             }
             .padding(.top, DietSpace.xs)
             if attempts == nil {

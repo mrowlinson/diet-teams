@@ -681,7 +681,7 @@ private struct FilePeopleResultsView: View {
                 .lineLimit(2)
             Spacer(minLength: DietSpace.sm)
             Button("Try Again", action: retry)
-                .buttonStyle(.dietSecondary)
+                .buttonStyle(.bordered)
                 .controlSize(.small)
         }
         .padding(.vertical, DietSpace.xs)

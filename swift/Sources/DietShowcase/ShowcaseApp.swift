@@ -209,11 +209,11 @@ struct ShowcaseRoot: View {
         DietSectionCard("Buttons", systemImage: "button.horizontal.top.press") {
             VStack(alignment: .leading, spacing: DietSpace.sm) {
                 HStack(spacing: DietSpace.sm) {
-                    Button("Primary") {}.buttonStyle(.dietPrimary)
+                    Button("Primary") {}.buttonStyle(.borderedProminent)
                     Button("Secondary") {}
-                        .buttonStyle(.dietSecondary)
-                    Button("Delete") {}
-                        .buttonStyle(.dietDestructive)
+                        .buttonStyle(.bordered)
+                    Button("Delete", role: .destructive) {}
+                        .buttonStyle(.bordered)
                 }
                 HStack(spacing: DietSpace.xs) {
                     DietIconButton(
@@ -396,7 +396,7 @@ struct ShowcaseRoot: View {
     private var sheetSection: some View {
         DietSectionCard("Sheet", systemImage: "macwindow") {
             Button("Open sheet") { showSheet = true }
-                .buttonStyle(.dietPrimary)
+                .buttonStyle(.borderedProminent)
         }
         .sheet(isPresented: $showSheet) {
             DietSheet("Catch up") {
@@ -404,7 +404,7 @@ struct ShowcaseRoot: View {
                     Text("3 unread threads since 09:00.")
                         .font(DietType.body)
                     Button("Done") { showSheet = false }
-                        .buttonStyle(.dietPrimary)
+                        .buttonStyle(.borderedProminent)
                 }
             }
         }

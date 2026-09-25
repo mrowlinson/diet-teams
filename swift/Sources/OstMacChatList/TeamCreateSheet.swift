@@ -74,20 +74,12 @@ public struct TeamCreateSheet: View {
     private var formBody: some View {
         Group {
             TextField("Team name", text: $name)
-                .textFieldStyle(.plain)
+                .textFieldStyle(.roundedBorder)
                 .font(DietType.body)
-                .foregroundStyle(DietColor.textPrimaryColor)
-                .padding(DietSpace.sm)
-                .background(DietColor.wellColor)
-                .clipShape(RoundedRectangle(cornerRadius: DietRadius.control))
                 .disabled(phase.isCreating)
             TextField("Description (optional)", text: $description)
-                .textFieldStyle(.plain)
+                .textFieldStyle(.roundedBorder)
                 .font(DietType.body)
-                .foregroundStyle(DietColor.textPrimaryColor)
-                .padding(DietSpace.sm)
-                .background(DietColor.wellColor)
-                .clipShape(RoundedRectangle(cornerRadius: DietRadius.control))
                 .disabled(phase.isCreating)
             if phase.isCreating {
                 HStack(spacing: DietSpace.xs) {

@@ -222,10 +222,6 @@ public struct ConversationView: View {
             TextField("Message", text: $editDraft, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(DietType.body)
-                .foregroundStyle(DietColor.textPrimaryColor)
-                .padding(DietSpace.sm)
-                .background(DietColor.wellColor)
-                .clipShape(RoundedRectangle(cornerRadius: DietRadius.control))
                 .lineLimit(3...8)
             HStack {
                 Spacer()
@@ -346,7 +342,7 @@ public struct ConversationView: View {
                 Button("Catch up", systemImage: "sparkles") {
                     CatchUpSheet.open(presented: $showCatchUp, store: catchUp)
                 }
-                .buttonStyle(.dietSecondary)
+                .buttonStyle(.bordered)
                 .help("Summarize this thread: TL;DR, key points, action items")
             }
             if store.loading { ProgressView().controlSize(.small) }
@@ -481,23 +477,12 @@ public struct ConversationView: View {
                 }
             }
             TextField("Message", text: $draft)
-                .textFieldStyle(.plain)
+                .textFieldStyle(.roundedBorder)
                 .font(DietType.body)
-                .foregroundStyle(DietColor.textPrimaryColor)
                 .focused($boxFocused)
-                .padding(.horizontal, DietSpace.sm)
-                .frame(minHeight: DietSize.controlHeight)
-                .background(DietColor.wellColor)
-                .clipShape(RoundedRectangle(cornerRadius: DietRadius.control))
-                .overlay(
-                    RoundedRectangle(cornerRadius: DietRadius.control)
-                        .stroke(
-                            boxFocused ? Color.accentColor : DietColor.dividerColor,
-                            lineWidth: boxFocused ? 2 : 1)
-                )
                 .onSubmit { submit() }
                 Button("Send", systemImage: "paperplane.fill") { submit() }
-                    .buttonStyle(.dietPrimary)
+                    .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.return, modifiers: .command)
                     .disabled(
                         attachments.uploading

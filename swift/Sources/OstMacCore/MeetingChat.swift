@@ -581,7 +581,6 @@ struct MeetingBubbleRow: View {
 public struct MeetingChatPanel: View {
     @ObservedObject public var chat: MeetingChatStore
     @State private var draft = ""
-    @FocusState private var boxFocused: Bool
     @StateObject private var scroll = ChatScrollModel()
     /// Reduce Motion (om-a1-motion): scrollToBottom lands instantly.
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -715,24 +714,12 @@ public struct MeetingChatPanel: View {
             DietSeamH()
             HStack(spacing: DietSpace.sm) {
                 TextField("Message", text: $draft)
-                    .textFieldStyle(.plain)
+                    .textFieldStyle(.roundedBorder)
                     .font(DietType.body)
-                    .foregroundStyle(DietColor.textPrimaryColor)
-                    .focused($boxFocused)
-                    .padding(.horizontal, DietSpace.sm)
-                    .frame(minHeight: DietSize.controlHeight)
-                    .background(DietColor.wellColor)
-                    .clipShape(RoundedRectangle(cornerRadius: DietRadius.control))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: DietRadius.control)
-                            .stroke(
-                                boxFocused ? Color.accentColor : DietColor.dividerColor,
-                                lineWidth: boxFocused ? 2 : 1)
-                    )
                     .onSubmit { submit() }
                     .disabled(chat.threadID == nil)
                 Button("Send", systemImage: "paperplane.fill") { submit() }
-                    .buttonStyle(.dietPrimary)
+                    .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.return, modifiers: .command)
                     .disabled(chat.threadID == nil
                         || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)

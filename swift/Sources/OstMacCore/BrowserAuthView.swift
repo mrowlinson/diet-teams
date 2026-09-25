@@ -132,8 +132,8 @@ public struct BrowserSignInView: View {
                 .overlay(
                     RoundedRectangle(cornerRadius: DietRadius.control)
                         .stroke(DietColor.dividerColor, lineWidth: 1))
-            Button("Cancel") { onCancel() }
-                .buttonStyle(.dietSecondary)
+            Button("Cancel", role: .cancel) { onCancel() }
+                .buttonStyle(.bordered)
         }
     }
 }
@@ -178,8 +178,8 @@ public struct BrowserSignInDemoView: View {
             .overlay(
                 RoundedRectangle(cornerRadius: DietRadius.control)
                     .stroke(DietColor.dividerColor, lineWidth: 1))
-            Button("Cancel") { onCancel() }
-                .buttonStyle(.dietSecondary)
+            Button("Cancel", role: .cancel) { onCancel() }
+                .buttonStyle(.bordered)
         }
     }
 }

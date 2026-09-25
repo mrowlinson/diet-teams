@@ -301,7 +301,7 @@ struct ChatTimelineView: View {
                 // genuine reach-top; the tap covers readers whose sentinel
                 // never trips. Each tap loads one lazy day-chunk.
                 Button("Load older messages") { fireTapLoadMore() }
-                    .buttonStyle(.dietSecondary)
+                    .buttonStyle(.bordered)
                     .frame(maxWidth: .infinity)
             }
         }

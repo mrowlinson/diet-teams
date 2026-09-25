@@ -626,10 +626,10 @@ public struct ScreenShareTile: View {
                 .lineLimit(1)
             HStack(spacing: DietSpace.sm) {
                 if model.phase.isLive {
-                    Button("Stop Share", systemImage: "stop.fill") {
+                    Button("Stop Share", systemImage: "stop.fill", role: .destructive) {
                         model.stop()
                     }
-                    .buttonStyle(.dietDestructive)
+                    .buttonStyle(.bordered)
                     if liveCall {
                         Toggle(
                             "Send to call",
@@ -643,7 +643,7 @@ public struct ScreenShareTile: View {
                     Button("Share Screen…", systemImage: "rectangle.on.rectangle") {
                         model.start()
                     }
-                    .buttonStyle(.dietPrimary)
+                    .buttonStyle(.borderedProminent)
                     .disabled(model.phase.isBusy)
                     .help("Pick a display, window, or app to share")
                 }
@@ -659,7 +659,7 @@ public struct ScreenShareTile: View {
                     Button("Open Privacy Settings", systemImage: "arrow.up.forward.app") {
                         openURL(ScreenShareAccess.privacyURL)
                     }
-                    .buttonStyle(.dietSecondary)
+                    .buttonStyle(.bordered)
                 }
             }
         }
