@@ -204,7 +204,10 @@ struct OstMacAppMain: App {
             SettingsView(
                 auth: state.auth, catchUp: state.catchUp, notifs: state.notifs,
                 rules: state.rules, chats: state.chats,
-                quiet: state.quietHours, blocked: state.blocked)
+                quiet: state.quietHours, blocked: state.blocked,
+                accounts: state.accounts,
+                onAccountAdded: { state.completePendingAdd($0) },
+                onRemoveAccount: { state.removeAccount($0) })
         }
         .commands { OstMacCommands() }
     }
@@ -251,8 +254,11 @@ final class AppState: ObservableObject {
     /// Blocked users (om-leave-block): shared by the chat list (row
     /// filter), Settings (Unblock), Diagnostics (count), and the live
     /// feed gate below. Demo runs memory-only (never the real defaults).
-    let blocked: BlockedStore
-    let chats: ChatListViewModel
+    /// Rebuilt per account on switch (d1-accounts).
+    @Published var blocked: BlockedStore
+    /// Rebuilt per account on switch (d1-accounts; pins/folders/blocked
+    /// are per-account namespaces).
+    @Published var chats: ChatListViewModel
     let teams: TeamsViewModel
     let reminders: RemindersViewModel
     let planner: PlannerViewModel
@@ -282,13 +288,23 @@ final class AppState: ObservableObject {
     let unread = UnreadStore(dock: NullDockBadge())
     let mentions = MentionStore()
     let receipts = ReceiptStore()
-    let pinnedMessages: PinnedMessageStore
+    /// Rebuilt per account on switch (d1-accounts).
+    @Published var pinnedMessages: PinnedMessageStore
     let auth = AuthViewModel()
     let presence = PresenceStore()
     let call: CallStore
-    let history = CallHistoryStore()
+    /// Rebuilt per account on switch (d1-accounts).
+    @Published var history = CallHistoryStore()
     let meeting = MeetingRosterStore()
-    let meetingChat = MeetingChatStore()
+    /// Rebuilt per account on switch (d1-accounts).
+    @Published var meetingChat = MeetingChatStore()
+    /// Multi-account list + per-account VMs (d1-accounts). The `auth`
+    /// VM above is the live gate object, repointed at the active
+    /// profile on every switch (stable identity for all observers).
+    let accounts = AccountStore()
+    /// True between an account switch/add and its quiet reload landing
+    /// (keeps the gate open across the `.unknown` repoint beat).
+    @Published var switchingAccount = false
     let screenShare = ScreenShareModel()
     let notes = NotesStore()
     let showNotes: Bool
@@ -347,6 +363,8 @@ final class AppState: ObservableObject {
     private let preselectName: String?
     private let autoSay: String?
     private var cancellables = Set<AnyCancellable>()
+    /// Chat-list wiring (rebuilt with `chats` on account switch).
+    private var chatsCancellables = Set<AnyCancellable>()
     private var stateTimer: Timer?
     private var started = false
     private var contentOpened = false
@@ -437,7 +455,8 @@ final class AppState: ObservableObject {
         } else {
             autoSay = nil
         }
-        blocked = isDemo ? BlockedStore(defaults: nil) : BlockedStore()
+        let initialBlocked = isDemo ? BlockedStore(defaults: nil) : BlockedStore()
+        blocked = initialBlocked
         messageSearch = isDemo
             ? MessageSearchStore(searcher: { query, _, _ in
                 DemoData.messageSearchResponse(for: query)
@@ -474,6 +493,7 @@ final class AppState: ObservableObject {
             folderShotSelection = nil
             folderShotEditingRuleID = nil
         }
+        var seedHistoryDemo = false
         if isDemo {
             // Shot hook: the churn dataset swaps the whole list (the
             // standard demo rows + count assertions stay untouched).
@@ -482,7 +502,7 @@ final class AppState: ObservableObject {
             chats = ChatListViewModel(
                 fetcher: { _ in seed },
                 leaver: { LeaveResponse(ok: true, chat_id: $0) },
-                blocked: blocked,
+                blocked: initialBlocked,
                 folders: folderStore)
             teams = TeamsViewModel(
                 fetcher: { DemoData.teamsResponse() },
@@ -529,9 +549,9 @@ final class AppState: ObservableObject {
                 presence.adoptChatPeer(chatID: chatID, response: peer)
             }
             mentions.adopt(DemoData.mentionedChatIDs)
-            history.seedDemo() // canned recents (in-memory, offline)
+            seedHistoryDemo = true // applied after init (two-phase)
         } else {
-            chats = ChatListViewModel(blocked: blocked)
+            chats = ChatListViewModel(blocked: initialBlocked)
             teams = TeamsViewModel()
             reminders = RemindersViewModel()
             planner = PlannerViewModel()
@@ -544,19 +564,10 @@ final class AppState: ObservableObject {
             calWeek = CalendarWeekStore()
             shifts = ShiftsStore()
         }
-        // om-leave-block: a locally-removed row drops its satellite
-        // state (unread, mention flags) — never a list refresh.
-        chats.onLocalRemove = { [weak self] id in
-            self?.unread.markRead(chatID: id)
-            self?.mentions.markRead(chatID: id)
+        if seedHistoryDemo {
+            history.seedDemo() // canned recents (in-memory, offline)
         }
-        chats.$selectedChatID
-            .dropFirst()
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] id in
-                Task { @MainActor [weak self] in self?.openSelected(id) }
-            }
-            .store(in: &cancellables)
+        wireChats()
         // Single reaction point for the gate: every auth transition
         // (gate, Settings, Auth window — same model) runs authChanged,
         // which flips the gate via the signedIn/contentOpened flags.
@@ -571,9 +582,7 @@ final class AppState: ObservableObject {
         // incl. the auto-open trigger, sidebar, sheets, Settings), so a
         // store tick re-renders that surface only, never the root.
         // (Was: receipts/call/history/quietHours/chats forwards.)
-        history.onRedial = { [weak self] record in
-            Task { @MainActor [weak self] in self?.redial(record) }
-        }
+        wireHistory()
         call.$call
             .receive(on: DispatchQueue.main)
             .sink { [weak self] c in
@@ -600,6 +609,198 @@ final class AppState: ObservableObject {
             else { return }
             Task { @MainActor [weak self] in self?.sendFromNotification(chatID: id, text: text) }
         }
+        // d1-accounts: ordered switch stages (drain → flip → reset →
+        // resume). Demo never switches (single canned identity).
+        accounts.hooks = AccountSwitchHooks(
+            drainRealtime: { [weak self] in self?.feed.stop() },
+            resetForAccount: { [weak self] record in
+                self?.resetStoresForAccount(record)
+            },
+            resume: { [weak self] in self?.repointAuthToActive() },
+            removeCaches: { record in
+                AccountCaches.remove(accountID: record.id)
+            },
+            emptied: { [weak self] in
+                Task { @MainActor [weak self] in
+                    await self?.auth.refreshStatus()
+                }
+            }
+        )
+    }
+
+    /// Chat-list satellite wiring (local-remove fan-out + selection
+    /// sink). Re-run after every `chats` rebuild (account switch).
+    private func wireChats() {
+        chatsCancellables = Set<AnyCancellable>()
+        // om-leave-block: a locally-removed row drops its satellite
+        // state (unread, mention flags) — never a list refresh.
+        chats.onLocalRemove = { [weak self] id in
+            self?.unread.markRead(chatID: id)
+            self?.mentions.markRead(chatID: id)
+        }
+        chats.$selectedChatID
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] id in
+                Task { @MainActor [weak self] in self?.openSelected(id) }
+            }
+            .store(in: &chatsCancellables)
+    }
+
+    /// Call-history redial wiring (re-run after rebuild).
+    private func wireHistory() {
+        history.onRedial = { [weak self] record in
+            Task { @MainActor [weak self] in self?.redial(record) }
+        }
+    }
+
+    // MARK: - Accounts (d1-accounts)
+
+    /// Live chat list for one account (per-account pins/folders/blocked
+    /// namespaces; default keeps the legacy keys).
+    private func makeChats(accountID: String, blocked: BlockedStore) -> ChatListViewModel {
+        ChatListViewModel(
+            blocked: blocked,
+            folders: FolderStore(accountID: accountID))
+    }
+
+    /// Meeting chat for one account (per-account persistence namespace).
+    private func makeMeetingChat(accountID: String) -> MeetingChatStore {
+        MeetingChatStore(
+            load: { MeetingChatStore.fileLoad(threadID: $0, for: accountID) },
+            save: { MeetingChatStore.fileSave(threadID: $0, messages: $1, for: accountID) },
+            delete: { MeetingChatStore.fileDelete(threadID: $0, for: accountID) })
+    }
+
+    /// Switch stage 3 (runs inside AccountStore.switchTo, after the core
+    /// profile flips): rebuild per-account stores + drop every
+    /// identity-bound row. Sync; actor-cache resets kick Tasks.
+    private func resetStoresForAccount(_ record: AccountRecord) {
+        let id = record.id
+        openChatID = nil
+        ownerMRI = nil
+        conv.resetForAccount(displayName: record.displayName)
+        chats.resetForAccount()
+        let freshBlocked = isDemo
+            ? BlockedStore(defaults: nil)
+            : BlockedStore(key: BlockedStore.key(for: id))
+        blocked = freshBlocked
+        chats = makeChats(accountID: id, blocked: freshBlocked)
+        wireChats()
+        pinnedMessages = PinnedMessageStore(key: PinnedMessages.key(for: id))
+        history = CallHistoryStore(key: CallHistoryStore.key(for: id))
+        wireHistory()
+        meetingChat = makeMeetingChat(accountID: id)
+        teams.resetForAccount()
+        presence.clear()
+        typing.clear()
+        meeting.clear()
+        unread.markAllRead()
+        mentions.markAllRead()
+        receipts.clear()
+        Task {
+            await RichMediaCache.shared.resetForAccount(id)
+            await LinkPreviewCache.shared.resetForAccount()
+        }
+    }
+
+    /// Switch stage 4: rebind the live gate VM to the new active profile
+    /// and re-read status (pure read; `.signedIn` lands the quiet
+    /// reload via authChanged). Runs for switch + remove-active
+    /// fallthrough.
+    private func repointAuthToActive() {
+        guard let id = accounts.activeID else { return }
+        switchingAccount = true
+        auth.repoint(profile: id)
+        Task { await auth.refreshStatus() }
+    }
+
+    /// Switch accounts (switcher menu). No-op in demo, for the active
+    /// id, and for unknown ids.
+    func switchAccount(to id: String) {
+        guard !isDemo else { return }
+        guard id != accounts.activeID else { return }
+        guard accounts.accounts.contains(where: { $0.id == id }) else { return }
+        accounts.switchTo(id)
+    }
+
+    /// Remove one account (Settings). The store runs drain → core
+    /// sign-out → cache wipe; active removal falls through to the next
+    /// account (or empties, which re-reads status → gate closes).
+    func removeAccount(_ id: String) {
+        guard !isDemo else { return }
+        accounts.removeAccount(id)
+    }
+
+    /// Finish an add-account sheet sign-in: resolve identity on the new
+    /// profile, record + activate the account, re-stamp every store,
+    /// and rebind the gate VM. Feed restarts via the quiet path.
+    func completePendingAdd(_ vm: AuthViewModel) {
+        guard !isDemo else { return }
+        Task {
+            let profile = vm.profile
+            let me = try? await Task.detached {
+                try RustCore.whoami(profile: profile)
+            }.value
+            let name: String
+            if let display = me?.display_name, !display.isEmpty {
+                name = display
+            } else {
+                name = "Account \(accounts.accounts.count + 1)"
+            }
+            feed.stop()
+            guard accounts.completeAdd(
+                profile: profile, displayName: name,
+                upn: me?.mail, userID: me?.id)
+            else { return }
+            guard let record = accounts.accounts.first(where: { $0.id == profile })
+            else { return }
+            resetStoresForAccount(record)
+            repointAuthToActive()
+        }
+    }
+
+    /// Adopt the legacy single-account session after upgrade (or a fresh
+    /// first sign-in): the default profile becomes the first account.
+    private func adoptLegacyAccount() async {
+        guard accounts.accounts.isEmpty else { return }
+        let me = try? await Task.detached { try RustCore.whoami() }.value
+        let name: String
+        if let display = me?.display_name, !display.isEmpty {
+            name = display
+        } else {
+            name = "Account 1"
+        }
+        accounts.adoptLegacy(displayName: name, upn: me?.mail, userID: me?.id)
+        accounts.refreshAll()
+    }
+
+    /// Post-switch reload without spinners: quiet list fetches (state
+    /// only moves when rows land), presence + owner MRI re-resolve,
+    /// background tab refreshes, then realtime resumes on the new
+    /// profile (feed.start drains stale backlog silently).
+    private func quietRefreshAfterSwitch() {
+        Task {
+            await chats.loadQuietly()
+            await teams.loadQuietly()
+            await presence.refreshOwn()
+            resolveOwnerMRI()
+            reminders.refresh()
+            planner.refresh()
+            recordings.refresh()
+            transcripts.refresh()
+            meetings.refresh()
+            calWeek.refresh()
+            if shifts.selectedTeamID == nil {
+                seedShifts()
+            } else {
+                shifts.refresh()
+            }
+            if !isDemo {
+                feed.start()
+            }
+            refreshFeedStatus()
+        }
     }
 
     func startup() async {
@@ -610,8 +811,15 @@ final class AppState: ObservableObject {
         if isDemo {
             signedIn = true // demo bypasses the gate (offline canned data)
         } else {
+            // d1-accounts: relaunch restores the last-active profile
+            // BEFORE the status read (gate + whoami follow it).
+            if let active = accounts.activeID {
+                _ = try? RustCore.profileSet(active)
+                auth.repoint(profile: active)
+            }
             await auth.refreshStatus()
             signedIn = auth.isSignedIn
+            accounts.refreshAll()
         }
         await openContentIfAllowed()
     }
@@ -1449,7 +1657,17 @@ final class AppState: ObservableObject {
         switch s {
         case .signedIn:
             signedIn = true
+            if accounts.accounts.isEmpty, !isDemo {
+                Task { await adoptLegacyAccount() }
+            }
             if contentOpened {
+                if switchingAccount {
+                    // d1-accounts: post-switch reload without spinners.
+                    switchingAccount = false
+                    quietRefreshAfterSwitch()
+                    refreshFeedStatus()
+                    return
+                }
                 chats.refresh()
                 teams.refresh()
                 reminders.refresh()
@@ -1473,6 +1691,7 @@ final class AppState: ObservableObject {
             refreshFeedStatus()
         case .signedOut, .signingOut, .expired, .refreshFailed, .error:
             signedIn = false
+            switchingAccount = false
             feed.stop()
             presence.clear()
             typing.clear()
@@ -1515,7 +1734,7 @@ struct RootView: View {
             CallBanner(store: state.call) {
                 openWindow(id: AppIdentity.callWindowID)
             }
-            if state.isDemo || state.auth.state.allowsContent {
+            if state.isDemo || state.switchingAccount || state.auth.state.allowsContent {
                 NavigationSplitView {
                     SidebarColumn(
                         chats: state.chats, teams: state.teams,
@@ -1743,6 +1962,12 @@ struct StatusBar: View {
                     .lineLimit(1)
             }
             Spacer()
+            if !state.isDemo {
+                AccountSwitcherView(
+                    accounts: state.accounts,
+                    onSelect: { state.switchAccount(to: $0) },
+                    onAdded: { state.completePendingAdd($0) })
+            }
         }
         .padding(.horizontal, DietSpace.sm)
         .padding(.vertical, DietSpace.xs)

@@ -24,7 +24,7 @@ public actor RichMediaCache {
 
     private let memory = NSCache<NSString, NSData>()
     private var inFlight: [String: Task<Data, Error>] = [:]
-    private let diskDir: URL?
+    private var diskDir: URL?
     private let diskCapBytes: Int
     private let diskCapFiles: Int
 
@@ -50,6 +50,28 @@ public actor RichMediaCache {
         let dir = base.appendingPathComponent("OstMac/MediaCache", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
+    }
+
+    /// Per-account disk dir (d1-accounts): default account keeps the
+    /// legacy dir; every other account nests `<accountId>/` under it.
+    public static func diskDir(for accountID: String) -> URL? {
+        guard let base = defaultDiskDir() else { return nil }
+        let dir = AccountProfile.dir(base, for: accountID)
+        if dir != base {
+            try? FileManager.default.createDirectory(
+                at: dir, withIntermediateDirectories: true)
+        }
+        return dir
+    }
+
+    /// Account switch (d1-accounts): drop memory + in-flight (keys are
+    /// URL+message-id, meaningless across accounts) and re-point disk
+    /// at the new account's subdir.
+    public func resetForAccount(_ accountID: String) {
+        for task in inFlight.values { task.cancel() }
+        inFlight = [:]
+        memory.removeAllObjects()
+        diskDir = Self.diskDir(for: accountID)
     }
 
     /// Default fetcher: offline `demo://` fixtures, else blocking core FFI

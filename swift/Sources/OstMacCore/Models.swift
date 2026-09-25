@@ -32,6 +32,35 @@ public struct StatusResponse: Decodable, Sendable {
     public let tokens: TokenSummary
 }
 
+/// Active-profile envelope: {"ok":true,"profile":id}.
+public struct ProfileResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let profile: String
+}
+
+/// One signed-in Teams account (d1-accounts). `id` is the stable
+/// account id (Teams user id from whoami once known, else the pending
+/// profile id); the core profile id is derived 1:1 from it.
+public struct AccountRecord: Codable, Sendable, Equatable, Identifiable {
+    public let id: String
+    public let displayName: String
+    public let upn: String?
+    /// Teams user id from whoami (identity display); nil until resolved.
+    public let userID: String?
+    public let addedAt: Double
+
+    public init(
+        id: String, displayName: String, upn: String? = nil,
+        userID: String? = nil, addedAt: Double = 0
+    ) {
+        self.id = id
+        self.displayName = displayName
+        self.upn = upn
+        self.userID = userID
+        self.addedAt = addedAt
+    }
+}
+
 public struct DeviceStart: Decodable, Sendable {
     public let ok: Bool
     public let session: String

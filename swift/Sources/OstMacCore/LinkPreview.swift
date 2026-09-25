@@ -225,6 +225,14 @@ public actor LinkPreviewCache {
         store[urlString]
     }
 
+    /// Account switch (d1-accounts): drop cached previews + in-flight
+    /// fetches (fetched under the old account's network context).
+    public func resetForAccount() {
+        for task in inFlight.values { task.cancel() }
+        inFlight = [:]
+        store = [:]
+    }
+
     /// Cached preview, fetching once on miss. Concurrent callers for the
     /// same sanitized URL share the in-flight fetch; failures are never
     /// cached (a retry refetches). Non-https input throws `.notHTTPS`

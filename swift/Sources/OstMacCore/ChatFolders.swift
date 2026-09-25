@@ -159,6 +159,16 @@ public final class FolderStore: ObservableObject {
     public static let foldersKey = "omChatFoldersV1"
     public static let rulesKey = "omFolderRulesV1"
     public static let assignmentsKey = "omFolderAssignV1"
+    /// Per-account keys (d1-accounts): default keeps the legacy keys.
+    nonisolated public static func foldersKey(for accountID: String) -> String {
+        AccountProfile.key(foldersKey, for: accountID)
+    }
+    nonisolated public static func rulesKey(for accountID: String) -> String {
+        AccountProfile.key(rulesKey, for: accountID)
+    }
+    nonisolated public static func assignmentsKey(for accountID: String) -> String {
+        AccountProfile.key(assignmentsKey, for: accountID)
+    }
 
     /// Folders in creation order. Sanitized on load (blank names and
     /// duplicate names case-insensitively dropped, first kept).
@@ -169,15 +179,24 @@ public final class FolderStore: ObservableObject {
     @Published public private(set) var overrides: [String: String] = [:]
 
     private let defaults: UserDefaults
+    private let foldersK: String
+    private let rulesK: String
+    private let assignmentsK: String
 
     /// Nonisolated so views can take a default `FolderStore()` in their
     /// (nonisolated) inits; all members stay main-actor-isolated.
-    public nonisolated init(defaults: UserDefaults = .standard) {
+    public nonisolated init(
+        defaults: UserDefaults = .standard,
+        accountID: String = AccountProfile.defaultID
+    ) {
         self.defaults = defaults
-        let folders = Self.loadFolders(defaults)
+        self.foldersK = Self.foldersKey(for: accountID)
+        self.rulesK = Self.rulesKey(for: accountID)
+        self.assignmentsK = Self.assignmentsKey(for: accountID)
+        let folders = Self.loadFolders(defaults, key: foldersK)
         let ids = Set(folders.map(\.id))
-        let rules = Self.loadRules(defaults, folderIDs: ids)
-        let overrides = Self.loadOverrides(defaults, folderIDs: ids)
+        let rules = Self.loadRules(defaults, folderIDs: ids, key: rulesK)
+        let overrides = Self.loadOverrides(defaults, folderIDs: ids, key: assignmentsK)
         _folders = Published(initialValue: folders)
         _rules = Published(initialValue: rules)
         _overrides = Published(initialValue: overrides)
@@ -299,8 +318,10 @@ public final class FolderStore: ObservableObject {
 
     // MARK: - Load (sanitized)
 
-    nonisolated static func loadFolders(_ defaults: UserDefaults) -> [ChatFolder] {
-        guard let data = defaults.data(forKey: foldersKey),
+    nonisolated static func loadFolders(
+        _ defaults: UserDefaults, key: String = foldersKey
+    ) -> [ChatFolder] {
+        guard let data = defaults.data(forKey: key),
               let decoded = try? JSONDecoder().decode([ChatFolder].self, from: data)
         else { return [] }
         var seenIDs = Set<String>()
@@ -317,9 +338,9 @@ public final class FolderStore: ObservableObject {
     }
 
     nonisolated static func loadRules(
-        _ defaults: UserDefaults, folderIDs: Set<String>
+        _ defaults: UserDefaults, folderIDs: Set<String>, key: String = rulesKey
     ) -> [FolderRule] {
-        guard let data = defaults.data(forKey: rulesKey),
+        guard let data = defaults.data(forKey: key),
               let decoded = try? JSONDecoder().decode([FolderRule].self, from: data)
         else { return [] }
         var seen = Set<String>()
@@ -336,9 +357,9 @@ public final class FolderStore: ObservableObject {
     }
 
     nonisolated static func loadOverrides(
-        _ defaults: UserDefaults, folderIDs: Set<String>
+        _ defaults: UserDefaults, folderIDs: Set<String>, key: String = assignmentsKey
     ) -> [String: String] {
-        guard let raw = defaults.dictionary(forKey: assignmentsKey) else { return [:] }
+        guard let raw = defaults.dictionary(forKey: key) else { return [:] }
         var clean: [String: String] = [:]
         for (chatID, value) in raw {
             guard let folderID = value as? String else { continue }
@@ -350,14 +371,14 @@ public final class FolderStore: ObservableObject {
     }
 
     private func saveFolders() {
-        defaults.set(try? JSONEncoder().encode(folders), forKey: Self.foldersKey)
+        defaults.set(try? JSONEncoder().encode(folders), forKey: foldersK)
     }
 
     private func saveRules() {
-        defaults.set(try? JSONEncoder().encode(rules), forKey: Self.rulesKey)
+        defaults.set(try? JSONEncoder().encode(rules), forKey: rulesK)
     }
 
     private func saveOverrides() {
-        defaults.set(overrides, forKey: Self.assignmentsKey)
+        defaults.set(overrides, forKey: assignmentsK)
     }
 }

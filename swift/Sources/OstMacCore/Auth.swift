@@ -133,6 +133,9 @@ public final class AuthViewModel: ObservableObject {
     @Published public private(set) var copied = false
     @Published public private(set) var status: StatusResponse?
     public private(set) var isDemo = false
+    /// Account profile this VM signs in (d1-accounts: one VM per
+    /// account). "default" = the legacy single-account profile.
+    public private(set) var profile: String
     /// Where error(_)'s retry goes. Updated on every failure.
     public private(set) var errorRetry: AuthRetry = .signIn
     /// Gate mirror of state (single source; AppState subscribes to $state).
@@ -140,16 +143,16 @@ public final class AuthViewModel: ObservableObject {
     /// Overrides the core's poll interval (tests set 3600 + drive pollOnce).
     public var pollIntervalOverride: TimeInterval?
 
-    private let statusFn: StatusFn
-    private let startFn: StartFn
-    private let pollFn: PollFn
-    private let refreshFn: RefreshFn
-    private let signOutFn: SignOutFn
-    private let openURLFn: OpenURLFn
-    private let copyFn: CopyFn
-    private let browserStartFn: BrowserStartFn
-    private let browserCompleteFn: BrowserCompleteFn
-    private let browserCancelFn: BrowserCancelFn
+    private var statusFn: StatusFn
+    private var startFn: StartFn
+    private var pollFn: PollFn
+    private var refreshFn: RefreshFn
+    private var signOutFn: SignOutFn
+    private var openURLFn: OpenURLFn
+    private var copyFn: CopyFn
+    private var browserStartFn: BrowserStartFn
+    private var browserCompleteFn: BrowserCompleteFn
+    private var browserCancelFn: BrowserCancelFn
     private var pollTask: Task<Void, Never>?
     private var stateBeforeSignIn: AuthState?
 
@@ -162,34 +165,37 @@ public final class AuthViewModel: ObservableObject {
     }
 
     public init(
-        status: @escaping StatusFn = { try RustCore.status() },
-        start: @escaping StartFn = { try RustCore.deviceStart() },
-        poll: @escaping PollFn = { try RustCore.devicePoll(session: $0) },
-        refresh: @escaping RefreshFn = { try RustCore.refresh() },
-        signOut: @escaping SignOutFn = { try RustCore.signOut() },
-        openURL: @escaping OpenURLFn = AuthViewModel.defaultOpenURL,
-        copy: @escaping CopyFn = { code in
+        profile: String = AccountProfile.defaultID,
+        status: StatusFn? = nil,
+        start: StartFn? = nil,
+        poll: PollFn? = nil,
+        refresh: RefreshFn? = nil,
+        signOut: SignOutFn? = nil,
+        openURL: OpenURLFn? = nil,
+        copy: CopyFn? = nil,
+        browserStart: BrowserStartFn? = nil,
+        browserComplete: BrowserCompleteFn? = nil,
+        browserCancel: BrowserCancelFn? = nil
+    ) {
+        let p = profile
+        self.profile = p
+        self.statusFn = status ?? { try RustCore.status(profile: p) }
+        self.startFn = start ?? { try RustCore.deviceStart(profile: p) }
+        self.pollFn = poll ?? { try RustCore.devicePoll(session: $0) }
+        self.refreshFn = refresh ?? { try RustCore.refresh(profile: p) }
+        self.signOutFn = signOut ?? { try RustCore.signOut(profile: p) }
+        self.openURLFn = openURL ?? AuthViewModel.defaultOpenURL
+        self.copyFn = copy ?? { code in
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(code, forType: .string)
-        },
-        browserStart: @escaping BrowserStartFn = { try RustCore.browserStart() },
-        browserComplete: @escaping BrowserCompleteFn = {
+        }
+        self.browserStartFn = browserStart ?? { try RustCore.browserStart(profile: p) }
+        self.browserCompleteFn = browserComplete ?? {
             try RustCore.browserComplete(session: $0, callback: $1)
-        },
-        browserCancel: @escaping BrowserCancelFn = {
+        }
+        self.browserCancelFn = browserCancel ?? {
             try RustCore.browserCancel(session: $0)
         }
-    ) {
-        self.statusFn = status
-        self.startFn = start
-        self.pollFn = poll
-        self.refreshFn = refresh
-        self.signOutFn = signOut
-        self.openURLFn = openURL
-        self.copyFn = copy
-        self.browserStartFn = browserStart
-        self.browserCompleteFn = browserComplete
-        self.browserCancelFn = browserCancel
     }
 
     /// Read-only status check (no network): reuses the persisted session.
@@ -411,6 +417,29 @@ public final class AuthViewModel: ObservableObject {
     public func stopPolling() {
         pollTask?.cancel()
         pollTask = nil
+    }
+
+    /// Account switch (d1-accounts): rebind this VM to another profile.
+    /// Live core closures follow the new profile; injected test fns are
+    /// left alone (tests repoint only live VMs). State resets to
+    /// `.unknown` (never a stale sibling-account state); the caller
+    /// follows with `refreshStatus()`.
+    public func repoint(profile newProfile: String, live: Bool = true) {
+        stopPolling()
+        stateBeforeSignIn = nil
+        state = .unknown
+        status = nil
+        copied = false
+        errorRetry = .signIn
+        profile = newProfile
+        if live {
+            let p = newProfile
+            statusFn = { try RustCore.status(profile: p) }
+            startFn = { try RustCore.deviceStart(profile: p) }
+            refreshFn = { try RustCore.refresh(profile: p) }
+            signOutFn = { try RustCore.signOut(profile: p) }
+            browserStartFn = { try RustCore.browserStart(profile: p) }
+        }
     }
 
     private func open(_ raw: String) {

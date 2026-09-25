@@ -338,6 +338,28 @@ public final class ConversationStore: ObservableObject {
         ownDisplayName = nil
     }
 
+    /// Account switch (d1-accounts): drop every row (zero old-account
+    /// rows visible), clear paging + transient state, and re-stamp
+    /// identity for the new account (empty list stays empty; the next
+    /// open stamps with the new name). Cached-first: the caller
+    /// re-opens the conversation, which renders the new account's
+    /// snapshot without spinners.
+    public func resetForAccount(displayName: String?) {
+        openGeneration += 1
+        messages = []
+        loading = false
+        loadingMore = false
+        error = nil
+        didLoad = false
+        failedIDs = []
+        replyTarget = nil
+        jumpTargetID = nil
+        chatID = nil
+        chatName = nil
+        pageToken = nil
+        ownDisplayName = displayName
+    }
+
     /// Pure ownership stamp: `isOwn` iff `sender` equals the own name.
     /// Nil name leaves every flag false (matches core's unsigned state).
     public static func stampOwnership(_ list: [ChatMessage], ownName: String?) -> [ChatMessage] {

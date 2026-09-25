@@ -78,22 +78,32 @@ public enum BlockedUsers {
 public final class BlockedStore: ObservableObject {
     public static let usersKey = "leaveblock.users"
 
+    /// Per-account key (d1-accounts): default keeps the legacy key.
+    nonisolated public static func key(for accountID: String) -> String {
+        AccountProfile.key(usersKey, for: accountID)
+    }
+
     /// Current list. Published: Settings rows and the chat-list filter
     /// read this same value.
     @Published public private(set) var users: [BlockedUser] = []
 
     /// Backing defaults; nil = memory-only (previews, demo, hermetic tests).
     private let defaults: UserDefaults?
+    private let key: String
 
     /// Load best-effort: a missing or unreadable entry yields an empty
     /// list. Blank thread ids are dropped on load, never persisted.
     ///
     /// Nonisolated so views can take a default `BlockedStore()` in their
     /// (nonisolated) inits; all members stay main-actor-isolated.
-    public nonisolated init(defaults: UserDefaults? = .standard) {
+    public nonisolated init(
+        defaults: UserDefaults? = .standard,
+        key: String = BlockedStore.usersKey
+    ) {
         self.defaults = defaults
+        self.key = key
         var loaded: [BlockedUser] = []
-        if let defaults, let data = defaults.data(forKey: Self.usersKey) {
+        if let defaults, let data = defaults.data(forKey: key) {
             loaded = (try? JSONDecoder().decode([BlockedUser].self, from: data)) ?? []
         }
         _users = Published(initialValue: loaded.filter { !$0.chatID.isEmpty })
@@ -140,6 +150,6 @@ public final class BlockedStore: ObservableObject {
     private func save() {
         guard let defaults else { return }
         guard let data = try? JSONEncoder().encode(users) else { return }
-        defaults.set(data, forKey: Self.usersKey)
+        defaults.set(data, forKey: key)
     }
 }

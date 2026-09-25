@@ -225,6 +225,36 @@ public final class ChatListViewModel: ObservableObject, ChatSelection {
         Task { await load(limit: limit) }
     }
 
+    /// Account switch (d1-accounts): drop every row (zero old-account
+    /// rows visible) + selection + transient state. Lands on `.empty`
+    /// (static, no spinner); the caller follows with `loadQuietly`.
+    public func resetForAccount() {
+        chats = []
+        selectedChatID = nil
+        leavingIDs = []
+        leaveError = nil
+        state = .empty
+    }
+
+    /// Fetch without the `.loading` spinner (account-switch follow-up
+    /// to `resetForAccount`): state only moves when results land.
+    public func loadQuietly(limit: Int32 = 50) async {
+        let fetcher = fetcher
+        do {
+            let response = try await Task.detached {
+                try fetcher(limit)
+            }.value
+            let visible = blocked.filtered(response.chats)
+            chats = visible
+            state = visible.isEmpty ? .empty : .loaded
+            if let sel = selectedChatID, chatByID[sel] == nil {
+                selectedChatID = nil
+            }
+        } catch {
+            state = .error(Self.message(for: error))
+        }
+    }
+
     /// Realtime feed: only user text bubbles a row to the top. Beacons,
     /// blobs, cards, and reaction-only patches are a no-op (no reorder,
     /// no publish); bots, system notices, edits, and meeting cards update
