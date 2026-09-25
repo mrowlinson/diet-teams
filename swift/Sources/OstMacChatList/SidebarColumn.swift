@@ -5,8 +5,8 @@ import SwiftUI
 
 /// Sidebar column hosting the chats list, the teams/channels browser,
 /// the reminders browser, the planner boards browser, the recordings
-/// browser, the transcripts browser, and the shifts week grid behind
-/// the Teams-like `AppNavRail` (fixed 72pt, native buttons).
+/// browser, and the transcripts browser behind the Teams-like
+/// `AppNavRail` (fixed 72pt, native buttons).
 /// Channel taps open as conversations via
 /// `onOpenChannel` (channel id + "Team > #channel" display name).
 ///
@@ -14,6 +14,11 @@ import SwiftUI
 /// the segmented control's ~480pt intrinsic width overflowed the
 /// 240pt column at small window sizes (~30px left of the window edge).
 /// A `DietDividerV` seam separates rail from browser.
+///
+/// Selection is host-owned (R10 shifts-fullwidth): the host binds
+/// `section` so it can swap the whole content area when a full-window
+/// module (`.shifts`) is selected. The `.shifts` case below only
+/// renders when this column is hosted standalone.
 public struct SidebarColumn: View {
     @ObservedObject private var chats: ChatListViewModel
     @ObservedObject private var teams: TeamsViewModel
@@ -44,7 +49,7 @@ public struct SidebarColumn: View {
     private let onOpenChannel: (String, String) -> Void
     /// Pop-out tap passthrough (e1-popout): sidebar → host openWindow.
     private let onPopOut: ((String) -> Void)?
-    @State private var section: SidebarSection
+    @Binding private var section: SidebarSection
     /// Reduce Motion (om-a1-motion): section flips cut, never crossfade.
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -61,7 +66,7 @@ public struct SidebarColumn: View {
         activity: ActivityStore = ActivityStore(),
         activityPane: Binding<ActivityPane?> = .constant(nil),
         openChatID: String? = nil,
-        initialSection: SidebarSection = .chats,
+        section: Binding<SidebarSection>,
         initialFilter: String = "",
         channelCreateOpen: Bool = false,
         teamCreateOpen: Bool = false,
@@ -92,7 +97,7 @@ public struct SidebarColumn: View {
         self.initialFolderID = initialFolderID
         self.folderManageOpen = folderManageOpen
         self.initialEditingRuleID = initialEditingRuleID
-        _section = State(initialValue: initialSection)
+        _section = section
         self.onOpenChannel = onOpenChannel
         self.onPopOut = onPopOut
     }
@@ -145,4 +150,32 @@ public enum SidebarSection: String, CaseIterable {
     case recordings = "Recordings"
     case transcripts = "Transcripts"
     case shifts = "Shifts"
+}
+
+public extension SidebarSection {
+    /// Full-window modules (R10 shifts-fullwidth): when selected, the
+    /// module takes the whole window outside the app rail and the chat
+    /// viewport hides. Back-nav to any other section restores the
+    /// split view (the host keeps `openChatID`, so the conversation
+    /// reappears as-is with no reload).
+    var takesFullWindow: Bool { self == .shifts }
+
+    /// Shot-hook section from launch args: --show-shifts lands on the
+    /// full-width shifts view; --show-recordings/--show-planner win
+    /// over --show-reminders wins over --show-teams; the create-sheet
+    /// hooks land on teams (the sheets hang there).
+    static func initialSection(args: [String]) -> SidebarSection {
+        if args.contains("--show-shifts") { return .shifts }
+        if args.contains("--show-recordings") { return .recordings }
+        if args.contains("--show-recordings-playing") { return .recordings }
+        if args.contains("--show-transcripts") { return .transcripts }
+        if args.contains("--show-transcripts-showing") { return .transcripts }
+        if args.contains("--show-transcripts-actions") { return .transcripts }
+        if args.contains("--show-planner") { return .planner }
+        if args.contains("--show-reminders") { return .reminders }
+        if args.contains("--show-teams") { return .teams }
+        if args.contains("--show-channel-create") { return .teams }
+        if args.contains("--show-team-create") { return .teams }
+        return .chats
+    }
 }

@@ -51,17 +51,23 @@ public struct ShiftsBrowser: View {
 
     private var loadedBody: some View {
         VStack(spacing: 0) {
-            Picker("Team", selection: Binding(
-                get: { model.selectedTeamID ?? "" },
-                set: { model.select(teamID: $0) }
-            )) {
-                ForEach(model.teams) { team in
-                    Text(team.name).tag(team.id)
+            HStack(spacing: 0) {
+                Picker("Team", selection: Binding(
+                    get: { model.selectedTeamID ?? "" },
+                    set: { model.select(teamID: $0) }
+                )) {
+                    ForEach(model.teams) { team in
+                        Text(team.name).tag(team.id)
+                    }
                 }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                // Cap the pop-up width: full-window hosting would
+                // otherwise stretch it across the freed width (native
+                // menus size to content; the Spacer takes the rest).
+                .frame(maxWidth: 280, alignment: .leading)
+                Spacer(minLength: 0)
             }
-            .pickerStyle(.menu)
-            .labelsHidden()
-            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, DietSpace.sm)
             .padding(.vertical, DietSpace.xs)
             DietSeamH()

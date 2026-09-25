@@ -56,6 +56,7 @@
 // --show-transcripts-showing also loads the first row's turns (shot hook).
 // --show-transcripts-actions is --show-transcripts-showing plus canned
 // on-device action items extracted over the turns (f1-actions shot hook).
+// --show-shifts opens the sidebar on the full-width Shifts module (shot hook).
 // --show-action-items stretches the demo thread past 20 messages and
 // auto-opens the action-items popover with canned bullets (f1-actions
 // shot hook, offline).
@@ -403,6 +404,10 @@ final class AppState: ObservableObject {
     /// selection; the detail shows the list while set. Cleared by
     /// every chat open (the `open` funnel) and every pane jump.
     @Published var activityPane: ActivityPane?
+    /// Rail selection (R10 shifts-fullwidth): host-owned so RootView
+    /// can swap the whole content area for full-window modules
+    /// (`.shifts` — see `SidebarSection.takesFullWindow`).
+    @Published var sidebarSection: SidebarSection
     let receipts = ReceiptStore()
     /// Rebuilt per account on switch (d1-accounts).
     @Published var pinnedMessages: PinnedMessageStore
@@ -589,6 +594,7 @@ final class AppState: ObservableObject {
         activityPane = ActivityPane.initial(
             showActivity: args.contains("--show-activity"),
             showMentions: args.contains("--show-mentions"))
+        sidebarSection = SidebarSection.initialSection(args: args)
         let showSavedShot = args.contains("--show-saved") // shot hook: saved sheet open at launch
         showSaved = showSavedShot
         if showSavedShot {
@@ -2403,22 +2409,10 @@ struct RootView: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(\.openSettings) private var openSettings
 
-    /// Shot-hook section: --show-recordings/--show-planner win over --show-reminders
-    /// wins over --show-teams. The create-sheet hooks also land on
-    /// teams (the sheets hang there).
+    /// Shot-hook section (mapping lives on SidebarSection so tests
+    /// pin it; AppState inits from the same function).
     static var initialSection: SidebarSection {
-        let args = CommandLine.arguments
-        if args.contains("--show-recordings") { return .recordings }
-        if args.contains("--show-recordings-playing") { return .recordings }
-        if args.contains("--show-transcripts") { return .transcripts }
-        if args.contains("--show-transcripts-showing") { return .transcripts }
-        if args.contains("--show-transcripts-actions") { return .transcripts }
-        if args.contains("--show-planner") { return .planner }
-        if args.contains("--show-reminders") { return .reminders }
-        if args.contains("--show-teams") { return .teams }
-        if args.contains("--show-channel-create") { return .teams }
-        if args.contains("--show-team-create") { return .teams }
-        return .chats
+        SidebarSection.initialSection(args: CommandLine.arguments)
     }
 
     var body: some View {
@@ -2440,68 +2434,14 @@ struct RootView: View {
                 openWindow(id: AppIdentity.callWindowID)
             }
             if state.isDemo || state.switchingAccount || state.auth.state.allowsContent {
-                NavigationSplitView {
-                    SidebarColumn(
-                        chats: state.chats, teams: state.teams,
-                        reminders: state.reminders, planner: state.planner,
-                        recordings: state.recordings,
-                        transcripts: state.transcripts, shifts: state.shifts,
-                        presence: state.presence,
-                        unread: state.unread,
-                        mentions: state.mentions,
-                        rules: state.rules,
-                        snooze: state.snooze,
-                        activity: state.activity,
-                        activityPane: $state.activityPane,
-                        openChatID: state.openChatID,
-                        initialSection: RootView.initialSection,
-                        initialFilter: OstMacAppMain.filterQuery(args: CommandLine.arguments),
-                        channelCreateOpen: CommandLine.arguments.contains("--show-channel-create"),
-                        teamCreateOpen: CommandLine.arguments.contains("--show-team-create"),
-                        initialFolderID: state.folderShotSelection,
-                        folderManageOpen: CommandLine.arguments.contains("--show-folders-manage"),
-                        initialEditingRuleID: state.folderShotEditingRuleID,
-                        onOpenChannel: { id, name in state.openChannel(channelID: id, channelName: name) },
-                        onPopOut: { id in
-                            if let target = state.popOut(chatID: id) {
-                                openWindow(value: target)
-                            }
-                        }
-                    )
-                    .navigationSplitViewColumnWidth(
-                        min: AppNavLayout.sidebarMinWidth, ideal: 300, max: 420)
-                } detail: {
-                    if let pane = state.activityPane {
-                        activityDetail(pane)
-                    } else if state.openChatID == nil {
-                        emptyDetail
-                    } else {
-                        ConversationView(
-                            store: state.conv, presence: state.presence,
-                            call: state.call, shared: state.shared, notes: state.notes,
-                            catchUp: state.catchUp, actionItems: state.actionItems,
-                            typing: state.typing,
-                            receipts: state.receipts,
-                            pins: state.pinnedMessages,
-                            saved: state.savedMessages,
-                            scheduled: state.scheduled,
-                            canned: state.canned,
-                            isGroup: state.chats.selectedChat?.is_group ?? true,
-                            initialTab: CommandLine.arguments.contains("--show-shared") ? 1
-                                : (state.showNotes ? 2 : 0),
-                            catchUpOpen: state.showCatchUp,
-                            onForward: { state.beginForward($0) },
-                            editOpen: CommandLine.arguments.contains("--show-edit"),
-                            deleteOpen: CommandLine.arguments.contains("--show-delete"),
-                            scheduleOpen: CommandLine.arguments.contains("--show-schedule"),
-                            scheduledListOpen: CommandLine.arguments.contains("--show-scheduled"),
-                            initialDraft: state.popouts.draft(for: state.openChatID ?? ""),
-                            onDraftChange: { state.popouts.saveDraft($0, for: state.openChatID ?? "") },
-                            savedContext: { state.savedContext(for: $0) })
-                            // Per-chat composer (e1-popout): drafts restore
-                            // per thread instead of leaking across switches.
-                            .id(state.openChatID)
-                    }
+                // R10 shifts-fullwidth: full-window modules take the
+                // whole content area outside the rail (chat viewport
+                // hidden); anything else keeps the split view. The
+                // swap is render-only — stores persist, no refetch.
+                if state.sidebarSection.takesFullWindow {
+                    shiftsFullBody
+                } else {
+                    splitBody
                 }
             } else {
                 // Gate: the full 13-state sign-in where the chats would be.
@@ -2608,6 +2548,83 @@ struct RootView: View {
         }
         .task { await state.startup() }
         .onDisappear { state.shutdown() }
+    }
+
+    /// Full-window module body (R10 shifts-fullwidth): the app rail
+    /// stays (back-nav target) and the module takes everything else.
+    private var shiftsFullBody: some View {
+        HStack(spacing: 0) {
+            AppNavRail(selection: $state.sidebarSection)
+            DietDividerV()
+            ShiftsFullView(shifts: state.shifts)
+        }
+    }
+
+    /// Split body: rail + section browser beside the chat viewport.
+    private var splitBody: some View {
+        NavigationSplitView {
+            SidebarColumn(
+                chats: state.chats, teams: state.teams,
+                reminders: state.reminders, planner: state.planner,
+                recordings: state.recordings,
+                transcripts: state.transcripts, shifts: state.shifts,
+                presence: state.presence,
+                unread: state.unread,
+                mentions: state.mentions,
+                rules: state.rules,
+                snooze: state.snooze,
+                activity: state.activity,
+                activityPane: $state.activityPane,
+                openChatID: state.openChatID,
+                section: $state.sidebarSection,
+                initialFilter: OstMacAppMain.filterQuery(args: CommandLine.arguments),
+                channelCreateOpen: CommandLine.arguments.contains("--show-channel-create"),
+                teamCreateOpen: CommandLine.arguments.contains("--show-team-create"),
+                initialFolderID: state.folderShotSelection,
+                folderManageOpen: CommandLine.arguments.contains("--show-folders-manage"),
+                initialEditingRuleID: state.folderShotEditingRuleID,
+                onOpenChannel: { id, name in state.openChannel(channelID: id, channelName: name) },
+                onPopOut: { id in
+                    if let target = state.popOut(chatID: id) {
+                        openWindow(value: target)
+                    }
+                }
+            )
+            .navigationSplitViewColumnWidth(
+                min: AppNavLayout.sidebarMinWidth, ideal: 300, max: 420)
+        } detail: {
+            if let pane = state.activityPane {
+                activityDetail(pane)
+            } else if state.openChatID == nil {
+                emptyDetail
+            } else {
+                ConversationView(
+                    store: state.conv, presence: state.presence,
+                    call: state.call, shared: state.shared, notes: state.notes,
+                    catchUp: state.catchUp, actionItems: state.actionItems,
+                    typing: state.typing,
+                    receipts: state.receipts,
+                    pins: state.pinnedMessages,
+                    saved: state.savedMessages,
+                    scheduled: state.scheduled,
+                    canned: state.canned,
+                    isGroup: state.chats.selectedChat?.is_group ?? true,
+                    initialTab: CommandLine.arguments.contains("--show-shared") ? 1
+                        : (state.showNotes ? 2 : 0),
+                    catchUpOpen: state.showCatchUp,
+                    onForward: { state.beginForward($0) },
+                    editOpen: CommandLine.arguments.contains("--show-edit"),
+                    deleteOpen: CommandLine.arguments.contains("--show-delete"),
+                    scheduleOpen: CommandLine.arguments.contains("--show-schedule"),
+                    scheduledListOpen: CommandLine.arguments.contains("--show-scheduled"),
+                    initialDraft: state.popouts.draft(for: state.openChatID ?? ""),
+                    onDraftChange: { state.popouts.saveDraft($0, for: state.openChatID ?? "") },
+                    savedContext: { state.savedContext(for: $0) })
+                    // Per-chat composer (e1-popout): drafts restore
+                    // per thread instead of leaking across switches.
+                    .id(state.openChatID)
+            }
+        }
     }
 
     /// Empty detail keeps the header row aligned with the
