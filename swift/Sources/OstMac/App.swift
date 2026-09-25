@@ -234,6 +234,7 @@ struct OstMacAppMain: App {
                     rules: state.rules, chats: state.chats,
                     quiet: state.quietHours, blocked: state.blocked,
                     accounts: state.accounts, call: state.call,
+                    canned: state.canned,
                     onAccountAdded: { state.completePendingAdd($0) },
                     onRemoveAccount: { state.removeAccount($0) })
             }
@@ -318,6 +319,8 @@ final class AppState: ObservableObject {
     /// d2-send: per-chat snooze expiries + the scheduled-send queue.
     let snooze = SnoozeStore()
     let scheduled = ScheduledSendStore()
+    /// e2-canned: user-authored message templates (composer + Settings).
+    let canned = CannedResponsesStore()
     // om-mention-alerts: the Mentions row count owns the Dock tile, so
     // unread counts stay sidebar-only here (per-chat badges + Diagnostics).
     let unread = UnreadStore(dock: NullDockBadge())
@@ -1906,6 +1909,7 @@ struct PopOutRootView: View {
             receipts: state.receipts,
             pins: state.pinnedMessages,
             scheduled: state.scheduled,
+            canned: state.canned,
             isGroup: state.chats.chat(id: chatID)?.is_group ?? true,
             onForward: { state.beginForward($0) },
             initialDraft: state.popouts.draft(for: chatID),
@@ -2038,6 +2042,7 @@ struct RootView: View {
                             receipts: state.receipts,
                             pins: state.pinnedMessages,
                             scheduled: state.scheduled,
+                            canned: state.canned,
                             isGroup: state.chats.selectedChat?.is_group ?? true,
                             initialTab: CommandLine.arguments.contains("--show-shared") ? 1
                                 : (state.showNotes ? 2 : 0),

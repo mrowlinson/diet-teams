@@ -28,12 +28,16 @@ public struct ConversationView: View {
     /// Scheduled-send queue (d2-send): the clock button enqueues, the
     /// strip + sheet list this chat's pending items.
     @ObservedObject public var scheduled: ScheduledSendStore
+    /// Canned-response templates (e2-canned): the templates button
+    /// picks one into the draft.
+    @ObservedObject public var canned: CannedResponsesStore
     /// False for 1:1 chats (header shows the chatmate dot).
     private let isGroup: Bool
     @State private var draft = ""
     @State private var tab: Int
     @State private var showGIFs = false
     @State private var showMentions = false
+    @State private var showTemplates = false
     /// KLIPY key (Settings → GIFs), read from the keychain on appear
     /// and each time the picker opens (Settings may have changed it).
     @State private var gifAPIKey = ""
@@ -43,6 +47,7 @@ public struct ConversationView: View {
     @State private var mentionHovering = false
     @State private var attachHovering = false
     @State private var scheduleHovering = false
+    @State private var templateHovering = false
     /// Schedule popover + pending sheet (d2-send). Shot hooks
     /// (--show-schedule / --show-scheduled) open them at launch.
     @State private var showSchedule: Bool
@@ -88,6 +93,7 @@ public struct ConversationView: View {
         attachments: ComposeAttachmentsStore = ComposeAttachmentsStore(),
         pins: PinnedMessageStore = PinnedMessageStore(),
         scheduled: ScheduledSendStore = ScheduledSendStore(),
+        canned: CannedResponsesStore = CannedResponsesStore(),
         isGroup: Bool = true, initialTab: Int = 0, catchUpOpen: Bool = false,
         onForward: @escaping (ChatMessage) -> Void = { _ in },
         editOpen: Bool = false, deleteOpen: Bool = false,
@@ -108,6 +114,7 @@ public struct ConversationView: View {
         self.attachments = attachments
         self.pins = pins
         self.scheduled = scheduled
+        self.canned = canned
         self.isGroup = isGroup
         self.onForward = onForward
         _tab = State(initialValue: initialTab)
@@ -539,6 +546,34 @@ public struct ConversationView: View {
             .popover(isPresented: $showSchedule, arrowEdge: .top) {
                 schedulePopover
             }
+            // Templates button (e2-canned): same bordered-icon recipe
+            // as the tool row; picking appends to the draft, never sends.
+            Button {
+                showTemplates = true
+            } label: {
+                Image(systemName: "doc.text")
+                    .font(.system(size: DietSize.iconMD))
+                    .foregroundStyle(DietColor.textSecondaryColor)
+                    .padding(.horizontal, DietSpace.xs)
+                    .padding(.vertical, DietSpace.xxs)
+                    .background(
+                        templateHovering ? DietColor.wellColor : .clear,
+                        in: RoundedRectangle(cornerRadius: DietRadius.control))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: DietRadius.control)
+                            .stroke(DietColor.dividerColor, lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+            .onHover { templateHovering = $0 }
+            .accessibilityLabel("Insert a template")
+            .plainFocusRing()
+            .help("Insert a template (Settings → Templates)")
+            .popover(isPresented: $showTemplates, arrowEdge: .top) {
+                CannedResponsesPickerView(templates: canned.templates) { template in
+                    insertTemplate(template)
+                    showTemplates = false
+                }
+            }
             TextField("Message", text: $draft)
                 .textFieldStyle(.roundedBorder)
                 .font(DietType.body)
@@ -570,6 +605,9 @@ public struct ConversationView: View {
             // Shot hook (om-a3-keyboard): --show-mention opens the @
             // picker at launch (before/after proof for keyboard nav).
             if CommandLine.arguments.contains("--show-mention") { showMentions = true }
+            // Shot hook (e2-canned): --show-templates opens the
+            // template picker at launch.
+            if CommandLine.arguments.contains("--show-templates") { showTemplates = true }
         }
         // File drops stage like picker output (same cap gate); the
         // attachment strip above shows the staged rows.
@@ -842,6 +880,14 @@ public struct ConversationView: View {
     /// is untouched.
     private func insertMention(_ name: String) {
         draft = MentionCompose.insert(name, into: draft)
+        boxFocused = true
+    }
+
+    /// Append a picked template body to the draft (e2-canned APPEND
+    /// decision: never clobbers user text); the user still hits Send.
+    /// Draft-local — the timeline never touches this path (zero-refresh).
+    private func insertTemplate(_ template: CannedTemplate) {
+        draft = CannedResponses.insert(template.body, into: draft)
         boxFocused = true
     }
 
