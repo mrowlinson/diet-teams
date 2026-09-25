@@ -674,6 +674,27 @@ needing maintainer buy-in. Minor PRs stand alone; majors are separate PRs.
     with sdp-dance temp-fix reverted; unit vectors only, no live
     TURN-server verification — stated in body).
 
+54. [minor] `src/calling/recording.rs` — **region-threaded
+    recorder-base fallback (om-recorder-region lane)**.
+    `RecordingParams` gains `region`; `extract_recorder_from_payload`
+    + `wait_for_recorder_info` take a caller-supplied
+    `fallback_region` instead of hardcoded `TEAMS_REGION`
+    (`DEFAULT_RECORDER_REGION = "amer"`, captured traffic is
+    AMER/USEA). Payload callrecorder-hostname extraction stays the
+    primary path; the region map feeds only the fallback.
+    Follow-up: `eu`/`emea` aliases pinned to the EUWE base +
+    case/whitespace test. Region-headers lane later retyped the
+    field to `&TeamsRegion` (its slug feeds the fallback; §53
+    region-headers). Tests: recorder-base region variance,
+    primary-path precedence, eu-alias pin. Genuine signaling
+    generalization, not OstMac-specific. Merged `7296487` + alias
+    pin `5b93357` (both on main @ `98e3e33`).
+    (Numbering note: two §53 entries above — region-headers and
+    turn-md5; left as-is since #51 already cites §53. Cf. wave-2
+    dup-17/19 precedent.)
+    Upstream: UNFILED (no PR yet; stacks after §53 region-headers
+    on `TeamsRegion`).
+
 ## Upstream PRs (2026-09-22, base 0892144; main red on sdp E0308 until #5)
 
 Minor (standalone modulo #5-first; merge in any order after):
