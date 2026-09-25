@@ -21,9 +21,28 @@ const RECORDER_BOT_MRI: &str = "28:bdd75849-e0a6-4cce-8fc1-d7c0d4da43e5";
 
 /// FlightProxy recorder service base URL.
 /// Captured from USEA region; other regions use different hostnames
-/// (e.g. aks-prod-euwe-* for West Europe). TODO: derive from region config.
+/// (e.g. aks-prod-euwe-* for West Europe).
 const RECORDER_SERVICE_BASE: &str =
     "https://api.flightproxy.teams.microsoft.com/api/v2/ep/aks-prod-usea-p08-api.callrecorder.teams.cloud.microsoft:23444";
+
+/// EUWE (West Europe) recorder pod number is provisional — captured traffic only
+/// covers USEA. Payload extraction (`extract_recorder_from_payload`) stays the
+/// primary path and returns the real hostname; this map only feeds the fallback.
+const RECORDER_EUWE_POD: &str = "p08";
+
+/// Recorder service base URL for a region slug (case-insensitive).
+///
+/// Unknown/empty regions fall back to the captured USEA base.
+fn recorder_service_base_for_region(region: &str) -> String {
+    const FLIGHTPROXY_EP: &str = "https://api.flightproxy.teams.microsoft.com/api/v2/ep";
+    match region.trim().to_ascii_lowercase().as_str() {
+        "euwe" | "eu" | "emea" => format!(
+            "{}/aks-prod-euwe-{}-api.callrecorder.teams.cloud.microsoft:23444",
+            FLIGHTPROXY_EP, RECORDER_EUWE_POD
+        ),
+        _ => RECORDER_SERVICE_BASE.to_string(),
+    }
+}
 
 /// Delay between transcription start and recording start.
 /// Teams web client waits ~11s, but we use 2s to race against solo-call teardown.
@@ -682,8 +701,9 @@ fn extract_recorder_from_payload(payload: &serde_json::Value) -> Option<(String,
                     // Extract conv ID and recorder service URL from this
                     let conv_id = extract_conversation_id(cc);
                     if let Some(cid) = conv_id {
-                        // Derive recorder base from the conv controller hostname
-                        return Some((RECORDER_SERVICE_BASE.to_string(), cid));
+                        // Fallback base from region config; payload
+                        // hostname extraction above stays the primary path.
+                        return Some((recorder_service_base_for_region(TEAMS_REGION), cid));
                     }
                 }
             }
@@ -814,5 +834,39 @@ mod tests {
 
         let url2 = "https://amer03-1.conv.skype.com/conv/abc123/something";
         assert_eq!(extract_conversation_id(url2), Some("abc123".to_string()));
+    }
+
+    #[test]
+    fn test_recorder_base_usea() {
+        assert_eq!(recorder_service_base_for_region("usea"), RECORDER_SERVICE_BASE);
+        assert_eq!(recorder_service_base_for_region("USEA"), RECORDER_SERVICE_BASE);
+        assert_eq!(
+            recorder_service_base_for_region("  Usea "),
+            RECORDER_SERVICE_BASE
+        );
+    }
+
+    #[test]
+    fn test_recorder_base_euwe() {
+        let base = recorder_service_base_for_region("euwe");
+        assert!(base.starts_with(
+            "https://api.flightproxy.teams.microsoft.com/api/v2/ep/aks-prod-euwe-"
+        ));
+        assert!(base.ends_with("-api.callrecorder.teams.cloud.microsoft:23444"));
+        assert_ne!(base, RECORDER_SERVICE_BASE);
+        assert_eq!(base, recorder_service_base_for_region("EUWE"));
+    }
+
+    #[test]
+    fn test_recorder_base_unknown_falls_back_to_usea() {
+        assert_eq!(recorder_service_base_for_region(""), RECORDER_SERVICE_BASE);
+        assert_eq!(
+            recorder_service_base_for_region("amer"),
+            RECORDER_SERVICE_BASE
+        );
+        assert_eq!(
+            recorder_service_base_for_region("xx99"),
+            RECORDER_SERVICE_BASE
+        );
     }
 }
