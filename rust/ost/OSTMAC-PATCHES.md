@@ -654,6 +654,10 @@ needing maintainer buy-in. Minor PRs stand alone; majors are separate PRs.
     MI/fingerprint test re-keyed through the same helper. Genuine
     signaling bugfix, not OstMac-specific. Merged `4129087`
     (lanes/om-turn-md5).
+    Upstream: https://github.com/eisbaw/ost/pull/51 (filed
+    2026-09-25, base 0892144; verbatim lane hunk, 93/93 bin tests
+    with sdp-dance temp-fix reverted; unit vectors only, no live
+    TURN-server verification — stated in body).
 
 ## Upstream PRs (2026-09-22, base 0892144; main red on sdp E0308 until #5)
 
