@@ -9,9 +9,10 @@ import Foundation
 
 public enum SettingsRouting {
     /// True when Settings must isolate from live auth: every demo
-    /// launch, plus the sanitized keywords shot hook.
+    /// launch, plus the sanitized keywords/attention shot hooks.
     public static func useIsolatedDemo(isDemo: Bool, args: [String]) -> Bool {
         isDemo || args.contains("--show-settings-keywords")
+            || args.contains("--show-settings-attention")
     }
 
     /// Sanitized account row for isolated Settings (never live state).
@@ -24,6 +25,7 @@ public enum SettingsRouting {
         if args.contains("--show-settings-calls") { return .calls }
         if args.contains("--show-settings-summaries") { return .summaries }
         if args.contains("--show-settings-keywords") { return .notifications }
+        if args.contains("--show-settings-attention") { return .notifications }
         return .account
     }
 }

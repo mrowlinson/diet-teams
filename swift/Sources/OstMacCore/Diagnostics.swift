@@ -101,14 +101,14 @@ public enum DiagnosticsFormat {
     /// Quiet-hours state (om-quiet-hours): which source is active plus
     /// session banners suppressed. Diagnostics window only — the
     /// suppressed count appears nowhere else (no sidebar, no Settings).
-    public static func quietHoursLine(dnd: Bool, schedule: Bool, suppressed: Int) -> String {
-        let state: String
-        switch (dnd, schedule) {
-        case (false, false): state = "off"
-        case (true, false): state = "on (DND)"
-        case (false, true): state = "on (schedule)"
-        case (true, true): state = "on (schedule + DND)"
-        }
+    /// Focus (e2-attention) joins the source list, defaulted (old 3-arg
+    /// calls stay byte stable).
+    public static func quietHoursLine(dnd: Bool, schedule: Bool, suppressed: Int, focus: Bool = false) -> String {
+        var sources: [String] = []
+        if schedule { sources.append("schedule") }
+        if dnd { sources.append("DND") }
+        if focus { sources.append("Focus") }
+        let state = sources.isEmpty ? "off" : "on (\(sources.joined(separator: " + ")))"
         return "\(state) · \(suppressed) suppressed"
     }
 

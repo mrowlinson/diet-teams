@@ -16,83 +16,95 @@ struct DiagnosticsView: View {
     // diagnostics home. Manual Run check only (never auto-fires).
     @StateObject private var health = HealthStore()
 
+    /// e2-attention shot: Quiet hours section alone at the top (Form
+    /// owns its scroller — no scroll API reaches it, proven by shot).
+    private static var isAttentionShot: Bool {
+        CommandLine.arguments.contains("--show-settings-attention")
+    }
+
     var body: some View {
         Form {
-            Section("Token health") {
-                HealthView(store: health)
-            }
-            Section("Core") {
-                LabeledContent(
-                    "Version",
-                    value: DiagnosticsFormat.coreLine(
-                        version: state.coreVersion, initCode: state.initCode))
-                    .textSelection(.enabled)
-            }
-            Section("Session") {
-                LabeledContent(
-                    "Status",
-                    value: DiagnosticsFormat.sessionLine(
-                        isDemo: state.isDemo, signedIn: state.signedIn))
-                LabeledContent("Presence") {
-                    PresencePicker(store: state.presence)
+            if !Self.isAttentionShot {
+                Section("Token health") {
+                    HealthView(store: health)
                 }
-            }
-            Section("Realtime feed") {
-                LabeledContent(
-                    "State",
-                    value: DiagnosticsFormat.feedLine(
-                        state: state.feedState, events: state.feedEvents,
-                        polls: state.feedPolls, resyncs: state.feedResyncs))
-                    .textSelection(.enabled)
-                TypingDiagRow(store: state.typing, events: state.feedTyping)
-                NotificationsDiagRow(
-                    unread: state.unread, mentions: state.mentions,
-                    breakthroughs: state.mentionBreakthroughs,
-                    dnd: state.mentionDNDSuppressions,
-                    quietSuppressions: state.mentionQuietSuppressions)
-                LabeledContent(
-                    "Notifications",
-                    value: DiagnosticsFormat.notifLine(
-                        posted: state.notifPosted, skipped: state.notifSkipped,
-                        lastReason: state.notifLastReason))
-                    .textSelection(.enabled)
-                if let err = state.feedError {
-                    LabeledContent("Last error") {
-                        Text(err)
-                            .font(DietType.caption1)
-                            .foregroundStyle(Color(nsColor: DietColor.danger))
-                            .textSelection(.enabled)
+                Section("Core") {
+                    LabeledContent(
+                        "Version",
+                        value: DiagnosticsFormat.coreLine(
+                            version: state.coreVersion, initCode: state.initCode))
+                        .textSelection(.enabled)
+                }
+                Section("Session") {
+                    LabeledContent(
+                        "Status",
+                        value: DiagnosticsFormat.sessionLine(
+                            isDemo: state.isDemo, signedIn: state.signedIn))
+                    LabeledContent("Presence") {
+                        PresencePicker(store: state.presence)
                     }
                 }
-            }
-            Section("Read receipts") {
-                ReceiptsDiagRow(store: state.receipts)
-            }
-            Section("Meetings") {
-                MeetingsDiagRow(store: state.meetings)
-            }
-            Section("Meeting") {
-                MeetingDiagRow(roster: state.meeting, chat: state.meetingChat, events: state.feedRoster)
-            }
-            Section("Screen share") {
-                ShareDiagRow(store: state.screenShare)
-            }
-            Section("Image preload") {
-                PreloadDiagRow(store: ImagePreloadStore.shared)
+                Section("Realtime feed") {
+                    LabeledContent(
+                        "State",
+                        value: DiagnosticsFormat.feedLine(
+                            state: state.feedState, events: state.feedEvents,
+                            polls: state.feedPolls, resyncs: state.feedResyncs))
+                        .textSelection(.enabled)
+                    TypingDiagRow(store: state.typing, events: state.feedTyping)
+                    NotificationsDiagRow(
+                        unread: state.unread, mentions: state.mentions,
+                        breakthroughs: state.mentionBreakthroughs,
+                        dnd: state.mentionDNDSuppressions,
+                        quietSuppressions: state.mentionQuietSuppressions)
+                    LabeledContent(
+                        "Notifications",
+                        value: DiagnosticsFormat.notifLine(
+                            posted: state.notifPosted, skipped: state.notifSkipped,
+                            lastReason: state.notifLastReason))
+                        .textSelection(.enabled)
+                    if let err = state.feedError {
+                        LabeledContent("Last error") {
+                            Text(err)
+                                .font(DietType.caption1)
+                                .foregroundStyle(Color(nsColor: DietColor.danger))
+                                .textSelection(.enabled)
+                        }
+                    }
+                }
+                Section("Read receipts") {
+                    ReceiptsDiagRow(store: state.receipts)
+                }
+                Section("Meetings") {
+                    MeetingsDiagRow(store: state.meetings)
+                }
+                Section("Meeting") {
+                    MeetingDiagRow(roster: state.meeting, chat: state.meetingChat, events: state.feedRoster)
+                }
+                Section("Screen share") {
+                    ShareDiagRow(store: state.screenShare)
+                }
+                Section("Image preload") {
+                    PreloadDiagRow(store: ImagePreloadStore.shared)
+                }
             }
             Section("Quiet hours") {
-                QuietHoursDiagRow(store: state.quietHours)
+                QuietHoursDiagRow(
+                    store: state.quietHours, focus: state.focusSync,
+                    sched: state.presenceSchedule)
             }
-            Section("Chat list") {
-                PinsDiagRow(chats: state.chats)
-            }
-            Section("Leave & block") {
-                LeaveBlockDiagRow(chats: state.chats, blocked: state.blocked)
-            }
-            Section("Call") {
-                CallDiagRows(
-                    call: state.call, history: state.history,
-                    isDemo: state.isDemo, signedIn: state.signedIn)
+            if !Self.isAttentionShot {
+                Section("Chat list") {
+                    PinsDiagRow(chats: state.chats)
+                }
+                Section("Leave & block") {
+                    LeaveBlockDiagRow(chats: state.chats, blocked: state.blocked)
+                }
+                Section("Call") {
+                    CallDiagRows(
+                        call: state.call, history: state.history,
+                        isDemo: state.isDemo, signedIn: state.signedIn)
+                }
             }
         }
         .formStyle(.grouped)
@@ -344,22 +356,72 @@ struct TypingDiagRow: View {
 /// Quiet-hours rows (om-quiet-hours): observes the store so state
 /// flips and the suppressed count tick live. The ONLY place the
 /// suppressed count appears — Settings and the sidebar never show it.
+/// e2-attention appends Focus + active-window rows (never reordered).
 struct QuietHoursDiagRow: View {
     @ObservedObject var store: QuietHoursStore
+    @ObservedObject var focus: FocusSyncStore
+    @ObservedObject var sched: PresenceScheduleStore
 
     var body: some View {
         LabeledContent(
             "State",
             value: DiagnosticsFormat.quietHoursLine(
                 dnd: store.dndActive(), schedule: store.scheduleActive(),
-                suppressed: store.suppressedCount))
+                suppressed: store.suppressedCount,
+                focus: focus.quietNow))
             .textSelection(.enabled)
         LabeledContent(
             "Schedule",
-            value: store.windowEnabled ? store.window.summary() : "off")
+            value: scheduleText)
             .textSelection(.enabled)
         LabeledContent("Do Not Disturb", value: store.dndStatus())
             .textSelection(.enabled)
+        LabeledContent("Focus", value: focusText)
+            .textSelection(.enabled)
+        LabeledContent("Active window", value: activeWindowText)
+            .textSelection(.enabled)
+        LabeledContent(
+            "Presence schedule",
+            value: sched.enabled
+                ? (sched.activeEntry()?.summary() ?? "idle (\(sched.entries.count) entries)")
+                : "off")
+            .textSelection(.enabled)
+        LabeledContent("Last scheduled set", value: lastSetText)
+            .textSelection(.enabled)
+        if let err = sched.error {
+            LabeledContent("Schedule error", value: err)
+                .textSelection(.enabled)
+        }
+    }
+
+    private var lastSetText: String {
+        guard let status = sched.lastStatus else { return "never" }
+        if let at = sched.lastSetAt {
+            let fmt = DateFormatter()
+            fmt.locale = Locale(identifier: "en_US_POSIX")
+            fmt.dateFormat = "HH:mm"
+            return "\(status.title) at \(fmt.string(from: at))"
+        }
+        return status.title
+    }
+
+    /// Multi-window schedule line: off when nothing is enabled, else
+    /// the active window or the idle count.
+    private var scheduleText: String {
+        let enabled = store.windows.filter(\.enabled)
+        if enabled.isEmpty { return "off" }
+        if let active = store.activeWindow() { return active.summary() }
+        return "idle (\(enabled.count) windows)"
+    }
+
+    private var focusText: String {
+        if !focus.syncEnabled { return "sync off" }
+        if let error = focus.error { return "unreadable (\(error))" }
+        return focus.focusActive ? "active — quiet" : "inactive"
+    }
+
+    private var activeWindowText: String {
+        store.activeWindow()?.summary() ?? "none"
     }
 }
 

@@ -28,6 +28,9 @@
 // --show-settings-calls opens it preselected on Calls (test-call
 // section shot hook, offline). --show-settings-summaries preselects
 // Summaries (provider picker shot hook, offline).
+// --show-settings-attention preselects Notifications on the Attention
+// surface with seeded windows + schedules (e2-attention shot hook,
+// offline; combine with --show-diagnostics for the rows).
 // --show-catchup-ondevice is --show-catchup with the on-device provider (canned, shot hook).
 // --show-meeting seeds the Meeting window offline + opens it (shot hook).
 // --show-diagnostics opens the Diagnostics window at launch (shot hook).
@@ -229,15 +232,16 @@ struct OstMacAppMain: App {
                 isDemo: state.isDemo, args: CommandLine.arguments)
             {
                 // Isolated fixed view (om-settings-org): demo launches
-                // and the keywords shot never embed the LIVE auth model
-                // (demo isolation); rules load from the seeded
-                // rules.json like the live store.
+                // and the keywords/attention shots never embed the LIVE
+                // auth model (demo isolation); rules load from the
+                // seeded rules.json like the live store.
                 SettingsView(account: SettingsRouting.isolatedDemoAccount)
             } else {
                 SettingsView(
                     auth: state.auth, catchUp: state.catchUp, notifs: state.notifs,
                     rules: state.rules, chats: state.chats,
-                    quiet: state.quietHours, blocked: state.blocked,
+                    quiet: state.quietHours, focus: state.focusSync,
+                    sched: state.presenceSchedule, blocked: state.blocked,
                     accounts: state.accounts, call: state.call,
                     onAccountAdded: { state.completePendingAdd($0) },
                     onRemoveAccount: { state.removeAccount($0) })
@@ -319,7 +323,14 @@ final class AppState: ObservableObject {
     let feed = RealtimeFeed()
     let typing = TypingStore()
     let notifs = MessageNotifications()
-    let quietHours = QuietHoursStore()
+    /// e2-attention: system Focus sync (quiet source) + presence
+    /// schedules (timetable-driven own status). The schedule adopts
+    /// set-echoes into `presence` (weak) and pauses on manual picker
+    /// sets via `presence.manualSetHook`. Init-assigned (shot hook may
+    /// point them at the throwaway suite).
+    let quietHours: QuietHoursStore
+    let focusSync: FocusSyncStore
+    let presenceSchedule: PresenceScheduleStore
     /// d2-send: per-chat snooze expiries + the scheduled-send queue.
     let snooze = SnoozeStore()
     let scheduled = ScheduledSendStore()
@@ -431,6 +442,43 @@ final class AppState: ObservableObject {
     private var ownerMRI: String?
 
     init(args: [String]) {
+        // e2-attention: attention stores (shot hook may point them at
+        // the throwaway suite + seed them; seeded values also feed the
+        // Diagnostics rows). First: `let`s without defaults must land
+        // before any self use.
+        if args.contains("--show-settings-attention") {
+            let suite = UserDefaults(suiteName: "shot-attention") ?? .standard
+            suite.removePersistentDomain(forName: "shot-attention")
+            let quiet = QuietHoursStore(defaults: suite)
+            quiet.windows = [
+                QuietHoursWindow(enabled: true, startMinutes: 22 * 60, endMinutes: 7 * 60),
+                QuietHoursWindow(
+                    enabled: true, startMinutes: 12 * 60, endMinutes: 13 * 60,
+                    days: [2, 3, 4, 5, 6]),
+            ]
+            quietHours = quiet
+            let focus = FocusSyncStore(defaults: suite, reader: { false })
+            focus.syncEnabled = true
+            focusSync = focus
+            let sched = PresenceScheduleStore(defaults: suite, presence: presence)
+            sched.enabled = true
+            sched.entries = [
+                PresenceScheduleEntry(
+                    window: QuietHoursWindow(
+                        enabled: true, startMinutes: 9 * 60, endMinutes: 17 * 60,
+                        days: [2, 3, 4, 5, 6]),
+                    status: .busy),
+                PresenceScheduleEntry(
+                    window: QuietHoursWindow(enabled: true, startMinutes: 22 * 60, endMinutes: 7 * 60),
+                    status: .offline),
+            ]
+            presenceSchedule = sched
+        } else {
+            quietHours = QuietHoursStore()
+            focusSync = FocusSyncStore()
+            // Schedule adopts set-echoes into presence (weak).
+            presenceSchedule = PresenceScheduleStore(presence: presence)
+        }
         isDemo = args.contains("--demo") || args.contains("--demo-rich")
             || args.contains("--demo-reactions") || args.contains("--show-sidebarchurn")
             || args.contains("--demo-botposts") || args.contains("--show-pins")
@@ -646,6 +694,11 @@ final class AppState: ObservableObject {
         }
         wireChats()
         popouts.bind(main: conv) // e1-popout: send mirroring both ways
+        // e2-attention: manual picker sets pause the schedule until
+        // the next window boundary (contract (i)). Weak — no cycle.
+        presence.manualSetHook = { [weak schedule = presenceSchedule] in
+            schedule?.noteManualSet()
+        }
         // Single reaction point for the gate: every auth transition
         // (gate, Settings, Auth window — same model) runs authChanged,
         // which flips the gate via the signedIn/contentOpened flags.
@@ -789,6 +842,7 @@ final class AppState: ObservableObject {
         meetingChat = makeMeetingChat(accountID: id)
         teams.resetForAccount()
         presence.clear()
+        presenceSchedule.clearApplied() // e2-attention: drop applied state
         typing.clear()
         meeting.clear()
         unread.markAllRead()
@@ -1487,8 +1541,9 @@ final class AppState: ObservableObject {
         // (maybeNotify); no second post here — one event, one banner max.
         // om-quiet-hours: snapshot quiet ONCE per event; the banner path
         // below obeys it (banners/sounds drop; unread pauses too —
-        // quiet-hours skips never accrue).
-        let quiet = quietHours.isQuietNow
+        // quiet-hours skips never accrue). e2-attention: Focus-quiet
+        // folds into the same snapshot (identical semantics, same reason).
+        let quiet = localQuietNow
         if let mri = msg.senderID,
            msg.sender != conv.ownDisplayName,
            chats.chat(id: msg.chatID)?.is_group == false
@@ -1583,11 +1638,18 @@ final class AppState: ObservableObject {
         rules.config.owner.mri.isEmpty ? ownerMRI : rules.config.owner.mri
     }
 
+    /// Local quiet snapshot (e2-attention): schedule/DND-quiet OR
+    /// Focus-quiet — identical semantics downstream (same snapshot fed
+    /// to the banner gate and the rules quiet gate, same reason).
+    private var localQuietNow: Bool {
+        quietHours.isQuietNow || focusSync.quietNow
+    }
+
     /// One rules decision for a live event (owns the meeting-start
     /// window claim). Owner identity prefers configured/learned MRI with
     /// a live display-name backup. DND reads the own Teams presence;
-    /// quiet reads the local store (schedule or manual DND — both
-    /// suppress mentions too).
+    /// quiet reads the local snapshot (schedule, manual DND, or Focus —
+    /// all suppress mentions too).
     private func rulesDecision(for msg: RealtimeMessage, chatName: String) -> ChatFilter.Decision {
         var cfg = rules.config
         if let own = conv.ownDisplayName, !own.isEmpty { cfg.owner.displayName = own }
@@ -1595,7 +1657,7 @@ final class AppState: ObservableObject {
             message: msg, chatDisplayName: chatName, ownerMRI: resolvedOwnerMRI,
             rules: cfg, meetingDedup: &meetingDedup, now: Date(),
             dndActive: MentionAlert.isDND(ownAvailability: presence.own?.availability),
-            quietActive: quietHours.isQuietNow,
+            quietActive: localQuietNow,
             snoozedChatIDs: snooze.activeIDs())
     }
 
@@ -1773,6 +1835,15 @@ final class AppState: ObservableObject {
         if feed.pollCount != feedPolls { feedPolls = feed.pollCount }
         if feed.lastError != feedError { feedError = feed.lastError }
         quietHours.refresh() // om-quiet-hours: sweep expired DND (2s tick)
+        focusSync.refresh() // e2-attention: re-poll Focus (assign-on-change)
+        // e2-attention: scheduled presence sets (transitions only;
+        // signed-in live only — demo and the offline attention shot
+        // never touch core).
+        if signedIn == true, !isDemo,
+           !CommandLine.arguments.contains("--show-settings-attention")
+        {
+            presenceSchedule.tick()
+        }
         snooze.refresh() // d2-send: sweep expired snoozes (2s tick)
         fireScheduled() // d2-send: post due queue items (idle = no-op)
         if !isDemo { call.refresh() } // re-read slot (place/accept landed?)
@@ -1954,6 +2025,7 @@ final class AppState: ObservableObject {
             switchingAccount = false
             feed.stop()
             presence.clear()
+            presenceSchedule.clearApplied() // e2-attention: drop applied state
             typing.clear()
             meeting.clear()
             meetingChat.clear()
@@ -2216,7 +2288,8 @@ struct RootView: View {
             if CommandLine.arguments.contains("--show-settings")
                 || CommandLine.arguments.contains("--show-settings-keywords")
                 || CommandLine.arguments.contains("--show-settings-calls")
-                || CommandLine.arguments.contains("--show-settings-summaries") {
+                || CommandLine.arguments.contains("--show-settings-summaries")
+                || CommandLine.arguments.contains("--show-settings-attention") {
                 openSettings()
             }
             if OstMacAppMain.authStateName(args: CommandLine.arguments) != nil {
