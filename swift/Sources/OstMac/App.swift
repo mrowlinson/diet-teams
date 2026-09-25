@@ -1177,10 +1177,14 @@ final class AppState: ObservableObject {
         return id
     }
 
-    /// Pop-out window name: list/teams name, else the id itself (--chat
-    /// direct-open precedent for chats missing from the list).
+    /// Pop-out window name: list/teams name, else the static demo name,
+    /// else the id itself (--chat direct-open precedent for chats
+    /// missing from the list). The demo fallback matches the main
+    /// `open` path and covers windows opened before the list lands.
     func popoutName(for chatID: String) -> String {
-        chatNameOrNil(for: chatID) ?? chatID
+        chatNameOrNil(for: chatID)
+            ?? (isDemo ? DemoData.name(for: chatID) : nil)
+            ?? chatID
     }
 
     /// Open (once) a pop-out window's backing store: demo seeds canned
