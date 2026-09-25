@@ -674,3 +674,10 @@ Notes:
   no behavior impact; tool-output scrubbing artifact propagated by
   copy-paste. Deliberately left as-is in this wave for
   lane-fidelity; a one-pass cleanup can normalize all copies later.
+- Merge guidance: #34's `graph_delete` duplicates #28's helper
+  (identical signature + body; keep one copy at merge — same
+  situation as #28's `graph_patch` vs #12's).
+- #40 follow-up (f1): the `drive_session_put` doc line was restored
+  to the vendored lane's exact bytes after filing (amended +
+  force-pushed; the vendored source is clean on that line). The
+  REDACTED note above still covers the PATCH/DELETE/GET lines.
