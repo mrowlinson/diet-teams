@@ -32,7 +32,7 @@ final class ReskinTeamsTests: XCTestCase {
     func testSidebarSectionLabels() {
         XCTAssertEqual(
             SidebarSection.allCases.map(\.rawValue),
-            ["Chats", "Teams", "Reminders", "Planner", "Shifts"])
+            ["Chats", "Teams", "Reminders", "Planner", "Recordings", "Shifts"])
     }
 
     // MARK: - Team header avatar inputs

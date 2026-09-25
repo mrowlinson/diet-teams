@@ -34,6 +34,8 @@
 // --show-shared opens the conversation on the Shared files tab (shot hook).
 // --show-reminders opens the sidebar on the Reminders browser (shot hook).
 // --show-planner opens the sidebar on the Planner browser (shot hook).
+// --show-recordings opens the sidebar on the Recordings browser (shot hook).
+// --show-recordings-playing also auto-plays the first row (shot hook).
 // --show-notes opens the conversation on the Notes tab (shot hook).
 // --show-jump opens the Cmd+K jump palette at launch (shot hook).
 // --show-forward opens the forward sheet (jump palette re-targeted at a
@@ -248,6 +250,7 @@ final class AppState: ObservableObject {
     let teams: TeamsViewModel
     let reminders: RemindersViewModel
     let planner: PlannerViewModel
+    let recordings: RecordingsViewModel
     let meetings: MeetingsViewModel
     /// Calendar week grid backing the Meetings window (B1 merge).
     let calWeek: CalendarWeekStore
@@ -458,6 +461,10 @@ final class AppState: ObservableObject {
                 bucketsFetcher: { PlannerDemo.bucketsResponse(for: $0) },
                 tasksFetcher: { PlannerDemo.tasksResponse(for: $0) },
                 localEdits: true)
+            recordings = RecordingsViewModel(
+                listFetcher: { RecordingsDemo.response() },
+                searchFetcher: { RecordingsDemo.searchResponse(for: $0) },
+                downloadFetcher: { _, _, _ in try DemoClip.url().path })
             // Parse stays real (pure core, no network); the join runner
             // echoes an accepted signaling leg so the lobby flow runs.
             meetings = MeetingsViewModel(
@@ -478,6 +485,7 @@ final class AppState: ObservableObject {
             teams = TeamsViewModel()
             reminders = RemindersViewModel()
             planner = PlannerViewModel()
+            recordings = RecordingsViewModel()
             meetings = MeetingsViewModel()
             calWeek = CalendarWeekStore()
             shifts = ShiftsStore()
@@ -570,6 +578,10 @@ final class AppState: ObservableObject {
         await teams.load()
         await reminders.load()
         await planner.load()
+        await recordings.load()
+        if CommandLine.arguments.contains("--show-recordings-playing") {
+            recordings.selectAndPlayFirst()
+        }
         await meetings.load()
         seedShifts() // team picker + first-week grid (demo + live)
         if chats.state == .loaded {
@@ -1374,6 +1386,7 @@ final class AppState: ObservableObject {
                 teams.refresh()
                 reminders.refresh()
                 planner.refresh()
+                recordings.refresh()
                 meetings.refresh()
                 calWeek.refresh()
                 if shifts.selectedTeamID == nil {
@@ -1411,11 +1424,13 @@ struct RootView: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(\.openSettings) private var openSettings
 
-    /// Shot-hook section: --show-planner wins over --show-reminders
+    /// Shot-hook section: --show-recordings/--show-planner win over --show-reminders
     /// wins over --show-teams. The create-sheet hooks also land on
     /// teams (the sheets hang there).
     static var initialSection: SidebarSection {
         let args = CommandLine.arguments
+        if args.contains("--show-recordings") { return .recordings }
+        if args.contains("--show-recordings-playing") { return .recordings }
         if args.contains("--show-planner") { return .planner }
         if args.contains("--show-reminders") { return .reminders }
         if args.contains("--show-teams") { return .teams }
@@ -1434,7 +1449,7 @@ struct RootView: View {
                     SidebarColumn(
                         chats: state.chats, teams: state.teams,
                         reminders: state.reminders, planner: state.planner,
-                        shifts: state.shifts,
+                        recordings: state.recordings, shifts: state.shifts,
                         presence: state.presence,
                         unread: state.unread,
                         mentions: state.mentions,

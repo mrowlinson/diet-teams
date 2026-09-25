@@ -12,6 +12,7 @@ pub mod media;
 mod notes;
 mod planner;
 mod presence;
+mod recordings;
 mod schedule;
 mod search;
 mod tabs;
@@ -30,6 +31,12 @@ pub use me::UserInfo;
 pub use notes::{NotePage, NotebookInfo, PageInfo, SectionInfo};
 pub use planner::{BucketInfo, PlanInfo, PlannerTaskInfo};
 pub use presence::PresenceInfo;
+pub use recordings::{
+    clamp_limit as recordings_clamp_limit, is_video as is_recording_video,
+    list_recordings_data, parse_recordings_response, recordings_children_path,
+    recordings_search_path, search_recordings_data, sort_newest as sort_recordings_newest,
+    RecordingInfo, RecordingSource, RECORDINGS_MAX_LIMIT,
+};
 pub use schedule::{
     list_schedule_data, list_shifts_data, list_timeoff_reasons_data, list_timesoffs_data,
     ScheduleInfo, ShiftInfo, TimeOffInfo, TimeOffReason,

@@ -4,9 +4,9 @@ import OstMacCore
 import SwiftUI
 
 /// Sidebar column hosting the chats list, the teams/channels browser,
-/// the reminders browser, the planner boards browser, and the shifts
-/// week grid behind a segmented switcher. Channel taps open as
-/// conversations via
+/// the reminders browser, the planner boards browser, the recordings
+/// browser, and the shifts week grid behind a segmented switcher.
+/// Channel taps open as conversations via
 /// `onOpenChannel` (channel id + "Team > #channel" display name).
 ///
 /// The switcher header is exactly `DietSize.toolbar` tall with a system
@@ -17,6 +17,7 @@ public struct SidebarColumn: View {
     @ObservedObject private var teams: TeamsViewModel
     @ObservedObject private var reminders: RemindersViewModel
     @ObservedObject private var planner: PlannerViewModel
+    @ObservedObject private var recordings: RecordingsViewModel
     @ObservedObject private var shifts: ShiftsStore
     @ObservedObject private var presence: PresenceStore
     @ObservedObject private var unread: UnreadStore
@@ -34,7 +35,7 @@ public struct SidebarColumn: View {
     public init(
         chats: ChatListViewModel, teams: TeamsViewModel,
         reminders: RemindersViewModel, planner: PlannerViewModel,
-        shifts: ShiftsStore,
+        recordings: RecordingsViewModel, shifts: ShiftsStore,
         presence: PresenceStore = PresenceStore(),
         unread: UnreadStore = UnreadStore(),
         mentions: MentionStore = MentionStore(),
@@ -50,6 +51,7 @@ public struct SidebarColumn: View {
         self.teams = teams
         self.reminders = reminders
         self.planner = planner
+        self.recordings = recordings
         self.shifts = shifts
         self.presence = presence
         self.unread = unread
@@ -87,6 +89,9 @@ public struct SidebarColumn: View {
             case .planner:
                 PlannerBrowser(model: planner)
                     .transition(.opacity)
+            case .recordings:
+                RecordingsBrowser(model: recordings)
+                    .transition(.opacity)
             case .shifts:
                 ShiftsBrowser(model: shifts)
                     .transition(.opacity)
@@ -104,5 +109,6 @@ public enum SidebarSection: String, CaseIterable {
     case teams = "Teams"
     case reminders = "Reminders"
     case planner = "Planner"
+    case recordings = "Recordings"
     case shifts = "Shifts"
 }

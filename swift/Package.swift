@@ -15,6 +15,10 @@ let rustLink: [LinkerSetting] = [
     .linkedFramework("Security"),
     .linkedFramework("CoreFoundation"),
     .linkedFramework("SystemConfiguration"),
+    // Recordings browser: VideoPlayer needs AVPlayerView at runtime,
+    // but no executable-target file imports AVKit, so autolink never
+    // fires (missing framework = fatalError in getSuperclassMetadata).
+    .linkedFramework("AVKit"),
 ]
 
 let package = Package(

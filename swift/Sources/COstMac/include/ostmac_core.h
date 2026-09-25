@@ -161,6 +161,16 @@ char *ostmac_files_children(const char *drive_id, const char *item_id, int limit
 // Returns {ok, file}. Caller frees.
 char *ostmac_files_upload(const char *chat_id, const char *path);
 
+// Meeting recordings, newest first (OneDrive + channel Recordings
+// folders, requires sign-in). limit<=0 means 50. Returns
+// {ok,recordings:[{id,name,size,mime?,web_url?,download_url?,
+// drive_id?,created?,modified?,duration_ms?,source}]}. Caller frees.
+char *ostmac_recordings_list(int limit);
+
+// One recordings search window (requires sign-in). limit<=0 means 50.
+// Returns {ok,query,recordings:[...]} (same row shape). Caller frees.
+char *ostmac_recordings_search(const char *query, int limit);
+
 // Create a view-only sharing link for one driveItem (Graph createLink).
 // scope NULL/empty = organization (org-only); "anonymous" = anyone link.
 // Returns {ok, link, scope}. Caller frees.

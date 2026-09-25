@@ -36,6 +36,7 @@ pub mod calweek;
 pub mod live;
 pub mod planner;
 pub mod realtime;
+pub mod recordings;
 pub mod schedule;
 
 // ---------------------------------------------------------------------------
