@@ -557,6 +557,10 @@ struct ChatRow: View {
     /// Active snooze label ("Snoozed until X", d2-send): replaces the
     /// preview line with a bell-slash glyph while set.
     var snoozeLabel: String? = nil
+    /// Message density (f2-density): row padding + avatar size. Plain
+    /// environment value — no new init param, existing callers
+    /// untouched.
+    @Environment(\.messageDensity) private var density
 
     private var dietPresence: DietPresence? {
         guard let outer = peerAvailability else { return nil }
@@ -567,7 +571,7 @@ struct ChatRow: View {
         HStack(alignment: .center, spacing: DietSpace.sm) {
             DietAvatar(
                 chat.name, presence: dietPresence,
-                size: DietSize.avatarMD)
+                size: density.metrics.avatarSize)
             VStack(alignment: .leading, spacing: DietSpace.xxs) {
                 HStack(alignment: .firstTextBaseline) {
                     Text(chat.name)
@@ -603,7 +607,7 @@ struct ChatRow: View {
                     .lineLimit(1)
             }
         }
-        .padding(.vertical, DietSpace.xs)
+        .padding(.vertical, density.metrics.sidebarRowPad)
         .accessibilityElement(children: .combine)
     }
 

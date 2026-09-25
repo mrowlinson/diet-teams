@@ -42,6 +42,9 @@ struct ChatTimelineView: View {
     /// Reduce Motion (om-a1-motion): every scrollTo below lands
     /// instantly when set — no animated travel.
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Message density (f2-density): row gap + separator padding.
+    /// Plain environment value (no per-row store subscription).
+    @Environment(\.messageDensity) private var density
 
     var body: some View {
         // One id index per body-eval (om-s6-renderparse): the strip,
@@ -65,7 +68,7 @@ struct ChatTimelineView: View {
                 DietSeamH()
                 ZStack(alignment: .bottom) {
                     ScrollView {
-                    LazyVStack(alignment: .leading, spacing: DietSpace.sm) {
+                    LazyVStack(alignment: .leading, spacing: density.metrics.rowGap) {
                         pagingSentinel
                         loadMoreRow
                         if store.loading, store.messages.isEmpty {
@@ -94,7 +97,7 @@ struct ChatTimelineView: View {
                             }
                         }
                         ForEach(sections, id: \.key) { section in
-                            DietDaySeparator(section.label)
+                            DietDaySeparator(section.label, compact: density == .compact)
                             ForEach(section.messages) { msg in
                                 MessageBubble(
                                     message: msg,
@@ -175,7 +178,7 @@ struct ChatTimelineView: View {
                                 scroll.noteLeftBottom()
                             }
                     }
-                    .padding([.top, .leading, .trailing], DietSpace.md)
+                    .padding([.top, .leading, .trailing], density.metrics.timelineEdge)
                 }
                 .defaultScrollAnchor(.bottom)
                 .onChange(of: store.messages.count) { handleMessagesChanged(proxy) }

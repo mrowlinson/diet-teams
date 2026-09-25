@@ -73,9 +73,14 @@ public struct DietBubble: View {
 /// Day separator row: hairline — LABEL — hairline.
 public struct DietDaySeparator: View {
     private let label: String
+    /// Compact density (f2-density): tighter vertical padding (2 vs
+    /// 4). Plain Bool so DietDesign stays density-unaware; the
+    /// timeline passes it from the environment.
+    private let compact: Bool
 
-    public init(_ label: String) {
+    public init(_ label: String, compact: Bool = false) {
         self.label = label
+        self.compact = compact
     }
 
     public var body: some View {
@@ -86,6 +91,6 @@ public struct DietDaySeparator: View {
                 .foregroundStyle(DietColor.textTertiaryColor)
             DietDividerH()
         }
-        .padding(.vertical, DietSpace.xs)
+        .padding(.vertical, compact ? DietSpace.xxs : DietSpace.xs)
     }
 }
