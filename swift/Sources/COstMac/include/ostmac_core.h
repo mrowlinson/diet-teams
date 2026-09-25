@@ -8,25 +8,12 @@
 #include <stddef.h>
 #include <stdint.h>
 
-// Static version string ("1.0.0"). Never freed.
-const char *ostmac_version(void);
-
-// 0 = core usable (tokio runtime builds). No network.
-int ostmac_init(void);
-
-// Auth status JSON. Caller frees.
-char *ostmac_status(void);
-
-// Auth status JSON for one account profile (no active switch).
-// Caller frees. No network.
-char *ostmac_status_for(const char *profile);
+// NOTE (R12 ffi-move-now B0): version/init/status/status_for/
+// profile_active moved to Swift (CoreLocal); decls deleted.
 
 // Switch the active account profile ("" = default): {ok, profile}.
 // Caller frees. No network.
 char *ostmac_profile_set(const char *profile);
-
-// Current active profile id: {ok, profile}. Caller frees. No network.
-char *ostmac_profile_active(void);
 
 // Device-code start JSON: session, verification_uri, user_code, message.
 // Caller frees. Hits network.
@@ -303,10 +290,8 @@ char *ostmac_planner_reopen(const char *task_id, const char *etag);
 // organizer?,is_online}]}. Caller frees.
 char *ostmac_meetings(int limit);
 
-// Classify a pasted join string (pure, no network, no sign-in):
-// {ok,target:{kind,thread_id?,meeting_id?,url}}. kind is
-// thread|meeting-id|url|unknown. Caller frees.
-char *ostmac_meeting_join_parse(const char *raw);
+// NOTE (R12 ffi-move-now B1): meeting_join_parse moved to Swift
+// (JoinParse); decl deleted.
 
 // Week-window meetings JSON (Graph calendarView [week_start,
 // week_start+days], requires sign-in): {ok,week_start,days,
@@ -479,8 +464,8 @@ char *ostmac_call_end(void);
 // {ok,injected,response_bytes}. Caller frees.
 char *ostmac_call_record_inject(void);
 
-// A/V capability map (static, no hardware). Caller frees.
-char *ostmac_av_info(void);
+// NOTE (R12 ffi-move-now B1): av_info moved to Swift (CoreLocal);
+// decl deleted.
 
 // Mic/speaker availability probe (cpal open+close, fast). Caller frees.
 char *ostmac_mic_probe(void);
@@ -494,8 +479,8 @@ char *ostmac_mic_test(int seconds);
 // {ok:false, error:"no_output"}. Caller frees. Blocks while playing.
 char *ostmac_tone_play(int msecs);
 
-// Deterministic tone echo self-check (no hardware). Caller frees.
-char *ostmac_tone_check(void);
+// NOTE (R12 ffi-move-now B2): tone_check moved to Swift (ToneDsp);
+// decl deleted.
 
 // Audio device display names + system defaults:
 // {ok, inputs[], outputs[], default_input, default_output}. Caller frees.

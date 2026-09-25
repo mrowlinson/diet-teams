@@ -1,9 +1,9 @@
-//! Manual probe: status, trouter-start code, device-code start (network).
+//! Manual probe: trouter-start code, device-code start (network).
 //! `cargo run --example probe` (unsigned env expected: trouter -2).
+//! NOTE (R12 ffi-move-now B0): status moved to Swift (CoreLocal).
 
 fn main() {
     println!("version: {}", env!("CARGO_PKG_VERSION"));
-    println!("status: {}", ostmac_core::status_json());
     println!("trouter_start: {}", ostmac_core::trouter_start());
     println!("trouter_poll: {}", ostmac_core::trouter_poll_json());
     println!("trouter_stop: {}", ostmac_core::trouter_stop());

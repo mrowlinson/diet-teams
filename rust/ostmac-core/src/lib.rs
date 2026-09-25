@@ -116,37 +116,15 @@ pub(crate) fn token_summary(cfg: &Config) -> serde_json::Value {
 // ---------------------------------------------------------------------------
 // Status
 // ---------------------------------------------------------------------------
-
-/// JSON auth status. Pure read of the cached config, no network.
-pub fn status_json() -> String {
-    status_json_for(&ost::config::active_profile())
-}
-
-/// JSON auth status for one account profile (switcher reads every
-/// account without switching active). Pure read, no network.
-pub fn status_json_for(profile: &str) -> String {
-    match Config::load_cached_for(profile) {
-        Ok(cfg) => {
-            let summary = token_summary(&cfg);
-            let signed_in = summary["aad"]["expired"] == false
-                && summary["aad"]["present"] == true;
-            json!({"ok": true, "signed_in": signed_in, "tokens": summary}).to_string()
-        }
-        Err(e) => err_json("config_load", e),
-    }
-}
+// NOTE (R12 ffi-move-now B0): status/version/init/profile-active moved to
+// Swift (CoreLocal). Only the profile setter stays: it is the sole writer
+// of the Rust active-profile global, read by every profile-agnostic path.
 
 /// Switch the active account profile (`""` → default). Every
 /// profile-agnostic path (clients, trouter, legacy entry points)
 /// follows it. Returns `{ok:true, profile}`.
 pub fn profile_set_json(profile: &str) -> String {
     ost::config::set_active_profile(profile);
-    let active = ost::config::active_profile();
-    json!({"ok": true, "profile": active}).to_string()
-}
-
-/// Current active profile id. Returns `{ok:true, profile}`.
-pub fn profile_active_json() -> String {
     let active = ost::config::active_profile();
     json!({"ok": true, "profile": active}).to_string()
 }
@@ -2384,21 +2362,8 @@ pub fn meetings_json(limit: usize) -> String {
     }
 }
 
-/// Classify a pasted join string. Pure (no network, no sign-in needed).
-/// Returns `{ok:true, target:{kind,thread_id?,meeting_id?,url}}`.
-pub fn meeting_join_parse_json(raw: &str) -> String {
-    let t = ost::api::parse_join_url(raw);
-    json!({
-        "ok": true,
-        "target": {
-            "kind": t.kind,
-            "thread_id": t.thread_id,
-            "meeting_id": t.meeting_id,
-            "url": t.url,
-        },
-    })
-    .to_string()
-}
+// NOTE (R12 ffi-move-now B1): meeting_join_parse moved to Swift
+// (JoinParse); backing fn + export deleted.
 
 // ---------------------------------------------------------------------------
 // Notes (om-notes lane: OneNote read + paragraph append)
@@ -2738,37 +2703,8 @@ pub fn trouter_stop() -> c_int {
 // C ABI (Swift calls these; JSON over the boundary)
 // ---------------------------------------------------------------------------
 
-static VERSION_C: &[u8] = b"1.0.0\0";
-
-/// Static version string. Never freed.
-#[no_mangle]
-pub extern "C" fn ostmac_version() -> *const c_char {
-    VERSION_C.as_ptr() as *const c_char
-}
-
-/// 0 = core usable (runtime builds). No network.
-#[no_mangle]
-pub extern "C" fn ostmac_init() -> c_int {
-    match rt() {
-        Ok(_) => 0,
-        Err(_) => -1,
-    }
-}
-
-/// Auth status JSON. Caller frees with [`ostmac_free`].
-#[no_mangle]
-pub extern "C" fn ostmac_status() -> *mut c_char {
-    string_to_c(status_json())
-}
-
-/// Auth status JSON for one account profile. See [`status_json_for`].
-#[no_mangle]
-pub extern "C" fn ostmac_status_for(profile: *const c_char) -> *mut c_char {
-    match cstr_to_string(profile) {
-        Ok(p) => string_to_c(status_json_for(&p)),
-        Err(e) => string_to_c(err_json("arg", e)),
-    }
-}
+// NOTE (R12 ffi-move-now B0): ostmac_version/init/status/status_for/
+// profile_active deleted; Swift CoreLocal owns them now.
 
 /// Switch the active account profile. See [`profile_set_json`].
 #[no_mangle]
@@ -2777,12 +2713,6 @@ pub extern "C" fn ostmac_profile_set(profile: *const c_char) -> *mut c_char {
         Ok(p) => string_to_c(profile_set_json(&p)),
         Err(e) => string_to_c(err_json("arg", e)),
     }
-}
-
-/// Current active profile id. See [`profile_active_json`].
-#[no_mangle]
-pub extern "C" fn ostmac_profile_active() -> *mut c_char {
-    string_to_c(profile_active_json())
 }
 
 /// Device-code start JSON (`session`, `verification_uri`, `user_code`).
@@ -3547,15 +3477,6 @@ pub extern "C" fn ostmac_meetings(limit: c_int) -> *mut c_char {
     string_to_c(meetings_json(lim))
 }
 
-/// Classify a pasted join string (pure, no network). Caller frees.
-#[no_mangle]
-pub extern "C" fn ostmac_meeting_join_parse(raw: *const c_char) -> *mut c_char {
-    match cstr_to_string(raw) {
-        Ok(s) => string_to_c(meeting_join_parse_json(&s)),
-        Err(e) => string_to_c(err_json("arg", e)),
-    }
-}
-
 /// Start background Trouter push. See [`trouter_start`].
 #[no_mangle]
 pub extern "C" fn ostmac_trouter_start() -> c_int {
@@ -3853,16 +3774,8 @@ mod tests {
         assert_eq!(a, b, "rt() must return the process-wide shared runtime");
     }
 
-    #[test]
-    fn status_envelope_has_expected_keys() {
-        let v: serde_json::Value = serde_json::from_str(&status_json()).unwrap();
-        assert_eq!(v["ok"], true);
-        assert!(v["signed_in"].is_boolean());
-        for k in ["aad", "graph", "ic3", "recorder", "skype"] {
-            assert!(v["tokens"][k]["present"].is_boolean(), "missing {}", k);
-        }
-        assert!(v["tokens"]["refresh_present"].is_boolean());
-    }
+    // NOTE (R12 ffi-move-now B0): status envelope tests moved to Swift
+    // (FfiMoveNowTests); status_json deleted.
 
     #[test]
     fn chat_json_shape() {
@@ -4684,10 +4597,10 @@ mod tests {
     }
 
     #[test]
-    fn profile_set_and_status_for_isolate_accounts() {
-        let prev: serde_json::Value =
-            serde_json::from_str(&profile_active_json()).unwrap();
-        let prev_id = prev["profile"].as_str().unwrap_or("default").to_string();
+    fn profile_set_round_trip_restores() {
+        // NOTE (R12 ffi-move-now B0): profile_active/status_for reads
+        // moved to Swift (FfiMoveNowTests); only the set round-trip stays.
+        let prev_id = ost::config::active_profile();
         // Switch active and restore immediately (parallel tests in
         // this binary assume the default active profile).
         let v: serde_json::Value =
@@ -4697,11 +4610,6 @@ mod tests {
         let back: serde_json::Value =
             serde_json::from_str(&profile_set_json(&prev_id)).unwrap();
         assert_eq!(back["profile"], prev_id);
-        // Unknown profile: pure read, unsigned, no writes.
-        let st: serde_json::Value =
-            serde_json::from_str(&status_json_for("d1-acct-no-such")).unwrap();
-        assert_eq!(st["ok"], true);
-        assert_eq!(st["signed_in"], false);
         // Sign-out of a missing profile still reports ok (nothing to clear).
         let so: serde_json::Value =
             serde_json::from_str(&sign_out_json_for("d1-acct-no-such")).unwrap();
@@ -5235,46 +5143,8 @@ mod tests {
         assert_eq!(v["is_online"], true);
     }
 
-    #[test]
-    fn join_parse_json_matrix() {
-        // Thread-shaped meetup link.
-        let v: serde_json::Value = serde_json::from_str(&meeting_join_parse_json(
-            "https://teams.microsoft.com/l/meetup-join/19%3Ameeting_abc%40thread.v2/0",
-        ))
-        .unwrap();
-        assert_eq!(v["ok"], true);
-        assert_eq!(v["target"]["kind"], "thread");
-        assert_eq!(v["target"]["thread_id"], "19:meeting_abc@thread.v2");
-        // Bare thread id.
-        let v: serde_json::Value =
-            serde_json::from_str(&meeting_join_parse_json("19:abc@thread.v2")).unwrap();
-        assert_eq!(v["target"]["kind"], "thread");
-        // Live meet id.
-        let v: serde_json::Value = serde_json::from_str(&meeting_join_parse_json(
-            "https://teams.live.com/meet/9347123456789",
-        ))
-        .unwrap();
-        assert_eq!(v["target"]["kind"], "meeting-id");
-        assert_eq!(v["target"]["meeting_id"], "9347123456789");
-        // Garbage never dials.
-        let v: serde_json::Value =
-            serde_json::from_str(&meeting_join_parse_json("hello")).unwrap();
-        assert_eq!(v["ok"], true);
-        assert_eq!(v["target"]["kind"], "unknown");
-        assert!(v["target"]["thread_id"].is_null());
-    }
-
-    #[test]
-    fn ffi_meeting_null_is_arg_error() {
-        unsafe {
-            let p = ostmac_meeting_join_parse(std::ptr::null());
-            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
-            ostmac_free(p);
-            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
-            assert_eq!(v["ok"], false);
-            assert_eq!(v["error"], "arg");
-        }
-    }
+    // NOTE (R12 ffi-move-now B1): join-parse matrix + null-arg test
+    // moved to Swift (FfiMoveNowTests).
 
     #[test]
     fn ffi_reminder_nulls_are_arg_errors() {

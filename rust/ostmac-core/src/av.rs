@@ -55,21 +55,8 @@ fn bytes_arg<'a>(ptr: *const u8, len: usize) -> Result<&'a [u8], String> {
 // JSON bodies
 // ---------------------------------------------------------------------------
 
-/// Static capability map. No hardware touched.
-pub fn av_info_json() -> String {
-    json!({
-        "ok": true,
-        "mic": "cpal",
-        "speaker": "cpal",
-        "camera": "avfoundation",
-        "display": "swiftui",
-        "tone": true,
-        "packetizer": "rust-h264",
-        "srtp": "rust-aes-128-cm",
-        "dry_run": true,
-    })
-    .to_string()
-}
+// NOTE (R12 ffi-move-now B1): av_info moved to Swift (CoreLocal);
+// backing fn + export deleted.
 
 /// Fast mic/speaker availability probe.
 pub fn mic_probe_json() -> String {
@@ -124,17 +111,8 @@ pub fn tone_play_json(msecs: u64) -> String {
     }
 }
 
-/// Deterministic tone echo self-check (no hardware).
-pub fn tone_check_json() -> String {
-    let r = macav::tone_check();
-    json!({
-        "ok": true,
-        "detected": r.detected,
-        "delay_ms": r.delay_ms,
-        "correlation_peak": r.correlation_peak,
-    })
-    .to_string()
-}
+// NOTE (R12 ffi-move-now B2): tone_check moved to Swift (ToneDsp);
+// backing fn + export deleted.
 
 /// Audio device display names for UI pickers (+ system defaults).
 pub fn audio_devices_json() -> String {
@@ -305,11 +283,6 @@ pub fn call_dry_run_json() -> String {
 // ---------------------------------------------------------------------------
 
 #[no_mangle]
-pub extern "C" fn ostmac_av_info() -> *mut c_char {
-    string_to_c(av_info_json())
-}
-
-#[no_mangle]
 pub extern "C" fn ostmac_mic_probe() -> *mut c_char {
     string_to_c(mic_probe_json())
 }
@@ -324,11 +297,6 @@ pub extern "C" fn ostmac_mic_test(seconds: c_int) -> *mut c_char {
 pub extern "C" fn ostmac_tone_play(msecs: c_int) -> *mut c_char {
     let ms = if msecs <= 0 { 1000 } else { msecs as u64 };
     string_to_c(tone_play_json(ms))
-}
-
-#[no_mangle]
-pub extern "C" fn ostmac_tone_check() -> *mut c_char {
-    string_to_c(tone_check_json())
 }
 
 #[no_mangle]
@@ -470,24 +438,11 @@ mod tests {
     use super::*;
     use std::ffi::CString;
 
-    #[test]
-    fn av_info_shape() {
-        let v: serde_json::Value = serde_json::from_str(&av_info_json()).unwrap();
-        assert_eq!(v["ok"], true);
-        assert_eq!(v["mic"], "cpal");
-        assert_eq!(v["camera"], "avfoundation");
-        assert_eq!(v["display"], "swiftui");
-        assert_eq!(v["tone"], true);
-        assert_eq!(v["dry_run"], true);
-    }
+    // NOTE (R12 ffi-move-now B1): av_info shape test moved to Swift
+    // (FfiMoveNowTests).
 
-    #[test]
-    fn av_tone_check_detects() {
-        let v: serde_json::Value = serde_json::from_str(&tone_check_json()).unwrap();
-        assert_eq!(v["ok"], true);
-        assert_eq!(v["detected"], true);
-        assert!(v["correlation_peak"].as_f64().unwrap().abs() > 0.3);
-    }
+    // NOTE (R12 ffi-move-now B2): tone_check detect test moved to
+    // Swift (FfiMoveNowTests).
 
     #[test]
     fn av_camera_push_stats_roundtrip() {

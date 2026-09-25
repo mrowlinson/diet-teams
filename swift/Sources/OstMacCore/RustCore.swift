@@ -3,23 +3,25 @@ import COstMac
 import Foundation
 
 public enum RustCore {
+    /// Swift-native (R12 ffi-move-now B0; was `ostmac_version`).
     public static func version() -> String {
-        String(cString: ostmac_version())
+        CoreLocal.version()
     }
 
-    public static func initialize() -> Int32 { ostmac_init() }
+    /// Swift-native (R12 ffi-move-now B0; was `ostmac_init`).
+    public static func initialize() -> Int32 { CoreLocal.initialize() }
 
+    /// Swift-native (R12 ffi-move-now B0; was `ostmac_status`).
     public static func status() throws -> StatusResponse {
-        try call(ostmac_status(), as: StatusResponse.self)
+        try CoreLocal.status()
     }
 
     // MARK: - Account profiles (d1-accounts)
 
     /// Auth status for one account profile (no active switch).
+    /// Swift-native (R12 ffi-move-now B0; was `ostmac_status_for`).
     public static func status(profile: String) throws -> StatusResponse {
-        try profile.withCString { ptr in
-            try call(ostmac_status_for(ptr), as: StatusResponse.self)
-        }
+        try CoreLocal.status(profile: profile)
     }
 
     /// Switch the core's active account profile. Every profile-agnostic
@@ -31,8 +33,9 @@ public enum RustCore {
     }
 
     /// Current active profile id (pure core read, no network).
+    /// Swift-native (R12 ffi-move-now B0; was `ostmac_profile_active`).
     public static func profileActive() throws -> ProfileResponse {
-        try call(ostmac_profile_active(), as: ProfileResponse.self)
+        try CoreLocal.profileActive()
     }
 
     /// Device-code start for one account profile (polled tokens land there).
@@ -562,12 +565,10 @@ public enum RustCore {
         try call(ostmac_meetings(limit), as: MeetingsResponse.self)
     }
 
-    /// Classify a pasted join string (pure core parse, no network).
-    /// Still crosses FFI: call off the main thread like every wrapper.
+    /// Classify a pasted join string (pure parse, no network, no FFI).
+    /// Swift-native (R12 ffi-move-now B1; was `ostmac_meeting_join_parse`).
     public static func meetingJoinParse(raw: String) throws -> JoinParseResponse {
-        try raw.withCString { ptr in
-            try call(ostmac_meeting_join_parse(ptr), as: JoinParseResponse.self)
-        }
+        try CoreLocal.meetingJoinParse(raw: raw)
     }
 
     public static func notePage(pageID: String, groupID: String? = nil) throws -> NotePageResponse {
