@@ -84,7 +84,11 @@ public final class SnoozeStore: ObservableObject {
         var map: [String: Date] = [:]
         if let saved = defaults.dictionary(forKey: Self.storageKey) {
             for (key, value) in saved {
+                // Tolerant (rules.json precedent): epoch doubles, with a
+                // numeric-string fallback for `defaults write` seeding.
                 if let epoch = value as? Double {
+                    map[key] = Date(timeIntervalSince1970: epoch)
+                } else if let raw = value as? String, let epoch = Double(raw) {
                     map[key] = Date(timeIntervalSince1970: epoch)
                 }
             }

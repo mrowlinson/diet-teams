@@ -111,6 +111,11 @@ public struct ConversationView: View {
         self.deleteOpen = deleteOpen
         _showSchedule = State(initialValue: scheduleOpen)
         _showScheduledList = State(initialValue: scheduledListOpen)
+        // Shot hook: --show-schedule seeds a draft so the popover shows
+        // its enabled presets (real launches start blank).
+        if scheduleOpen {
+            _draft = State(initialValue: "Standup moved to 10 — heads-up for the team.")
+        }
         self.onOpenLink = onOpenLink
     }
 
@@ -473,7 +478,7 @@ public struct ConversationView: View {
                     }
                 }
                 Button {
-                    gifAPIKey = KlipyClient.storedKey()
+                    refreshGIFKey()
                     showGIFs = true
                 } label: {
                 Text("GIF")
@@ -543,7 +548,7 @@ public struct ConversationView: View {
         }
         .onAppear {
             boxFocused = true
-            gifAPIKey = KlipyClient.storedKey()
+            refreshGIFKey()
             // Shot hook: --show-gif opens the picker at launch.
             if CommandLine.arguments.contains("--show-gif") { showGIFs = true }
             // Shot hook (om-a3-keyboard): --show-mention opens the @
@@ -795,6 +800,17 @@ public struct ConversationView: View {
         panel.allowsMultipleSelection = true
         if panel.runModal() == .OK {
             attachments.stage(urls: panel.urls)
+        }
+    }
+
+    /// Re-read the KLIPY key (d2-send: off the main thread — a
+    /// synchronous keychain read here wedged first render behind an
+    /// unanswerable securityd round-trip; the picker lands a frame
+    /// later when the read is slow).
+    private func refreshGIFKey() {
+        Task {
+            let key = await Task.detached { KlipyClient.storedKey() }.value
+            gifAPIKey = key
         }
     }
 
