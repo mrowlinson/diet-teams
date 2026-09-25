@@ -345,4 +345,62 @@ final class RichMediaTests: XCTestCase {
         XCTAssertNil(legacy.raw)
         XCTAssertEqual(legacy.asChatMessage.content, "hi")
     }
+
+    // MARK: - Disk dir rename (om-meetings-dirname follow-up)
+
+    private func scratchAppSupport() throws -> URL {
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent("om-mediacache-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        return base
+    }
+
+    func testDiskDirBaseURLUsesAppIdentityName() throws {
+        let base = try scratchAppSupport()
+        defer { try? FileManager.default.removeItem(at: base) }
+        XCTAssertEqual(
+            RichMediaCache.diskDirBaseURL(under: base).path,
+            base.appendingPathComponent("Better Teams/MediaCache").path)
+        XCTAssertEqual(
+            RichMediaCache.legacyDiskDirBaseURL(under: base).path,
+            base.appendingPathComponent("OstMac/MediaCache").path)
+    }
+
+    func testMigrateMovesLegacyCacheDir() throws {
+        let base = try scratchAppSupport()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let fm = FileManager.default
+        let legacy = RichMediaCache.legacyDiskDirBaseURL(under: base)
+        try fm.createDirectory(at: legacy, withIntermediateDirectories: true)
+        try Data("px".utf8).write(to: legacy.appendingPathComponent("ab12.png"))
+        XCTAssertTrue(RichMediaCache.migrateLegacyDirectory(under: base))
+        let fresh = RichMediaCache.diskDirBaseURL(under: base)
+        XCTAssertFalse(fm.fileExists(atPath: legacy.path))
+        XCTAssertEqual(
+            try Data(contentsOf: fresh.appendingPathComponent("ab12.png")), Data("px".utf8))
+        XCTAssertFalse(RichMediaCache.migrateLegacyDirectory(under: base)) // idempotent
+    }
+
+    func testMigrateNoopWhenLegacyMissing() throws {
+        let base = try scratchAppSupport()
+        defer { try? FileManager.default.removeItem(at: base) }
+        XCTAssertFalse(RichMediaCache.migrateLegacyDirectory(under: base))
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: RichMediaCache.diskDirBaseURL(under: base).path))
+    }
+
+    func testMigrateNoopWhenNewDirExists() throws {
+        let base = try scratchAppSupport()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let fm = FileManager.default
+        let legacy = RichMediaCache.legacyDiskDirBaseURL(under: base)
+        let fresh = RichMediaCache.diskDirBaseURL(under: base)
+        try fm.createDirectory(at: legacy, withIntermediateDirectories: true)
+        try fm.createDirectory(at: fresh, withIntermediateDirectories: true)
+        try Data("old".utf8).write(to: legacy.appendingPathComponent("o.png"))
+        try Data("new".utf8).write(to: fresh.appendingPathComponent("n.png"))
+        XCTAssertFalse(RichMediaCache.migrateLegacyDirectory(under: base))
+        XCTAssertTrue(fm.fileExists(atPath: legacy.appendingPathComponent("o.png").path))
+        XCTAssertTrue(fm.fileExists(atPath: fresh.appendingPathComponent("n.png").path))
+    }
 }

@@ -47,9 +47,45 @@ public actor RichMediaCache {
         guard let base = FileManager.default.urls(
             for: .applicationSupportDirectory, in: .userDomainMask
         ).first else { return nil }
-        let dir = base.appendingPathComponent("OstMac/MediaCache", isDirectory: true)
+        migrateLegacyDirectory(under: base)
+        let dir = diskDirBaseURL(under: base)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
+    }
+
+    /// Pre-rename Application Support leaf (never written, only moved).
+    nonisolated public static let legacyDiskLeaf = "OstMac"
+
+    /// `<appSupport>/<AppIdentity.name>/MediaCache` (current dir).
+    nonisolated public static func diskDirBaseURL(under appSupport: URL) -> URL {
+        appSupport.appendingPathComponent("\(AppIdentity.name)/MediaCache", isDirectory: true)
+    }
+
+    /// `<appSupport>/OstMac/MediaCache` (pre-rename dir).
+    nonisolated public static func legacyDiskDirBaseURL(under appSupport: URL) -> URL {
+        appSupport.appendingPathComponent("\(legacyDiskLeaf)/MediaCache", isDirectory: true)
+    }
+
+    /// Move the legacy dir onto the new dir when the new one is absent.
+    /// No-op when legacy is missing or the new dir already exists —
+    /// nothing is ever deleted.
+    @discardableResult
+    nonisolated public static func migrateLegacyDirectory(
+        under appSupport: URL, fileManager: FileManager = .default
+    ) -> Bool {
+        let legacy = legacyDiskDirBaseURL(under: appSupport)
+        let fresh = diskDirBaseURL(under: appSupport)
+        guard fileManager.fileExists(atPath: legacy.path),
+              !fileManager.fileExists(atPath: fresh.path)
+        else { return false }
+        do {
+            try fileManager.createDirectory(
+                at: fresh.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try fileManager.moveItem(at: legacy, to: fresh)
+            return true
+        } catch {
+            return false
+        }
     }
 
     /// Per-account disk dir (d1-accounts): default account keeps the
