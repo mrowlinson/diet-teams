@@ -420,6 +420,22 @@ final class RecordingsTests: XCTestCase {
         XCTAssertTrue(resp.recordings.allSatisfy {
             $0.duration_ms != nil && $0.source != nil
         })
+        // Demo rows play via the files-download fallback (clip writer),
+        // so every row needs a drive id (else "No playable URL").
+        XCTAssertTrue(resp.recordings.allSatisfy {
+            ($0.drive_id?.isEmpty ?? true) == false
+        })
+    }
+
+    func testDemoRowsPlayThroughClip() async throws {
+        let m = Self.model(
+            list: { RecordingsDemo.response() },
+            download: { _, _, _ in try DemoClip.url().path })
+        await m.load()
+        m.selectAndPlayFirst()
+        let reachedPlaying = await waitFor({ m.playback == .playing })
+        XCTAssertTrue(reachedPlaying)
+        XCTAssertEqual(m.playURL?.pathExtension, "mp4")
     }
 
     func testDemoSearchFilters() {
