@@ -36,6 +36,8 @@ public struct SidebarColumn: View {
     /// d1-folders shot hook: rule id with its editor expanded.
     private let initialEditingRuleID: String?
     private let onOpenChannel: (String, String) -> Void
+    /// Pop-out tap passthrough (e1-popout): sidebar → host openWindow.
+    private let onPopOut: ((String) -> Void)?
     @State private var section: SidebarSection
     /// Reduce Motion (om-a1-motion): section flips cut, never crossfade.
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -58,7 +60,8 @@ public struct SidebarColumn: View {
         initialFolderID: String? = nil,
         folderManageOpen: Bool = false,
         initialEditingRuleID: String? = nil,
-        onOpenChannel: @escaping (String, String) -> Void
+        onOpenChannel: @escaping (String, String) -> Void,
+        onPopOut: ((String) -> Void)? = nil
     ) {
         self.chats = chats
         self.teams = teams
@@ -81,6 +84,7 @@ public struct SidebarColumn: View {
         self.initialEditingRuleID = initialEditingRuleID
         _section = State(initialValue: initialSection)
         self.onOpenChannel = onOpenChannel
+        self.onPopOut = onPopOut
     }
 
     public var body: some View {
@@ -91,7 +95,7 @@ public struct SidebarColumn: View {
             DietSeamH()
             switch section {
             case .chats:
-                ChatListSidebar(model: chats, presence: presence, unread: unread, mentions: mentions, rules: rules, snooze: snooze, initialFilter: initialFilter, initialFolderID: initialFolderID, folderManageOpen: folderManageOpen, initialEditingRuleID: initialEditingRuleID)
+                ChatListSidebar(model: chats, presence: presence, unread: unread, mentions: mentions, rules: rules, snooze: snooze, initialFilter: initialFilter, initialFolderID: initialFolderID, folderManageOpen: folderManageOpen, initialEditingRuleID: initialEditingRuleID, onPopOut: onPopOut)
                     .transition(.opacity)
             case .teams:
                 TeamsBrowser(

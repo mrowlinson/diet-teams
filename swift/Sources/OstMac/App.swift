@@ -76,6 +76,9 @@
 // --show-notif-live injects one canned trouter event through the real
 // live path (rules → banner) and logs the decision + delivered
 // readback (om-notif-live proof hook, demo offline; ignored live).
+// --show-popout pops a second chat beside the main selection at launch
+// (e1-popout shot hook, offline with --demo); --popout-chat <id> picks
+// which chat (else the first row that is not the main selection).
 // --auth-state <name> opens the Auth window with a canned state, never
 // touching core/network (names: signed-out, starting, code, polling,
 // browser, browser-working, signed-in, expired, refreshing,
@@ -206,6 +209,18 @@ struct OstMacAppMain: App {
             MeetingPanel(roster: state.meeting, chat: state.meetingChat)
         }
         .defaultSize(width: 720, height: 480)
+        // e1-popout: one value-driven window per popped chat (re-pop of
+        // the same id focuses the existing window — no dups). WindowGroup
+        // carries the value API (plain Window has no `for:` overload).
+        WindowGroup(Text("Chat"), id: AppIdentity.chatPopoutID, for: String.self) { value in
+            if let chatID = value.wrappedValue {
+                PopOutRootView(state: state, chatID: chatID)
+            } else {
+                // Stale restored window (value lost): close itself.
+                PopOutEmptyView()
+            }
+        }
+        .defaultSize(width: 560, height: 640)
         Settings {
             if CommandLine.arguments.contains("--show-settings-keywords") {
                 // Shot hook (R6): fixed sanitized view (no live account
@@ -284,6 +299,9 @@ final class AppState: ObservableObject {
     /// Shifts week grid backing the sidebar Shifts tab (B1 merge).
     let shifts: ShiftsStore
     let conv = ConversationStore()
+    /// Pop-out registry (e1-popout): visible chat ids + per-chat stores +
+    /// draft cache, bound to the main store for send mirroring.
+    let popouts = PopOutStore()
     /// Message search (om-ja-search): the jump palette's Messages scope
     /// searches through this store. Demo runs substring-over-fixtures
     /// (offline); live hits Graph via core.
@@ -334,6 +352,12 @@ final class AppState: ObservableObject {
     @Published var forwardMessage: ChatMessage?
     /// --show-reply: demo replies thread + armed compose-reply chip.
     let showReply: Bool
+    /// --show-popout: pop a second chat beside the main selection
+    /// (e1-popout shot hook, offline with --demo).
+    let showPopout: Bool
+    /// Armed pop-out request (RootView opens the window for it, then
+    /// clears it — openWindow lives in the view layer only).
+    @Published var pendingPopoutID: String?
     /// --show-sidebarchurn: churn dataset + post-load beacon burst.
     let showSidebarChurn: Bool
     /// --show-history-error: demo history thread, empty + canned fetch error.
@@ -379,6 +403,8 @@ final class AppState: ObservableObject {
     private let preselectID: String?
     private let preselectName: String?
     private let autoSay: String?
+    /// --popout-chat value (e1-popout shot hook: which chat to pop).
+    private let popoutShotID: String?
     private var cancellables = Set<AnyCancellable>()
     /// Chat-list wiring (rebuilt with `chats` on account switch).
     private var chatsCancellables = Set<AnyCancellable>()
@@ -470,6 +496,8 @@ final class AppState: ObservableObject {
             preselectID = DemoData.reactionsID
         } else if args.contains("--demo-botposts") {
             preselectID = DemoData.botpostsID
+        } else if args.contains("--show-popout") {
+            preselectID = DemoData.demoID
         } else {
             preselectID = nil
         }
@@ -483,6 +511,12 @@ final class AppState: ObservableObject {
         } else {
             autoSay = nil
         }
+        if let i = args.firstIndex(of: "--popout-chat"), i + 1 < args.count {
+            popoutShotID = args[i + 1]
+        } else {
+            popoutShotID = nil
+        }
+        showPopout = args.contains("--show-popout")
         let initialBlocked = isDemo ? BlockedStore(defaults: nil) : BlockedStore()
         blocked = initialBlocked
         messageSearch = isDemo
@@ -596,6 +630,7 @@ final class AppState: ObservableObject {
             history.seedDemo() // canned recents (in-memory, offline)
         }
         wireChats()
+        popouts.bind(main: conv) // e1-popout: send mirroring both ways
         // Single reaction point for the gate: every auth transition
         // (gate, Settings, Auth window — same model) runs authChanged,
         // which flips the gate via the signedIn/contentOpened flags.
@@ -902,6 +937,18 @@ final class AppState: ObservableObject {
         case .none:
             break
         }
+        if showPopout, pendingPopoutID == nil {
+            // Shot hook: pop a second chat beside the main selection
+            // (explicit --popout-chat wins, else the first other row).
+            let mainID: String? = switch action {
+            case .select(let id): id
+            case .openDirect(let id): id
+            case .none: openChatID
+            }
+            let fallback = chats.chats.first { $0.id != mainID }?.id
+                ?? chats.chats.first?.id
+            pendingPopoutID = popoutShotID ?? fallback ?? DemoData.avaID
+        }
         if !isDemo {
             presence.refreshOwnSoon() // own dot; non-critical on failure
             setupNotifier() // om-rules: banners for filtered live events
@@ -1118,6 +1165,45 @@ final class AppState: ObservableObject {
             }
         }
         return nil
+    }
+
+    /// Pop-out entry (e1-popout): register the chat and return the window
+    /// value for `openWindow(value:)` (re-pop refocuses — the registry
+    /// enforces one window per id). Nil for blank ids. Popping marks the
+    /// chat read (open-chat parity for unread + Mentions).
+    func popOut(chatID: String) -> String? {
+        let id = chatID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !id.isEmpty else { return nil }
+        popouts.pop(chatID: id)
+        unread.markRead(chatID: id) // open-chat parity: popped is visible
+        mentions.markRead(chatID: id)
+        return id
+    }
+
+    /// Pop-out window name: list/teams name, else the static demo name,
+    /// else the id itself (--chat direct-open precedent for chats
+    /// missing from the list). The demo fallback matches the main
+    /// `open` path and covers windows opened before the list lands.
+    func popoutName(for chatID: String) -> String {
+        chatNameOrNil(for: chatID)
+            ?? (isDemo ? DemoData.name(for: chatID) : nil)
+            ?? chatID
+    }
+
+    /// Open (once) a pop-out window's backing store: demo seeds canned
+    /// messages, live loads through core. Cached per chat for the
+    /// session — re-pop restores with no reload.
+    func openPopout(chatID: String) {
+        let s = popouts.store(for: chatID)
+        guard s.chatID != chatID else { return }
+        if isDemo {
+            s.showDemo(
+                chatID: chatID, chatName: popoutName(for: chatID),
+                messages: DemoData.messages(for: chatID),
+                failed: DemoData.failedIDs(for: chatID))
+        } else {
+            s.open(chatID: chatID, chatName: popoutName(for: chatID))
+        }
     }
 
     /// Armed message seek (om-ja-search): `jumpToMessage` sets it, `open`
@@ -1369,10 +1455,16 @@ final class AppState: ObservableObject {
             notifSkipped += 1
             notifLastReason = reason
         }
-        unread.ingest(decision: decision, chatID: msg.chatID, openChatID: openChatID)
+        // e1-popout: popped chats count as open (no unread/mention
+        // accrual while visible); banners below still fire for them.
+        let visible = popouts.visibleChatIDs(open: openChatID)
+        unread.ingest(
+            decision: decision, chatID: msg.chatID, openChatID: openChatID,
+            visibleChatIDs: visible)
         mentions.ingest(
             realtime: msg, ownName: conv.ownDisplayName,
-            ownerMRI: resolvedOwnerMRI, openChatID: openChatID)
+            ownerMRI: resolvedOwnerMRI, openChatID: openChatID,
+            visibleChatIDs: visible)
         if quiet {
             noteSuppressedIfWarranted(msg, chatName: chatName, decision: decision)
         } else {
@@ -1384,11 +1476,19 @@ final class AppState: ObservableObject {
         // (any meeting thread, not just the open chat). The panel owns
         // its thread; the chat list is untouched by this path.
         meetingChat.ingestIfMeeting(realtime: msg)
-        guard msg.isFor(chatID: openChatID) else { return }
-        conv.ingest(realtime: msg)
-        // om-receipts: a peer reply implies they read through our tail;
-        // refresh Seen state (no list refresh — receipts only).
-        if !msg.isEdit, !msg.text.isEmpty {
+        // e1-popout: the main timeline takes its chat; every popped chat
+        // takes its own — the main selection never moves for pop-out
+        // traffic, and popped threads refresh Seen like open ones.
+        let seenWorthy = !msg.isEdit && !msg.text.isEmpty
+        if msg.isFor(chatID: openChatID) {
+            conv.ingest(realtime: msg)
+            // om-receipts: a peer reply implies they read through our tail;
+            // refresh Seen state (no list refresh — receipts only).
+            if seenWorthy {
+                receipts.refresh(threadID: msg.chatID)
+            }
+        }
+        if popouts.ingest(realtime: msg), seenWorthy {
             receipts.refresh(threadID: msg.chatID)
         }
     }
@@ -1785,6 +1885,93 @@ final class AppState: ObservableObject {
     }
 }
 
+/// Pop-out chat window (e1-popout): a full ConversationView on the
+/// registry's per-chat store. Own Shared/Notes tab stores (the main
+/// window's single-chat tabs must not flip); presence/call/typing/
+/// receipts/pins/scheduled are chat-keyed shares. Close drops the
+/// visible flag only — the store + draft stay cached, so re-pop
+/// restores with no reload and no list touch.
+struct PopOutRootView: View {
+    @ObservedObject var state: AppState
+    let chatID: String
+    @StateObject private var shared = SharedFilesStore()
+    @StateObject private var notes = NotesStore()
+
+    var body: some View {
+        ConversationView(
+            store: state.popouts.store(for: chatID),
+            presence: state.presence,
+            call: state.call, shared: shared, notes: notes,
+            catchUp: state.catchUp, typing: state.typing,
+            receipts: state.receipts,
+            pins: state.pinnedMessages,
+            scheduled: state.scheduled,
+            isGroup: state.chats.chat(id: chatID)?.is_group ?? true,
+            onForward: { state.beginForward($0) },
+            initialDraft: state.popouts.draft(for: chatID),
+            onDraftChange: { state.popouts.saveDraft($0, for: chatID) })
+            .popoutWindowTitle(state.popoutName(for: chatID))
+            .onAppear {
+                state.openPopout(chatID: chatID)
+                if state.isDemo {
+                    notes.showDemo()
+                    shared.showDemo(
+                        chatID: chatID, files: DemoData.sharedFiles(for: chatID))
+                } else {
+                    notes.open(groupID: state.teamID(forChannel: chatID))
+                    shared.open(chatID: chatID)
+                }
+            }
+            .onDisappear { state.popouts.close(chatID: chatID) }
+    }
+}
+
+/// Stale restored pop-out (its value decoded nil): closes itself so no
+/// empty "Chat" window lingers.
+private struct PopOutEmptyView: View {
+    @Environment(\.dismissWindow) private var dismissWindow
+
+    var body: some View {
+        Color.clear
+            .frame(width: 1, height: 1)
+            .task { dismissWindow() }
+    }
+}
+
+/// Per-window title for value-driven pop-outs (the scene title is static,
+/// so each window stamps its own chat name through its own view).
+private struct PopoutTitleProbe: NSViewRepresentable {
+    let name: String
+    func makeNSView(context: Context) -> NSView { NSView() }
+    func updateNSView(_ view: NSView, context: Context) {
+        // SwiftUI stamps the static scene title at creation; the async
+        // hop lands after it so the chat name wins and sticks. The view
+        // is sometimes not yet attached on the first pass — retry until
+        // the window exists (bounded, ~6s).
+        stamp(view, name: name, tries: 0)
+    }
+
+    private func stamp(_ view: NSView, name: String, tries: Int) {
+        let hop: DispatchTimeInterval = tries == 0 ? .nanoseconds(0) : .milliseconds(50)
+        DispatchQueue.main.asyncAfter(deadline: .now() + hop) { [weak view] in
+            guard let view else { return }
+            guard let window = view.window else {
+                if tries < 120 {
+                    self.stamp(view, name: name, tries: tries + 1)
+                }
+                return
+            }
+            if window.title != name { window.title = name }
+        }
+    }
+}
+
+private extension View {
+    func popoutWindowTitle(_ name: String) -> some View {
+        background(PopoutTitleProbe(name: name))
+    }
+}
+
 struct RootView: View {
     @EnvironmentObject private var state: AppState
     @Environment(\.openWindow) private var openWindow
@@ -1832,7 +2019,12 @@ struct RootView: View {
                         initialFolderID: state.folderShotSelection,
                         folderManageOpen: CommandLine.arguments.contains("--show-folders-manage"),
                         initialEditingRuleID: state.folderShotEditingRuleID,
-                        onOpenChannel: { id, name in state.openChannel(channelID: id, channelName: name) }
+                        onOpenChannel: { id, name in state.openChannel(channelID: id, channelName: name) },
+                        onPopOut: { id in
+                            if let target = state.popOut(chatID: id) {
+                                openWindow(value: target)
+                            }
+                        }
                     )
                     .navigationSplitViewColumnWidth(min: 240, ideal: 300, max: 420)
                 } detail: {
@@ -1854,7 +2046,12 @@ struct RootView: View {
                             editOpen: CommandLine.arguments.contains("--show-edit"),
                             deleteOpen: CommandLine.arguments.contains("--show-delete"),
                             scheduleOpen: CommandLine.arguments.contains("--show-schedule"),
-                            scheduledListOpen: CommandLine.arguments.contains("--show-scheduled"))
+                            scheduledListOpen: CommandLine.arguments.contains("--show-scheduled"),
+                            initialDraft: state.popouts.draft(for: state.openChatID ?? ""),
+                            onDraftChange: { state.popouts.saveDraft($0, for: state.openChatID ?? "") })
+                            // Per-chat composer (e1-popout): drafts restore
+                            // per thread instead of leaking across switches.
+                            .id(state.openChatID)
                     }
                 }
             } else {
@@ -1869,6 +2066,16 @@ struct RootView: View {
         .frame(minWidth: 760, minHeight: 520)
         .onReceive(NotificationCenter.default.publisher(for: .showJumpPalette)) { _ in
             state.showJump = true
+        }
+        // e1-popout shot hook: open the armed pop-out window once the
+        // list lands (openWindow lives in the view layer only).
+        .onChange(of: state.pendingPopoutID) {
+            if let id = state.pendingPopoutID,
+               let target = state.popOut(chatID: id)
+            {
+                state.pendingPopoutID = nil
+                openWindow(value: target)
+            }
         }
         .sheet(isPresented: $state.showJump) {
             JumpPaletteSheet(

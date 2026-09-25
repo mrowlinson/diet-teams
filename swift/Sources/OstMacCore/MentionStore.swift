@@ -66,10 +66,12 @@ public final class MentionStore: ObservableObject {
     /// identity is unresolved).
     nonisolated public static func shouldFlag(
         message: RealtimeMessage, ownName: String?,
-        ownerMRI: String?, openChatID: String?
+        ownerMRI: String?, openChatID: String?,
+        visibleChatIDs: Set<String> = []
     ) -> Bool {
         let own = ownName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !message.chatID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        if visibleChatIDs.contains(message.chatID) { return false }
         if let open = openChatID, open == message.chatID { return false }
         if isOwnMessage(message, ownerMRI: ownerMRI, ownName: own) { return false }
         return Mentions.mentionsOwner(
@@ -81,11 +83,13 @@ public final class MentionStore: ObservableObject {
     /// write); re-flagging an already-flagged chat is a no-op too.
     public func ingest(
         realtime message: RealtimeMessage, ownName: String?,
-        ownerMRI: String?, openChatID: String?
+        ownerMRI: String?, openChatID: String?,
+        visibleChatIDs: Set<String> = []
     ) {
         guard Self.shouldFlag(
             message: message, ownName: ownName,
-            ownerMRI: ownerMRI, openChatID: openChatID)
+            ownerMRI: ownerMRI, openChatID: openChatID,
+            visibleChatIDs: visibleChatIDs)
         else { return }
         if mentionedIDs.insert(message.chatID).inserted {
             syncDock()

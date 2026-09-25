@@ -66,6 +66,9 @@ public struct ConversationView: View {
     private let deleteOpen: Bool
     /// Preview-row tap (om-linkpreview passthrough to the timeline).
     private let onOpenLink: (URL) -> Void
+    /// Draft tap (e1-popout): fired on every composer change so the host
+    /// caches per-chat drafts (pop-out close loses nothing). Nil = unwired.
+    private let onDraftChange: ((String) -> Void)?
 
     /// - catchUpOpen: open the catch-up sheet at launch (the
     ///   --show-catchup shot hook only).
@@ -89,7 +92,9 @@ public struct ConversationView: View {
         onForward: @escaping (ChatMessage) -> Void = { _ in },
         editOpen: Bool = false, deleteOpen: Bool = false,
         scheduleOpen: Bool = false, scheduledListOpen: Bool = false,
-        onOpenLink: @escaping (URL) -> Void = { LinkPreviewOpen.default($0) }
+        onOpenLink: @escaping (URL) -> Void = { LinkPreviewOpen.default($0) },
+        initialDraft: String = "",
+        onDraftChange: ((String) -> Void)? = nil
     ) {
         self.store = store
         self.presence = presence
@@ -115,8 +120,11 @@ public struct ConversationView: View {
         // its enabled presets (real launches start blank).
         if scheduleOpen {
             _draft = State(initialValue: "Standup moved to 10 — heads-up for the team.")
+        } else if !initialDraft.isEmpty {
+            _draft = State(initialValue: initialDraft)
         }
         self.onOpenLink = onOpenLink
+        self.onDraftChange = onDraftChange
     }
 
     public var body: some View {
@@ -536,6 +544,7 @@ public struct ConversationView: View {
                 .font(DietType.body)
                 .focused($boxFocused)
                 .onSubmit { submit() }
+                .onChange(of: draft) { onDraftChange?(draft) }
                 Button("Send", systemImage: "paperplane.fill") { submit() }
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.return, modifiers: .command)

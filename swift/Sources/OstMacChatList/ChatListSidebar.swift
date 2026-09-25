@@ -30,6 +30,9 @@ public struct ChatListSidebar: View {
     @State private var lastLeaveID: String?
     /// Reduce Motion (om-a1-motion): state + row changes land instantly.
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Pop-out tap (e1-popout): row menu "Pop Out" + double-click route
+    /// here (the host owns openWindow). Nil = no pop-out UI.
+    private let onPopOut: ((String) -> Void)?
 
     public init(
         model: ChatListViewModel, presence: PresenceStore = PresenceStore(),
@@ -40,7 +43,8 @@ public struct ChatListSidebar: View {
         initialFilter: String = "",
         initialFolderID: String? = nil,
         folderManageOpen: Bool = false,
-        initialEditingRuleID: String? = nil
+        initialEditingRuleID: String? = nil,
+        onPopOut: ((String) -> Void)? = nil
     ) {
         self.model = model
         self.presence = presence
@@ -48,6 +52,7 @@ public struct ChatListSidebar: View {
         self.mentions = mentions
         self.rules = rules
         self.snooze = snooze
+        self.onPopOut = onPopOut
         _searchText = State(initialValue: initialFilter)
         _selectedFolderID = State(initialValue: initialFolderID)
         _showFolderManager = State(initialValue: folderManageOpen)
@@ -241,11 +246,21 @@ public struct ChatListSidebar: View {
                         )
                         .tag(chat.id)
                         .unreadBadge(unread.count(for: chat.id))
+                        // Double-click pops the chat out (e1-popout);
+                        // simultaneous so list selection still lands.
+                        .simultaneousGesture(TapGesture(count: 2).onEnded {
+                            onPopOut?(chat.id)
+                        })
                         // Row menu: native items plus one Move-to-Folder
                         // submenu (d1-folders scope requires the nested
                         // Menu). Badge updates in place, list never
                         // refetches.
                         .contextMenu {
+                            if let onPopOut {
+                                Button("Pop Out", systemImage: "arrow.up.right.square") {
+                                    onPopOut(chat.id)
+                                }
+                            }
                             if model.isPinned(chat.id) {
                                 Button("Unpin", systemImage: "pin.slash") {
                                     model.unpin(chat.id)
