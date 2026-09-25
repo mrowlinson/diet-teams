@@ -533,6 +533,7 @@ pub async fn run_call_test(
                     &rec_token,
                     &skype_token,
                     add_participant_url_override.as_deref(),
+                    recording::DEFAULT_RECORDER_REGION,
                 )
                 .await
                 {
