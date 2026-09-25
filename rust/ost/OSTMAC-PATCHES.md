@@ -647,10 +647,16 @@ needing maintainer buy-in. Minor PRs stand alone; majors are separate PRs.
     ring }` (`Default` = AMER `amer03`/`amer`/`general`) + `TeamsHeaders`
     `RequestBuilder` extension applying the three `ms-teams-*` headers;
     all 8 signaling call sites go through it (byte-identical default).
-    Consts kept (`recording.rs` still uses them). 2 tests (amer default
+    Consts kept as the `Default` source. 2 tests (amer default
     vs non-amer override, offline `Request::build` inspection). Next:
     thread region through `ConversationCallParams`/recording params
     from config so non-AMER tenants stop using the default.
+    Follow-up (same lane): `region: &TeamsRegion` on both params
+    structs; all 8 signaling sites + `add_recorder_bot` read
+    `params.region`; entry points source
+    `TeamsRegion::from_env_or_default()` (`TEAMS_PARTITION`/
+    `TEAMS_REGION`/`TEAMS_RING` env, per-field AMER fallback; +2
+    tests, hermetic `with_overrides`).
 
 ## Upstream PRs (2026-09-22, base 0892144; main red on sdp E0308 until #5)
 
