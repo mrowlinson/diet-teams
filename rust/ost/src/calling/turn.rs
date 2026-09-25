@@ -1148,6 +1148,35 @@ mod tests {
         ]);
         let computed_crc = crc32(&final_msg[..len - 8]);
         assert_eq!(fp_val, computed_crc ^ FINGERPRINT_XOR);
+
+        // Independently verify MESSAGE-INTEGRITY: walk attributes to find
+        // it, then recompute HMAC-SHA1 over the covered prefix (length
+        // adjusted per RFC 5389 section 14.6) with the long-term key.
+        let mut mi_off = None;
+        let mut off = STUN_HEADER_SIZE;
+        while off + 4 <= len {
+            let t = u16::from_be_bytes([final_msg[off], final_msg[off + 1]]);
+            let l = u16::from_be_bytes([final_msg[off + 2], final_msg[off + 3]]) as usize;
+            if t == ATTR_MESSAGE_INTEGRITY {
+                mi_off = Some(off);
+                break;
+            }
+            off += 4 + l + (4 - (l % 4)) % 4;
+        }
+        let mi_off = mi_off.expect("MESSAGE-INTEGRITY attribute present");
+        let mi_val = &final_msg[mi_off + 4..mi_off + 4 + 20];
+        let mut covered = final_msg[..mi_off].to_vec();
+        let adj_len = (mi_off - STUN_HEADER_SIZE + 24) as u16;
+        covered[2..4].copy_from_slice(&adj_len.to_be_bytes());
+        let mut mac = HmacSha1::new_from_slice(&key).expect("HMAC key");
+        mac.update(&covered);
+        assert_eq!(&mac.finalize().into_bytes()[..], mi_val);
+
+        // Negative: the pre-fix fallback key (raw password bytes) must NOT
+        // produce this HMAC, proving the message keys off the long-term key.
+        let mut bad = HmacSha1::new_from_slice(b"testpassword").expect("HMAC key");
+        bad.update(&covered);
+        assert_ne!(&bad.finalize().into_bytes()[..], mi_val);
     }
 
     #[test]
