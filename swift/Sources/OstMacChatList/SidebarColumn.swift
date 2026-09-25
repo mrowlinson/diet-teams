@@ -4,9 +4,9 @@ import OstMacCore
 import SwiftUI
 
 /// Sidebar column hosting the chats list, the teams/channels browser,
-/// and the reminders browser behind a segmented switcher. Channel taps
-/// open as conversations via `onOpenChannel` (channel id +
-/// "Team > #channel" display name).
+/// the reminders browser, and the recordings browser behind a
+/// segmented switcher. Channel taps open as conversations via
+/// `onOpenChannel` (channel id + "Team > #channel" display name).
 ///
 /// The switcher header is exactly `DietSize.toolbar` tall with a system
 /// seam below, so it sits on the same pixel row as the content column's
@@ -15,6 +15,7 @@ public struct SidebarColumn: View {
     @ObservedObject private var chats: ChatListViewModel
     @ObservedObject private var teams: TeamsViewModel
     @ObservedObject private var reminders: RemindersViewModel
+    @ObservedObject private var recordings: RecordingsViewModel
     @ObservedObject private var presence: PresenceStore
     @ObservedObject private var unread: UnreadStore
     @ObservedObject private var mentions: MentionStore
@@ -30,7 +31,7 @@ public struct SidebarColumn: View {
 
     public init(
         chats: ChatListViewModel, teams: TeamsViewModel,
-        reminders: RemindersViewModel,
+        reminders: RemindersViewModel, recordings: RecordingsViewModel,
         presence: PresenceStore = PresenceStore(),
         unread: UnreadStore = UnreadStore(),
         mentions: MentionStore = MentionStore(),
@@ -45,6 +46,7 @@ public struct SidebarColumn: View {
         self.chats = chats
         self.teams = teams
         self.reminders = reminders
+        self.recordings = recordings
         self.presence = presence
         self.unread = unread
         self.mentions = mentions
@@ -78,6 +80,9 @@ public struct SidebarColumn: View {
             case .reminders:
                 RemindersBrowser(model: reminders)
                     .transition(.opacity)
+            case .recordings:
+                RecordingsBrowser(model: recordings)
+                    .transition(.opacity)
             }
         }
         // System-default crossfade when the segmented switcher flips
@@ -91,4 +96,5 @@ public enum SidebarSection: String, CaseIterable {
     case chats = "Chats"
     case teams = "Teams"
     case reminders = "Reminders"
+    case recordings = "Recordings"
 }

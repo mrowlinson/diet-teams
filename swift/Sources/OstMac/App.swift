@@ -33,6 +33,8 @@
 // Teams with that create sheet open (shot hooks, demo offline).
 // --show-shared opens the conversation on the Shared files tab (shot hook).
 // --show-reminders opens the sidebar on the Reminders browser (shot hook).
+// --show-recordings opens the sidebar on the Recordings browser (shot hook).
+// --show-recordings-playing also auto-plays the first row (shot hook).
 // --show-notes opens the conversation on the Notes tab (shot hook).
 // --show-jump opens the Cmd+K jump palette at launch (shot hook).
 // --show-forward opens the forward sheet (jump palette re-targeted at a
@@ -242,6 +244,7 @@ final class AppState: ObservableObject {
     let chats: ChatListViewModel
     let teams: TeamsViewModel
     let reminders: RemindersViewModel
+    let recordings: RecordingsViewModel
     let meetings: MeetingsViewModel
     let conv = ConversationStore()
     /// Message search (om-ja-search): the jump palette's Messages scope
@@ -442,6 +445,10 @@ final class AppState: ObservableObject {
                 listsFetcher: { DemoData.remindersResponse() },
                 tasksFetcher: { DemoData.reminderTasksResponse(for: $0) },
                 localEdits: true)
+            recordings = RecordingsViewModel(
+                listFetcher: { RecordingsDemo.response() },
+                searchFetcher: { RecordingsDemo.searchResponse(for: $0) },
+                downloadFetcher: { _, _, _ in try DemoClip.url().path })
             // Parse stays real (pure core, no network); the join runner
             // echoes an accepted signaling leg so the lobby flow runs.
             meetings = MeetingsViewModel(
@@ -457,6 +464,7 @@ final class AppState: ObservableObject {
             chats = ChatListViewModel(blocked: blocked)
             teams = TeamsViewModel()
             reminders = RemindersViewModel()
+            recordings = RecordingsViewModel()
             meetings = MeetingsViewModel()
         }
         // om-leave-block: a locally-removed row drops its satellite
@@ -546,6 +554,10 @@ final class AppState: ObservableObject {
         }
         await teams.load()
         await reminders.load()
+        await recordings.load()
+        if CommandLine.arguments.contains("--show-recordings-playing") {
+            recordings.selectAndPlayFirst()
+        }
         await meetings.load()
         if chats.state == .loaded {
             // Core's signed_in is aad-centric; a loaded list proves
@@ -1260,6 +1272,7 @@ final class AppState: ObservableObject {
                 chats.refresh()
                 teams.refresh()
                 reminders.refresh()
+                recordings.refresh()
                 meetings.refresh()
                 if !isDemo {
                     feed.start()
@@ -1291,10 +1304,13 @@ struct RootView: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(\.openSettings) private var openSettings
 
-    /// Shot-hook section: --show-reminders wins over --show-teams.
-    /// The create-sheet hooks also land on teams (the sheets hang there).
+    /// Shot-hook section: --show-recordings wins over --show-reminders
+    /// wins over --show-teams. The create-sheet hooks also land on
+    /// teams (the sheets hang there).
     static var initialSection: SidebarSection {
         let args = CommandLine.arguments
+        if args.contains("--show-recordings") { return .recordings }
+        if args.contains("--show-recordings-playing") { return .recordings }
         if args.contains("--show-reminders") { return .reminders }
         if args.contains("--show-teams") { return .teams }
         if args.contains("--show-channel-create") { return .teams }
@@ -1311,7 +1327,7 @@ struct RootView: View {
                 NavigationSplitView {
                     SidebarColumn(
                         chats: state.chats, teams: state.teams,
-                        reminders: state.reminders,
+                        reminders: state.reminders, recordings: state.recordings,
                         presence: state.presence,
                         unread: state.unread,
                         mentions: state.mentions,

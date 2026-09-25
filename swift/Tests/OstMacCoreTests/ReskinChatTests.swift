@@ -30,7 +30,7 @@ final class ReskinChatTests: XCTestCase {
     func testSidebarSectionLabels() {
         XCTAssertEqual(
             SidebarSection.allCases.map(\.rawValue),
-            ["Chats", "Teams", "Reminders"])
+            ["Chats", "Teams", "Reminders", "Recordings"])
     }
 
     // MARK: - Jump palette list height
