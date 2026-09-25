@@ -352,7 +352,7 @@ public struct RulesConfig: Codable, Sendable, Equatable {
     }
 
     public static var defaultPath: String {
-        NSString(string: "~/.config/ostmac/rules.json").expandingTildeInPath
+        UnixConfig.defaultPath(for: "rules.json")
     }
 
     /// Load from path; missing or unreadable file yields `.default`.

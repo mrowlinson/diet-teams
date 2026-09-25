@@ -89,7 +89,7 @@ public actor RichMediaCache {
     }
 
     /// Per-account disk dir (d1-accounts): default account keeps the
-    /// legacy dir; every other account nests `<accountId>/` under it.
+    /// base dir; every other account nests `<accountId>/` under it.
     public static func diskDir(for accountID: String) -> URL? {
         guard let base = defaultDiskDir() else { return nil }
         let dir = AccountProfile.dir(base, for: accountID)
