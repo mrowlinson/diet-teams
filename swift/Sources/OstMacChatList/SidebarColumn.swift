@@ -1,17 +1,19 @@
-// SidebarColumn.swift — sidebar column: Chats list + Teams browser switcher.
+// SidebarColumn.swift — sidebar column: app rail + section browsers.
 import DietDesign
 import OstMacCore
 import SwiftUI
 
 /// Sidebar column hosting the chats list, the teams/channels browser,
 /// the reminders browser, the planner boards browser, the recordings
-/// browser, and the shifts week grid behind a segmented switcher.
+/// browser, the transcripts browser, and the shifts week grid behind
+/// the Teams-like `AppNavRail` (fixed 72pt, native buttons).
 /// Channel taps open as conversations via
 /// `onOpenChannel` (channel id + "Team > #channel" display name).
 ///
-/// The switcher header is exactly `DietSize.toolbar` tall with a system
-/// seam below, so it sits on the same pixel row as the content column's
-/// `DietHeaderBar` seam (single divider language app-wide).
+/// The rail replaces the old 7-tab segmented bar (R8 app-nav lane):
+/// the segmented control's ~480pt intrinsic width overflowed the
+/// 240pt column at small window sizes (~30px left of the window edge).
+/// A `DietDividerV` seam separates rail from browser.
 public struct SidebarColumn: View {
     @ObservedObject private var chats: ChatListViewModel
     @ObservedObject private var teams: TeamsViewModel
@@ -88,11 +90,9 @@ public struct SidebarColumn: View {
     }
 
     public var body: some View {
-        VStack(spacing: 0) {
-            DietSegmentedPicker("Section", selection: $section)
-                .padding(.horizontal, DietSpace.sm)
-                .frame(height: DietSize.toolbar)
-            DietSeamH()
+        HStack(spacing: 0) {
+            AppNavRail(selection: $section)
+            DietDividerV()
             switch section {
             case .chats:
                 ChatListSidebar(model: chats, presence: presence, unread: unread, mentions: mentions, rules: rules, snooze: snooze, initialFilter: initialFilter, initialFolderID: initialFolderID, folderManageOpen: folderManageOpen, initialEditingRuleID: initialEditingRuleID, onPopOut: onPopOut)
@@ -122,9 +122,9 @@ public struct SidebarColumn: View {
                     .transition(.opacity)
             }
         }
-        // System-default crossfade when the segmented switcher flips
-        // sections (instant cut under Reduce Motion). Standard
-        // SwiftUI only (no custom drivers).
+        // System-default crossfade when the rail flips sections
+        // (instant cut under Reduce Motion). Standard SwiftUI only
+        // (no custom drivers).
         .animation(DietMotion.gated(reduceMotion: reduceMotion), value: section)
     }
 }

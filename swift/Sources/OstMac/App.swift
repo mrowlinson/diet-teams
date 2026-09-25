@@ -2026,7 +2026,8 @@ struct RootView: View {
                             }
                         }
                     )
-                    .navigationSplitViewColumnWidth(min: 240, ideal: 300, max: 420)
+                    .navigationSplitViewColumnWidth(
+                        min: AppNavLayout.sidebarMinWidth, ideal: 300, max: 420)
                 } detail: {
                     if state.openChatID == nil {
                         emptyDetail
@@ -2138,8 +2139,8 @@ struct RootView: View {
         .onDisappear { state.shutdown() }
     }
 
-    /// Empty detail keeps the header row so the sidebar picker seam
-    /// spans both columns (same row as the conversation header).
+    /// Empty detail keeps the header row aligned with the
+    /// conversation header (the rail spans the sidebar full-height).
     private var emptyDetail: some View {
         VStack(spacing: 0) {
             DietHeaderBar { Color.clear }
