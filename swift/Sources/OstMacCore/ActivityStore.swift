@@ -173,13 +173,19 @@ public final class ActivityStore: ObservableObject {
     /// Baseline on first sight (no item); deltas on own messages emit.
     private var reactionTotals: [String: Int] = [:]
 
-    public init(
+    /// Nonisolated so views can take a default `ActivityStore()` in
+    /// their (nonisolated) inits; all members stay main-actor-isolated
+    /// (MentionStore precedent).
+    public nonisolated init(
         defaults: UserDefaults = .standard,
         key: String = ActivityStore.defaultsKey
     ) {
         self.defaults = defaults
         self.key = key
-        items = Self.load(defaults: defaults, key: key)
+        // Wrapper init (init-time only): assigning the @Published
+        // property itself from a nonisolated init is refused.
+        self._items = Published(
+            initialValue: Self.load(defaults: defaults, key: key))
     }
 
     // MARK: - Derived
@@ -535,7 +541,7 @@ public final class ActivityStore: ObservableObject {
         }
     }
 
-    static func load(defaults: UserDefaults, key: String) -> [ActivityItem] {
+    nonisolated static func load(defaults: UserDefaults, key: String) -> [ActivityItem] {
         guard let data = defaults.data(forKey: key) else { return [] }
         return (try? JSONDecoder().decode([ActivityItem].self, from: data)) ?? []
     }

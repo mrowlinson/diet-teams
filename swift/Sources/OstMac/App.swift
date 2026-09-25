@@ -304,6 +304,8 @@ final class AppState: ObservableObject {
     // unread counts stay sidebar-only here (per-chat badges + Diagnostics).
     let unread = UnreadStore(dock: NullDockBadge())
     let mentions = MentionStore()
+    /// e1-activity: notification history + mentions-center data.
+    let activity = ActivityStore()
     let receipts = ReceiptStore()
     /// Rebuilt per account on switch (d1-accounts).
     @Published var pinnedMessages: PinnedMessageStore
@@ -611,6 +613,13 @@ final class AppState: ObservableObject {
         // store tick re-renders that surface only, never the root.
         // (Was: receipts/call/history/quietHours/chats forwards.)
         wireHistory()
+        // e1-activity: reviewing the last mention for a chat clears
+        // the MentionStore flag (shared review state, no orphans).
+        activity.onMentionFlagsCleared = { [weak self] chatID in
+            Task { @MainActor [weak self] in
+                self?.mentions.markRead(chatID: chatID)
+            }
+        }
         call.$call
             .receive(on: DispatchQueue.main)
             .sink { [weak self] c in
@@ -679,6 +688,17 @@ final class AppState: ObservableObject {
     private func wireHistory() {
         history.onRedial = { [weak self] record in
             Task { @MainActor [weak self] in self?.redial(record) }
+        }
+        // e1-activity: missed calls land in the feed (re-wired per
+        // account alongside redial — the store is rebuilt on switch).
+        history.onRecord = { [weak self] record in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.activity.noteCallRecord(
+                    record,
+                    chatName: self.chatNameOrNil(for: record.thread)
+                        ?? record.displayName)
+            }
         }
     }
 
@@ -1102,6 +1122,22 @@ final class AppState: ObservableObject {
         jump(chatID: hit.chatID, chatName: displayName(for: hit.chatID))
     }
 
+    /// Activity-row jump (e1-activity): open the row's chat, land on
+    /// the message via the search funnel. Chat-only targets (missed
+    /// calls) open without a seek; blank chat ids no-op (never conjure).
+    func jumpToActivity(_ target: ActivityTarget) {
+        guard target.canJump else { return }
+        guard let messageID = target.messageID else {
+            jump(
+                chatID: target.chatID,
+                chatName: displayName(for: target.chatID))
+            return
+        }
+        jumpToMessage(SearchHit(
+            messageID: messageID, chatID: target.chatID,
+            sender: "", timestamp: "", preview: ""))
+    }
+
     /// Sidebar + channel name for one conversation id (hit subtitles and
     /// jump headers share it). Unknown ids fall back to the generic label.
     func displayName(for chatID: String) -> String {
@@ -1190,6 +1226,7 @@ final class AppState: ObservableObject {
         }
         unread.markRead(chatID: id) // om-notifbadge + om-markunread: opening marks read (counts + horizon override)
         mentions.markRead(chatID: id) // om-mentions: opening clears the flag
+        activity.markChatReviewed(chatID: id) // e1-activity: opening reviews the feed rows
         if isDemo {
             // om-receipts: demo peers read through the tail (offline Seen).
             if let last = DemoData.messages(for: id).last {
@@ -1373,6 +1410,31 @@ final class AppState: ObservableObject {
         mentions.ingest(
             realtime: msg, ownName: conv.ownDisplayName,
             ownerMRI: resolvedOwnerMRI, openChatID: openChatID)
+        // e1-activity: mentions/replies land in the feed (same gates as
+        // the MentionStore flags, plus channel blasts + quote replies).
+        activity.ingest(
+            realtime: msg, ownName: conv.ownDisplayName,
+            ownerMRI: resolvedOwnerMRI, openChatID: openChatID,
+            chatName: chatName)
+        // e1-activity: reaction totals ride in for the count-delta
+        // heuristic. Ownership resolves only for loaded open-chat
+        // bubbles (unknown ownership baselines without emitting); the
+        // pre-ingest bubble seeds the baseline so the delta is exact.
+        if let r = msg.reactions {
+            let targetID = msg.isEdit ? (msg.editedID ?? msg.msgId) : msg.msgId
+            var own: Bool?
+            if msg.isFor(chatID: openChatID),
+               let bubble = conv.messages.first(where: { $0.id == targetID })
+            {
+                activity.seedBaseline(
+                    chatID: msg.chatID, messageID: targetID,
+                    total: bubble.reactions.reduce(0) { $0 + $1.count })
+                own = bubble.isOwn
+            }
+            activity.noteReaction(
+                chatID: msg.chatID, messageID: targetID, reactions: r,
+                chatName: chatName, isOwnMessage: own)
+        }
         if quiet {
             noteSuppressedIfWarranted(msg, chatName: chatName, decision: decision)
         } else {
@@ -1824,6 +1886,9 @@ struct RootView: View {
                         mentions: state.mentions,
                         rules: state.rules,
                         snooze: state.snooze,
+                        activity: state.activity,
+                        notifs: state.notifs,
+                        onJumpActivity: { state.jumpToActivity($0) },
                         openChatID: state.openChatID,
                         initialSection: RootView.initialSection,
                         initialFilter: OstMacAppMain.filterQuery(args: CommandLine.arguments),
