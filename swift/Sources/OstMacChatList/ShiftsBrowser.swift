@@ -81,7 +81,9 @@ public struct ShiftsBrowser: View {
     }
 
     private var dayColumns: [GridItem] {
-        Array(repeating: GridItem(.flexible(), spacing: DietSpace.xs), count: 7)
+        Array(
+            repeating: GridItem(.flexible(), spacing: DietSpace.xs, alignment: .top),
+            count: 7)
     }
 
     private func weekGrid(_ week: ShiftWeek) -> some View {
