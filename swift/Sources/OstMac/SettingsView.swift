@@ -6,7 +6,8 @@
 // toggles per chat, persisted in rules.json and enforced by the
 // rules engine), GIFs KLIPY key (keychain; picker reads the same key),
 // Thread catch-up (CatchUpStore; Base URL hides when the CLI provider
-// ignores it).
+// ignores it), Calls (echo-bot test call via CallStore.echoLive, shared
+// slot).
 // Removed: Application (dup of About), Diagnostics (moved to the
 // Diagnostics window — Window ▸ Diagnostics).
 import DietDesign
@@ -25,6 +26,8 @@ struct SettingsView: View {
     @ObservedObject private var quiet: QuietHoursStore
     @ObservedObject private var blocked: BlockedStore
     @ObservedObject private var accounts: AccountStore
+    /// Shared call slot (place test call reuses CallStore.echoLive).
+    @ObservedObject private var call: CallStore
     private let onAccountAdded: (AuthViewModel) -> Void
     private let onRemoveAccount: (String) -> Void
     @State private var pendingAddVM: AuthViewModel?
@@ -51,6 +54,7 @@ struct SettingsView: View {
         quiet: QuietHoursStore = QuietHoursStore(),
         blocked: BlockedStore = BlockedStore(defaults: nil),
         accounts: AccountStore = AccountStore(),
+        call: CallStore = CallStore(),
         onAccountAdded: @escaping (AuthViewModel) -> Void = { _ in },
         onRemoveAccount: @escaping (String) -> Void = { _ in }
     ) {
@@ -62,6 +66,7 @@ struct SettingsView: View {
         _quiet = ObservedObject(wrappedValue: quiet)
         _blocked = ObservedObject(wrappedValue: blocked)
         _accounts = ObservedObject(wrappedValue: accounts)
+        _call = ObservedObject(wrappedValue: call)
         self.onAccountAdded = onAccountAdded
         self.onRemoveAccount = onRemoveAccount
         fixedAccount = nil
@@ -78,6 +83,8 @@ struct SettingsView: View {
         _quiet = ObservedObject(wrappedValue: QuietHoursStore())
         _blocked = ObservedObject(wrappedValue: BlockedStore(defaults: nil))
         _accounts = ObservedObject(wrappedValue: AccountStore())
+        // Demo slot: taps flip local state only, never touch core.
+        _call = ObservedObject(wrappedValue: CallStore(demo: true))
         onAccountAdded = { _ in }
         onRemoveAccount = { _ in }
         fixedAccount = account
@@ -136,6 +143,31 @@ struct SettingsView: View {
                         Section("Sign in") {
                             AuthView(model: auth, embedded: true)
                         }
+                    }
+                    Section("Calls") {
+                        let tc = TestCallSettings.describe(
+                            signedIn: account.signedIn,
+                            busy: call.busy,
+                            call: call.call)
+                        HStack {
+                            Button(tc.placeLabel) { call.echoLive() }
+                                .disabled(!tc.placeEnabled)
+                                .help("Place an echo-bot test call with live audio (mic + speaker check)")
+                            if tc.showEnd {
+                                Button("End test call") { call.end() }
+                                    .disabled(!tc.endEnabled)
+                            }
+                        }
+                        LabeledContent("Status", value: tc.status)
+                        if let err = call.error {
+                            Text(err)
+                                .font(DietType.caption1)
+                                .foregroundStyle(Color(nsColor: DietColor.danger))
+                                .textSelection(.enabled)
+                        }
+                        Text("The test call dials the Teams echo bot only — speak and you hear your own audio back. Never dials a person.")
+                            .font(DietType.caption1)
+                            .foregroundStyle(DietColor.textSecondaryColor)
                     }
                     Section("Notifications") {
                         Toggle("Message banners", isOn: $notifs.enabled)

@@ -218,7 +218,7 @@ struct OstMacAppMain: App {
                     auth: state.auth, catchUp: state.catchUp, notifs: state.notifs,
                     rules: state.rules, chats: state.chats,
                     quiet: state.quietHours, blocked: state.blocked,
-                    accounts: state.accounts,
+                    accounts: state.accounts, call: state.call,
                     onAccountAdded: { state.completePendingAdd($0) },
                     onRemoveAccount: { state.removeAccount($0) })
             }
