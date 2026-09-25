@@ -657,6 +657,14 @@ needing maintainer buy-in. Minor PRs stand alone; majors are separate PRs.
     `TeamsRegion::from_env_or_default()` (`TEAMS_PARTITION`/
     `TEAMS_REGION`/`TEAMS_RING` env, per-field AMER fallback; +2
     tests, hermetic `with_overrides`).
+    Upstream: https://github.com/eisbaw/ost/pull/52 (filed
+    2026-09-25, base 0892144; lane hunk minus the RecordingParams
+    retype, which stacks after as §54; recording.rs conv_params
+    construction fix included for the new required field; doc
+    line drops the RecordingParams mention for standalone
+    review; 95/95 bin tests with sdp-dance temp-fix reverted;
+    offline vectors only, no live non-AMER call — stated in
+    body; config-file derivation still open).
 
 53. [minor] `src/calling/turn.rs` + `Cargo.toml`/`Cargo.lock` —
     **RFC 5389 MD5 long-term credential key (om-turn-md5 lane)**.
