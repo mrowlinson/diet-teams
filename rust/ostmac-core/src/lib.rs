@@ -34,6 +34,7 @@ pub mod browser_auth;
 pub mod calls;
 pub mod live;
 pub mod realtime;
+pub mod recordings;
 
 // ---------------------------------------------------------------------------
 // Small helpers
