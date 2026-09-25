@@ -100,7 +100,13 @@ async fn acquire_graph_token(
 /// Refresh the AAD access token using a stored refresh_token, then
 /// re-exchange for a Skype token. Returns Ok(true) if refresh succeeded.
 pub async fn refresh() -> Result<bool> {
-    let mut config = Config::load_cached()?;
+    refresh_for(&crate::config::active_profile()).await
+}
+
+/// Same as [`refresh`], scoped to one account profile (multi-account:
+/// per-account refresh without switching the active profile).
+pub async fn refresh_for(profile: &str) -> Result<bool> {
+    let mut config = Config::load_cached_for(profile)?;
     let refresh_token_str = match config.get_refresh_token() {
         Some(rt) => rt,
         None => return Ok(false),
@@ -187,7 +193,7 @@ pub async fn refresh() -> Result<bool> {
         }
     }
 
-    config.save()?;
+    config.save_to(profile)?;
     tracing::info!("Token refresh complete");
     Ok(true)
 }

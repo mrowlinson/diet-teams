@@ -567,6 +567,25 @@ needing maintainer buy-in. Minor PRs stand alone; majors are separate PRs.
     tab + store (11 ShiftsTests) is Swift-only, no ledger item.
     Time-off "balances" are approved-instance counts per reason
     (Graph has no balances endpoint) — proxy pending owner confirm.
+49. [major] `src/config/mod.rs` + `src/auth/oauth.rs` + `src/api/client.rs` —
+    **per-account token profiles (d1-accounts lane)**. `Config` gains a
+    profile id: `default` (or blank) keeps the legacy `config.toml`;
+    every other id maps to `config-<sanitized>.toml` beside it (0600,
+    sanitize = alnum + `._-`, cap 64, no separators survive). New
+    `load_for`/`load_cached_for`/`save_to`/`delete_for`/
+    `invalidate_cache_for`/`config_path_for` + process-wide
+    `active_profile`/`set_active_profile` (default `default`); the
+    load cache is now a per-profile map. Legacy `load`/`load_cached`/
+    `save` route through the active profile, so the CLI and TUI are
+    byte-identical single-account until something calls
+    `set_active_profile`. `oauth::refresh_for(profile)` and
+    `TeamsClient::new_for_profile(profile)` scope network refresh +
+    client build to one profile (`refresh()`/`new()` delegate to
+    active). 3 config tests (path separation + hostile ids, active
+    round-trip, missing-delete). Consumer: `ostmac-core` twins
+    (`status/refresh/sign_out/whoami/device_start/authcode_start`
+    `_for` variants + `profile_set`/`profile_active` FFI, per-profile
+    whoami cache, session→profile binding; no ledger item — own crate).
 
 ## Upstream PRs (2026-09-22, base 0892144; main red on sdp E0308 until #5)
 
