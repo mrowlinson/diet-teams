@@ -1130,8 +1130,9 @@ mod tests {
     fn test_message_integrity_and_fingerprint() {
         let txn = [0xABu8; 12];
         let req = build_allocate_request(&txn, Some("testuser"), Some("realm"), Some("nonce"));
-        let key = b"testpassword";
-        let final_msg = add_message_integrity_and_fingerprint(req, key);
+        // Long-term path: HMAC key is MD5(user:realm:pass), not raw password bytes.
+        let key = compute_long_term_key("testuser", "realm", "testpassword");
+        let final_msg = add_message_integrity_and_fingerprint(req, &key);
 
         // Should have FINGERPRINT as last attribute
         let len = final_msg.len();
