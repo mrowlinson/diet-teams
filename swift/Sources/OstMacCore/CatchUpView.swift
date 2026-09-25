@@ -2,8 +2,8 @@
 //
 // The sheet is the summarize/TL;DR/action-items entry point for long
 // threads; the Settings section holds the provider picker + BYO key +
-// base URL + model. Both show the privacy note (thread text leaves
-// the machine).
+// base URL + model. Both show the provider's privacy note (cloud:
+// thread text leaves the machine; on-device: never leaves the Mac).
 //
 // om-catchup-sheet-dismiss: presented as a popover (a window-modal
 // sheet cannot dismiss on click-outside) with Done + Esc +
@@ -55,19 +55,23 @@ public enum CatchUpSheet {
 public struct CatchUpView: View {
     @ObservedObject private var catchUp: CatchUpStore
     private let messages: [ChatMessage]
+    private let chatID: String?
     private let autoRun: Bool
     private let onDone: () -> Void
 
+    /// - chatID: scopes the on-device summary cache to this thread
+    ///   (nil still caches, keyed on message identity).
     /// - autoRun: summarize once on appear (the --show-catchup shot
     ///   hook only; real taps always come from the button).
     /// - onDone: Done / Esc tap. The host routes it through
     ///   `CatchUpSheet.dismissViaDone` (close + state reset).
     public init(
-        catchUp: CatchUpStore, messages: [ChatMessage], autoRun: Bool = false,
-        onDone: @escaping () -> Void = {}
+        catchUp: CatchUpStore, messages: [ChatMessage], chatID: String? = nil,
+        autoRun: Bool = false, onDone: @escaping () -> Void = {}
     ) {
         self.catchUp = catchUp
         self.messages = messages
+        self.chatID = chatID
         self.autoRun = autoRun
         self.onDone = onDone
     }
@@ -86,7 +90,7 @@ public struct CatchUpView: View {
                     .buttonStyle(.bordered)
                     .keyboardShortcut(.cancelAction)
             }
-            Text(CatchUp.privacyNote)
+            Text(CatchUp.privacyNote(for: catchUp.config.provider))
                 .font(DietType.caption1)
                 .foregroundStyle(DietColor.textSecondaryColor)
             DietSeamH()
@@ -97,7 +101,7 @@ public struct CatchUpView: View {
         .frame(width: 440, height: 380)
         .task {
             if autoRun, catchUp.state == .idle {
-                await catchUp.summarize(messages: messages)
+                await catchUp.summarize(messages: messages, chatID: chatID)
             }
         }
     }
@@ -110,7 +114,7 @@ public struct CatchUpView: View {
                 .font(DietType.body)
                 .foregroundStyle(DietColor.textSecondaryColor)
             Button("Summarize") {
-                Task { await catchUp.summarize(messages: messages) }
+                Task { await catchUp.summarize(messages: messages, chatID: chatID) }
             }
             .keyboardShortcut(.defaultAction)
             .disabled(!catchUp.config.enabled)
@@ -146,8 +150,11 @@ public struct CatchUpView: View {
             if catchUp.lastError == .cliMissing {
                 CatchUpInstallPrompt()
             }
+            if catchUp.lastError?.isOnDevice == true {
+                CatchUpOnDeviceGuidance()
+            }
             Button("Retry") {
-                Task { await catchUp.summarize(messages: messages) }
+                Task { await catchUp.summarize(messages: messages, chatID: chatID) }
             }
             .buttonStyle(.link)
         }
@@ -177,6 +184,33 @@ public struct CatchUpInstallPrompt: View {
                 Link("Install opencode CLI", destination: url)
                     .font(DietType.caption1)
             }
+        }
+        .padding(DietSpace.sm)
+        .background(DietColor.dividerColor)
+        .clipShape(RoundedRectangle(cornerRadius: DietRadius.control))
+    }
+}
+
+/// On-device unavailable guidance: what the Mac needs (macOS 26+,
+/// Apple Silicon, Apple Intelligence on + downloaded). Shown in the
+/// sheet's failed state for every on-device error.
+public struct CatchUpOnDeviceGuidance: View {
+    public init() {}
+
+    public var body: some View {
+        VStack(alignment: .leading, spacing: DietSpace.xs) {
+            Text("To use on-device summaries, this Mac needs:")
+                .font(DietType.caption1)
+                .foregroundStyle(DietColor.textSecondaryColor)
+            Text("1. macOS 26 or later on Apple Silicon")
+                .font(DietType.caption1)
+                .textSelection(.enabled)
+            Text("2. Apple Intelligence on (System Settings > Apple Intelligence & Siri)")
+                .font(DietType.caption1)
+                .textSelection(.enabled)
+            Text("3. The on-device model download finished")
+                .font(DietType.caption1)
+                .textSelection(.enabled)
         }
         .padding(DietSpace.sm)
         .background(DietColor.dividerColor)
@@ -228,7 +262,8 @@ public struct CatchUpSettingsSection: View {
             }
             // Dead-row trim (om-settings-trim): the CLI transport
             // ignores baseURL (exclusive routing: CLI-selected never
-            // uses HTTPS, even with a key set), so the row hides
+            // uses HTTPS, even with a key set), and the on-device
+            // provider has no endpoint at all, so the row hides
             // exactly when it would do nothing.
             if CatchUp.usesBaseURL(
                 provider: catchUp.config.provider, apiKey: catchUp.config.apiKey)
@@ -236,13 +271,23 @@ public struct CatchUpSettingsSection: View {
                 TextField("Base URL", text: $catchUp.config.baseURL)
                     .textSelection(.enabled)
             }
-            TextField("Model", text: $catchUp.config.model)
-            SecureField("API key", text: $catchUp.config.apiKey)
-            Text("The key is kept in your Mac keychain, never on disk.")
-                .font(DietType.caption1)
-                .foregroundStyle(DietColor.textSecondaryColor)
-            keyCaption
-            Text(CatchUp.privacyNote)
+            // On-device uses the fixed system model: no Model row.
+            if CatchUp.usesModel(provider: catchUp.config.provider) {
+                TextField("Model", text: $catchUp.config.model)
+                    .textSelection(.enabled)
+            }
+            if catchUp.config.provider == .onDevice {
+                Text("No key, URL, or CLI needed — the system model runs on this Mac.")
+                    .font(DietType.caption1)
+                    .foregroundStyle(DietColor.textSecondaryColor)
+            } else {
+                SecureField("API key", text: $catchUp.config.apiKey)
+                Text("The key is kept in your Mac keychain, never on disk.")
+                    .font(DietType.caption1)
+                    .foregroundStyle(DietColor.textSecondaryColor)
+                keyCaption
+            }
+            Text(CatchUp.privacyNote(for: catchUp.config.provider))
                 .font(DietType.caption1)
                 .foregroundStyle(DietColor.textSecondaryColor)
         }

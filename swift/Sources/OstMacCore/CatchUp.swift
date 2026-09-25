@@ -6,12 +6,14 @@
 // Contract:
 //   - OFF by default; nothing leaves the machine until the user enables
 //     it and taps Summarize.
-//   - Provider picker (OpenCode CLI | OpenAI-compatible | OpenCode) +
-//     configurable base URL + model. OpenCode CLI is the default and
-//     is CLI-ONLY: it always shells out to `opencode run` (CLI auth
-//     covers the free-tier Spark model) and never attempts HTTPS,
-//     even when a key is configured. Direct providers use HTTPS only
-//     and still require a key.
+//   - Provider picker (OpenCode CLI | OpenAI-compatible | OpenCode |
+//     On-device) + configurable base URL + model. OpenCode CLI is
+//     the default and is CLI-ONLY: it always shells out to `opencode
+//     run` (CLI auth covers the free-tier Spark model) and never
+//     attempts HTTPS, even when a key is configured. Direct
+//     providers use HTTPS only and still require a key. On-device
+//     uses Apple Foundation Models (ANE, private, zero bytes
+//     off-machine), needs no key/URL/CLI, and caches per thread.
 //   - The key lives in the macOS keychain (service
 //     "dev.ostmac.OstMac.catchup", account "catchup-api-key"), never
 //     in UserDefaults/plist. The Settings key field writes keychain.
@@ -59,6 +61,14 @@ public enum CatchUp {
     public static let privacyNote =
         "Catch-up sends this thread's text to your configured AI endpoint. It leaves this machine."
 
+    public static let onDevicePrivacyNote =
+        "On-device catch-up summarizes on this Mac with Apple Intelligence. Your thread never leaves this device."
+
+    /// Sheet + Settings privacy line for the active provider.
+    public static func privacyNote(for provider: CatchUpProvider) -> String {
+        provider == .onDevice ? onDevicePrivacyNote : privacyNote
+    }
+
     public static func shouldOffer(messageCount: Int) -> Bool {
         messageCount >= threshold
     }
@@ -66,13 +76,27 @@ public enum CatchUp {
     /// True when the Base URL affects requests: direct providers
     /// always use it; the CLI provider never does (exclusive routing:
     /// CLI-selected shells out and ignores baseURL even with a key
-    /// set). The Settings row hides exactly when this is false, so no
-    /// dead row is ever shown.
+    /// set), and the on-device provider has no endpoint at all. The
+    /// Settings row hides exactly when this is false, so no dead row
+    /// is ever shown.
     /// - Note: `apiKey` is kept for caller compatibility; it plays no
     ///   role under exclusive routing.
     public static func usesBaseURL(provider: CatchUpProvider, apiKey: String) -> Bool {
         _ = apiKey
-        return provider != .openCodeCLI
+        return provider != .openCodeCLI && provider != .onDevice
+    }
+
+    /// True when an API key affects requests: direct providers only.
+    /// The CLI provider authenticates via `opencode auth login`; the
+    /// on-device provider needs no credential at all.
+    public static func usesAPIKey(provider: CatchUpProvider) -> Bool {
+        provider != .openCodeCLI && provider != .onDevice
+    }
+
+    /// True when the Model field affects requests: every provider but
+    /// on-device (the system model is fixed).
+    public static func usesModel(provider: CatchUpProvider) -> Bool {
+        provider != .onDevice
     }
 
     /// "{base}/chat/completions" — exactly one join slash.
@@ -132,6 +156,7 @@ public enum CatchUpProvider: String, Sendable, Equatable, CaseIterable, Identifi
     case openAICompatible = "openai-compatible"
     case openCode = "opencode"
     case openCodeCLI = "opencode-cli"
+    case onDevice = "on-device"
 
     public var id: String { rawValue }
 
@@ -140,6 +165,7 @@ public enum CatchUpProvider: String, Sendable, Equatable, CaseIterable, Identifi
         case .openAICompatible: "OpenAI-compatible"
         case .openCode: "OpenCode"
         case .openCodeCLI: "OpenCode CLI"
+        case .onDevice: "On-device (Apple Intelligence)"
         }
     }
 
@@ -148,6 +174,8 @@ public enum CatchUpProvider: String, Sendable, Equatable, CaseIterable, Identifi
         case .openAICompatible: "https://api.openai.com/v1"
         case .openCode: "https://opencode.ai/zen/v1"
         case .openCodeCLI: "https://opencode.ai/zen/v1"
+        // No endpoint (unused; the row hides via usesBaseURL).
+        case .onDevice: ""
         }
     }
 
@@ -159,6 +187,8 @@ public enum CatchUpProvider: String, Sendable, Equatable, CaseIterable, Identifi
         // {"type":"error",...} on stdout); the Zen HTTPS path keeps
         // the bare id (see header).
         case .openCodeCLI: "opencode/muse-spark-1.3-contributor-free"
+        // System model (fixed; the row hides via usesModel).
+        case .onDevice: ""
         }
     }
 }
@@ -210,6 +240,9 @@ public enum CatchUpError: Error, Sendable, Equatable {
     case cliAuthExpired
     case cliTimeout
     case cliBadOutput
+    case onDeviceUnsupported
+    case onDeviceUnavailable(String)
+    case onDeviceFailed(String)
 
     /// Pure HTTP-status mapping (test seam): 403 gets its own clean
     /// message; every other non-2xx stays a generic server failure.
@@ -229,6 +262,17 @@ public enum CatchUpError: Error, Sendable, Equatable {
         case .cliAuthExpired: "OpenCode CLI login expired. Run `opencode auth login` and retry."
         case .cliTimeout: "OpenCode CLI timed out. Retry."
         case .cliBadOutput: "OpenCode CLI returned unreadable output. Retry."
+        case .onDeviceUnsupported: "On-device summaries need macOS 26 or later on an Apple Silicon Mac with Apple Intelligence. This Mac can't run the on-device model — pick a cloud provider instead."
+        case let .onDeviceUnavailable(guidance): guidance
+        case let .onDeviceFailed(detail): "On-device summary failed: \(detail)"
+        }
+    }
+
+    /// True for the on-device cases (drives the sheet's guidance box).
+    public var isOnDevice: Bool {
+        switch self {
+        case .onDeviceUnsupported, .onDeviceUnavailable, .onDeviceFailed: true
+        default: false
         }
     }
 }
@@ -736,8 +780,11 @@ public final class CatchUpStore: ObservableObject {
 
     private let transport: any CatchUpTransport
     private let cliTransport: any CatchUpTransport
+    private let onDeviceTransport: any CatchUpTransport
     private let defaults: UserDefaults
     private let keys: any CatchUpKeyStore
+    /// Memory-only on-device summary cache (cloud/CLI bypass it).
+    private var summaryCache = ThreadSummaryCache()
     /// True once the key state is known (lazy load ran, or a key was
     /// set explicitly). Guards save() from wiping the stored key
     /// with a pre-load empty apiKey.
@@ -751,12 +798,14 @@ public final class CatchUpStore: ObservableObject {
     public nonisolated init(
         transport: (any CatchUpTransport)? = nil,
         cliTransport: (any CatchUpTransport)? = nil,
+        onDeviceTransport: (any CatchUpTransport)? = nil,
         defaults: UserDefaults = .standard,
         keyStore: (any CatchUpKeyStore)? = nil
     ) {
         self.transport = transport ?? URLSessionCatchUpTransport()
         let cli = cliTransport ?? OpenCodeCLICatchUpTransport()
         self.cliTransport = cli
+        self.onDeviceTransport = onDeviceTransport ?? OnDeviceCatchUpTransport()
         self.defaults = defaults
         let keys = keyStore ?? CatchUpSystemKeychain()
         self.keys = keys
@@ -778,25 +827,28 @@ public final class CatchUpStore: ObservableObject {
     }
 
     /// Summarize the given messages. Disabled/empty-thread always fail
-    /// WITHOUT touching either transport. Provider select is
-    /// exclusive: the CLI provider (default) ALWAYS shells out and
-    /// never attempts HTTPS, even with a key configured; direct
-    /// providers ALWAYS use HTTPS and require a key, failing with
-    /// missingKey WITHOUT touching the transport. Every failure lands
-    /// in `.failed` with a Retry path — never stuck in `.loading`.
-    public func summarize(messages: [ChatMessage]) async {
+    /// WITHOUT touching any transport. Provider select is exclusive:
+    /// the CLI provider (default) ALWAYS shells out and never
+    /// attempts HTTPS, even with a key configured; direct providers
+    /// ALWAYS use HTTPS and require a key, failing with missingKey
+    /// WITHOUT touching the transport; the on-device provider uses
+    /// the local model only (no key, no URL, no CLI) and consults the
+    /// per-thread cache first. Every failure lands in `.failed` with
+    /// a Retry path — never stuck in `.loading`.
+    public func summarize(messages: [ChatMessage], chatID: String? = nil) async {
         guard config.enabled else {
             lastError = .off
             state = .failed(CatchUpError.off.message)
             return
         }
         // Lazy key read: only a key-needing (direct HTTPS) provider
-        // touches the key store; the CLI provider never does.
-        if config.provider != .openCodeCLI {
+        // touches the key store; the CLI and on-device providers
+        // never do.
+        if CatchUp.usesAPIKey(provider: config.provider) {
             ensureKeyLoaded()
         }
         let hasKey = !config.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        if config.provider != .openCodeCLI, !hasKey {
+        if CatchUp.usesAPIKey(provider: config.provider), !hasKey {
             lastError = .missingKey
             state = .failed(CatchUpError.missingKey.message)
             return
@@ -807,10 +859,22 @@ public final class CatchUpStore: ObservableObject {
             state = .failed("Nothing to summarize.")
             return
         }
+        // On-device cache: an unchanged thread replays without a new
+        // model session. Cloud/CLI providers always run fresh.
+        if config.provider == .onDevice,
+           let hit = summaryCache.lookup(chatID: chatID, messages: messages)
+        {
+            lastError = nil
+            state = .loaded(hit)
+            return
+        }
         state = .loading
         do {
-            // Exclusive routing: CLI-selected => CLI ONLY.
-            let active: any CatchUpTransport = config.provider == .openCodeCLI ? cliTransport : transport
+            // Exclusive routing: CLI-selected => CLI ONLY, on-device
+            // => local model ONLY (never HTTP, never a cloud fallback).
+            let active: any CatchUpTransport =
+                config.provider == .openCodeCLI ? cliTransport
+                    : config.provider == .onDevice ? onDeviceTransport : transport
             let text = try await active.complete(
                 baseURL: config.baseURL, apiKey: config.apiKey,
                 model: config.model, prompt: CatchUp.prompt(transcript: transcript))
@@ -818,6 +882,9 @@ public final class CatchUpStore: ObservableObject {
                 lastError = .empty
                 state = .failed(CatchUpError.empty.message)
             } else {
+                if config.provider == .onDevice {
+                    summaryCache.store(chatID: chatID, messages: messages, text: text)
+                }
                 lastError = nil
                 state = .loaded(text)
             }

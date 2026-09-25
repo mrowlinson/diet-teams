@@ -256,8 +256,13 @@ struct SettingsView: View {
         .frame(width: 460, height: fixedAccount == nil ? 760 : nil)
         .task {
             // Fixed (preview/shot) view must not touch the real keychain.
+            // --shot-no-klipy also skips it (a prompting klipy item
+            // parks the main thread on SecurityAgent and freezes
+            // shot automation).
             if fixedAccount == nil {
-                klipyAPIKey = KlipyClient.storedKey()
+                if !CommandLine.arguments.contains("--shot-no-klipy") {
+                    klipyAPIKey = KlipyClient.storedKey()
+                }
                 await auth.refreshStatus()
             }
         }
