@@ -452,152 +452,120 @@ public struct ConversationView: View {
             replyChip
             attachmentStrip
             scheduledStrip
-            HStack(spacing: DietSpace.sm) {
-                Button {
-                    pickAttachments()
-                } label: {
-                    Image(systemName: "paperclip")
-                        .font(.system(size: DietSize.iconMD))
-                        .foregroundStyle(DietColor.textSecondaryColor)
-                        .padding(.horizontal, DietSpace.xs)
-                        .padding(.vertical, DietSpace.xxs)
-                        .background(
-                            attachHovering ? DietColor.wellColor : .clear,
-                            in: RoundedRectangle(cornerRadius: DietRadius.control))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: DietRadius.control)
-                                .stroke(DietColor.dividerColor, lineWidth: 1))
-                }
-                .buttonStyle(.plain)
-                .onHover { attachHovering = $0 }
-                .accessibilityLabel("Attach a file")
-                .plainFocusRing()
-                .help("Attach a file (<4 MB)")
-                .disabled(attachments.uploading)
-                Button {
-                    showMentions = true
-                } label: {
-                    Image(systemName: "at")
-                        .font(.system(size: DietSize.iconMD))
-                        .foregroundStyle(DietColor.textSecondaryColor)
-                        .padding(.horizontal, DietSpace.xs)
-                        .padding(.vertical, DietSpace.xxs)
-                        .background(
-                            mentionHovering ? DietColor.wellColor : .clear,
-                            in: RoundedRectangle(cornerRadius: DietRadius.control))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: DietRadius.control)
-                                .stroke(DietColor.dividerColor, lineWidth: 1))
-                }
-                .buttonStyle(.plain)
-                .onHover { mentionHovering = $0 }
-                .accessibilityLabel("Mention someone")
-                .plainFocusRing()
-                .help("Mention someone (@)")
-                .popover(isPresented: $showMentions, arrowEdge: .top) {
-                    MentionPickerView(
-                        roster: MentionCompose.roster(
-                            from: store.messages, excluding: store.ownDisplayName)
-                    ) { name in
-                        insertMention(name)
-                        showMentions = false
+            // (composer-2line): 2-line input left, buttons stacked
+            // vertically beside it (tool row over Send), centered.
+            // All 5 tool buttons share the ComposerMetrics cell.
+            HStack(alignment: .center, spacing: DietSpace.sm) {
+                TextField("Message", text: $draft, axis: .vertical)
+                    .textFieldStyle(.roundedBorder)
+                    .font(DietType.body)
+                    .lineLimit(ComposerMetrics.inputMinLines...)
+                    .focused($boxFocused)
+                    .onSubmit { submit() }
+                    .onChange(of: draft) { onDraftChange?(draft) }
+                VStack(spacing: DietSpace.xs) {
+                    HStack(spacing: DietSpace.sm) {
+                        Button {
+                            pickAttachments()
+                        } label: {
+                            Image(systemName: "paperclip")
+                                .font(.system(size: DietSize.iconMD))
+                                .composerToolButton(hovering: attachHovering)
+                        }
+                        .buttonStyle(.plain)
+                        .onHover { attachHovering = $0 }
+                        .accessibilityLabel("Attach a file")
+                        .plainFocusRing()
+                        .help("Attach a file (<4 MB)")
+                        .disabled(attachments.uploading)
+                        Button {
+                            showMentions = true
+                        } label: {
+                            Image(systemName: "at")
+                                .font(.system(size: DietSize.iconMD))
+                                .composerToolButton(hovering: mentionHovering)
+                        }
+                        .buttonStyle(.plain)
+                        .onHover { mentionHovering = $0 }
+                        .accessibilityLabel("Mention someone")
+                        .plainFocusRing()
+                        .help("Mention someone (@)")
+                        .popover(isPresented: $showMentions, arrowEdge: .top) {
+                            MentionPickerView(
+                                roster: MentionCompose.roster(
+                                    from: store.messages, excluding: store.ownDisplayName)
+                            ) { name in
+                                insertMention(name)
+                                showMentions = false
+                            }
+                        }
+                        Button {
+                            refreshGIFKey()
+                            showGIFs = true
+                        } label: {
+                            Text("GIF")
+                                .font(DietType.caption1).bold()
+                                .composerToolButton(hovering: gifHovering)
+                        }
+                        .buttonStyle(.plain)
+                        .onHover { gifHovering = $0 }
+                        .accessibilityLabel("Insert a GIF")
+                        .plainFocusRing()
+                        .help("Insert a GIF (KLIPY)")
+                        .popover(isPresented: $showGIFs, arrowEdge: .top) {
+                            KlipyPickerView(apiKey: gifAPIKey) { url in
+                                insertGIF(url)
+                                showGIFs = false
+                            }
+                        }
+                        // Schedule-send clock (d2-send, additive): opens the preset +
+                        // custom-time popover. Queued sends fire while the app runs.
+                        Button {
+                            customFireDate = Date().addingTimeInterval(3600)
+                            scheduleError = nil
+                            showSchedule = true
+                        } label: {
+                            Image(systemName: "clock")
+                                .font(.system(size: DietSize.iconMD))
+                                .composerToolButton(hovering: scheduleHovering)
+                        }
+                        .buttonStyle(.plain)
+                        .onHover { scheduleHovering = $0 }
+                        .accessibilityLabel("Schedule send")
+                        .plainFocusRing()
+                        .help("Schedule send (sends while the app is running)")
+                        .popover(isPresented: $showSchedule, arrowEdge: .top) {
+                            schedulePopover
+                        }
+                        // Templates button (e2-canned): same bordered-icon recipe
+                        // as the tool row; picking appends to the draft, never sends.
+                        Button {
+                            showTemplates = true
+                        } label: {
+                            Image(systemName: "doc.text")
+                                .font(.system(size: DietSize.iconMD))
+                                .composerToolButton(hovering: templateHovering)
+                        }
+                        .buttonStyle(.plain)
+                        .onHover { templateHovering = $0 }
+                        .accessibilityLabel("Insert a template")
+                        .plainFocusRing()
+                        .help("Insert a template (Settings → Templates)")
+                        .popover(isPresented: $showTemplates, arrowEdge: .top) {
+                            CannedResponsesPickerView(templates: canned.templates) { template in
+                                insertTemplate(template)
+                                showTemplates = false
+                            }
+                        }
                     }
+                    Button("Send", systemImage: "paperplane.fill") { submit() }
+                        .buttonStyle(.borderedProminent)
+                        .keyboardShortcut(.return, modifiers: .command)
+                        .disabled(
+                            attachments.uploading
+                                || (draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                    && !attachments.hasStaged))
                 }
-                Button {
-                    refreshGIFKey()
-                    showGIFs = true
-                } label: {
-                Text("GIF")
-                    .font(DietType.caption1).bold()
-                    .foregroundStyle(DietColor.textSecondaryColor)
-                    .padding(.horizontal, DietSpace.xs)
-                    .padding(.vertical, DietSpace.xxs)
-                    .background(
-                        gifHovering ? DietColor.wellColor : .clear,
-                        in: RoundedRectangle(cornerRadius: DietRadius.control))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: DietRadius.control)
-                            .stroke(DietColor.dividerColor, lineWidth: 1))
-            }
-            .buttonStyle(.plain)
-            .onHover { gifHovering = $0 }
-            .accessibilityLabel("Insert a GIF")
-            .plainFocusRing()
-            .help("Insert a GIF (KLIPY)")
-            .popover(isPresented: $showGIFs, arrowEdge: .top) {
-                KlipyPickerView(apiKey: gifAPIKey) { url in
-                    insertGIF(url)
-                    showGIFs = false
-                }
-            }
-            // Schedule-send clock (d2-send, additive): opens the preset +
-            // custom-time popover. Queued sends fire while the app runs.
-            Button {
-                customFireDate = Date().addingTimeInterval(3600)
-                scheduleError = nil
-                showSchedule = true
-            } label: {
-                Image(systemName: "clock")
-                    .font(.system(size: DietSize.iconMD))
-                    .foregroundStyle(DietColor.textSecondaryColor)
-                    .padding(.horizontal, DietSpace.xs)
-                    .padding(.vertical, DietSpace.xxs)
-                    .background(
-                        scheduleHovering ? DietColor.wellColor : .clear,
-                        in: RoundedRectangle(cornerRadius: DietRadius.control))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: DietRadius.control)
-                            .stroke(DietColor.dividerColor, lineWidth: 1))
-            }
-            .buttonStyle(.plain)
-            .onHover { scheduleHovering = $0 }
-            .accessibilityLabel("Schedule send")
-            .plainFocusRing()
-            .help("Schedule send (sends while the app is running)")
-            .popover(isPresented: $showSchedule, arrowEdge: .top) {
-                schedulePopover
-            }
-            // Templates button (e2-canned): same bordered-icon recipe
-            // as the tool row; picking appends to the draft, never sends.
-            Button {
-                showTemplates = true
-            } label: {
-                Image(systemName: "doc.text")
-                    .font(.system(size: DietSize.iconMD))
-                    .foregroundStyle(DietColor.textSecondaryColor)
-                    .padding(.horizontal, DietSpace.xs)
-                    .padding(.vertical, DietSpace.xxs)
-                    .background(
-                        templateHovering ? DietColor.wellColor : .clear,
-                        in: RoundedRectangle(cornerRadius: DietRadius.control))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: DietRadius.control)
-                            .stroke(DietColor.dividerColor, lineWidth: 1))
-            }
-            .buttonStyle(.plain)
-            .onHover { templateHovering = $0 }
-            .accessibilityLabel("Insert a template")
-            .plainFocusRing()
-            .help("Insert a template (Settings → Templates)")
-            .popover(isPresented: $showTemplates, arrowEdge: .top) {
-                CannedResponsesPickerView(templates: canned.templates) { template in
-                    insertTemplate(template)
-                    showTemplates = false
-                }
-            }
-            TextField("Message", text: $draft)
-                .textFieldStyle(.roundedBorder)
-                .font(DietType.body)
-                .focused($boxFocused)
-                .onSubmit { submit() }
-                .onChange(of: draft) { onDraftChange?(draft) }
-                Button("Send", systemImage: "paperplane.fill") { submit() }
-                    .buttonStyle(.borderedProminent)
-                    .keyboardShortcut(.return, modifiers: .command)
-                    .disabled(
-                        attachments.uploading
-                            || (draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                                && !attachments.hasStaged))
             }
             .padding(DietSpace.md)
         }
