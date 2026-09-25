@@ -33,6 +33,7 @@ pub mod av;
 pub mod browser_auth;
 pub mod calls;
 pub mod live;
+pub mod planner;
 pub mod realtime;
 
 // ---------------------------------------------------------------------------

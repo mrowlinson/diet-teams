@@ -9,6 +9,7 @@ mod graph;
 mod me;
 pub mod media;
 mod notes;
+mod planner;
 mod presence;
 mod search;
 mod tabs;
@@ -25,6 +26,7 @@ pub use calendar::{JoinTarget, LobbyEvent, LobbyState, MeetingInfo};
 pub use files::{FileVersion, SharedFile};
 pub use me::UserInfo;
 pub use notes::{NotePage, NotebookInfo, PageInfo, SectionInfo};
+pub use planner::{BucketInfo, PlanInfo, PlannerTaskInfo};
 pub use presence::PresenceInfo;
 pub use search::{clamp_size, next_from, parse_search_response, search_body, search_messages_data, SearchHitInfo, SearchPage, SEARCH_MAX_SIZE};
 pub use tabs::TabInfo;
@@ -72,6 +74,11 @@ pub use me::whoami_data;
 pub use notes::{
     append_note_paragraph_data, list_notebook_sections_data, list_notebooks_data,
     read_note_page_data,
+};
+pub use planner::{
+    buckets_path, create_task_body, create_task_data, list_buckets_data, list_plans_data,
+    list_tasks_data, parse_buckets, parse_plans, parse_task, parse_tasks, plans_path,
+    set_complete_body, set_task_complete_data, task_path, tasks_path,
 };
 pub use presence::get_presence_data;
 pub use tabs::list_tabs_data;

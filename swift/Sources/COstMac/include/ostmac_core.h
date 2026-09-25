@@ -230,6 +230,31 @@ char *ostmac_reminder_add(const char *list_id, const char *title);
 // Mark one task completed: {ok,task}. Caller frees.
 char *ostmac_reminder_done(const char *list_id, const char *task_id);
 
+// Planner: one team's plans (group id == team id, requires sign-in):
+// {ok,group_id,plans:[{id,title}]}. Caller frees.
+char *ostmac_planner_plans(const char *group_id);
+
+// Planner: one plan's buckets: {ok,plan_id,buckets:[{id,plan_id,name}]}.
+// Caller frees.
+char *ostmac_planner_buckets(const char *plan_id);
+
+// Planner: one plan's tasks (limit<=0 means 100):
+// {ok,plan_id,tasks:[{id,plan_id,bucket_id,title,percent,completed,
+// priority?,due?,etag}]}. Caller frees.
+char *ostmac_planner_tasks(const char *plan_id, int limit);
+
+// Planner: create one task in a bucket: {ok,task}. Caller frees.
+char *ostmac_planner_add(const char *plan_id, const char *bucket_id,
+                         const char *title);
+
+// Planner: complete one task (percentComplete 100, If-Match etag):
+// {ok,task}. Caller frees.
+char *ostmac_planner_done(const char *task_id, const char *etag);
+
+// Planner: reopen one task (percentComplete 0, If-Match etag): {ok,task}.
+// Caller frees.
+char *ostmac_planner_reopen(const char *task_id, const char *etag);
+
 // Upcoming meetings JSON (Graph calendarView, next 7 days, requires
 // sign-in): {ok,meetings:[{id,subject,start?,end?,join_url?,
 // organizer?,is_online}]}. Caller frees.
