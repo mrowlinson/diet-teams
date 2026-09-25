@@ -664,7 +664,7 @@ needing maintainer buy-in. Minor PRs stand alone; majors are separate PRs.
     line drops the RecordingParams mention for standalone
     review; 95/95 bin tests with sdp-dance temp-fix reverted;
     offline vectors only, no live non-AMER call — stated in
-    body; config-file derivation still open).
+    body; config-file derivation §57).
 
 54. [minor] `src/calling/turn.rs` + `Cargo.toml`/`Cargo.lock` —
     **RFC 5389 MD5 long-term credential key (om-turn-md5 lane)**.
@@ -717,6 +717,20 @@ needing maintainer buy-in. Minor PRs stand alone; majors are separate PRs.
     all 3 dump sites go through them. 2 tests (disabled writes
     nothing, enabled round-trips content).
     Upstream: UNFILED (stacks with §54).
+
+57. [minor] `src/config/mod.rs` + `src/calling/signaling.rs`/
+    `call_test.rs`/`recording.rs` — **config-file region derivation
+    (om-region-headers lane)**. Closes the §53 open item: `Config`
+    gains optional `teams_partition`/`teams_region`/`teams_ring`
+    (old TOMLs parse, all-None); `TeamsRegion::from_config` (pure,
+    hermetic) + `from_config_or_env` (per-field env > config >
+    AMER default; supersedes `from_env_or_default`). Call-test
+    entry builds one region from the loaded config; recorder entry
+    takes `region: &TeamsRegion` instead of re-sourcing env (sole
+    caller updated). 2 tests (config round-trip + legacy parse,
+    per-field config vectors incl. header reach). Genuine
+    signaling generalization, not OstMac-specific.
+    Upstream: UNFILED (stacks after §53 region-headers).
 
 ## Upstream PRs (2026-09-22, base 0892144; main red on sdp E0308 until #5)
 
