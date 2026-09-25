@@ -53,6 +53,10 @@
 // --show-transcripts-showing also loads the first row's turns (shot hook).
 // --show-notes opens the conversation on the Notes tab (shot hook).
 // --show-jump opens the Cmd+K jump palette at launch (shot hook).
+// --show-quickcompose summons the floating quick-composer panel at
+// launch (f1-composer shot hook, offline with --demo);
+// --quickcompose-query <q> / --quickcompose-text <t> preseed its
+// fields and --quickcompose-pick-first pre-picks the top match.
 // --show-forward opens the forward sheet (jump palette re-targeted at a
 // demo bubble) at launch (om-msgactions shot hook, offline).
 // --jump-query <q> / --filter-query <q> preseed the palette/sidebar
@@ -135,6 +139,14 @@ struct OstMacAppMain: App {
     /// --filter-query value (shot hook: preseed the sidebar filter).
     static func filterQuery(args: [String]) -> String {
         if let i = args.firstIndex(of: "--filter-query"), i + 1 < args.count {
+            return args[i + 1]
+        }
+        return ""
+    }
+
+    /// --<flag> value (quick-composer shot preseeds); "" when absent.
+    static func argValue(args: [String], flag: String) -> String {
+        if let i = args.firstIndex(of: flag), i + 1 < args.count {
             return args[i + 1]
         }
         return ""
@@ -294,11 +306,29 @@ private struct OstMacCommands: Commands {
                 NotificationCenter.default.post(name: .showSavedMessages, object: nil)
             }
             .keyboardShortcut("s", modifiers: [.command, .shift])
+            // f1-composer: in-app entry (the global hotkey is the main
+            // one; this mirrors its default combo for discoverability).
+            Button("New Quick Message…") {
+                NotificationCenter.default.post(name: .showQuickComposer, object: nil)
+            }
+            .keyboardShortcut("m", modifiers: [.command, .control])
         }
         CommandGroup(after: .windowList) {
             Button("Diagnostics") { openWindow(id: AppIdentity.diagWindowID) }
         }
     }
+}
+
+/// f1-composer: one off-screen quick send (the open-target path goes
+/// through ConversationStore instead, so its bubble/errors surface
+/// there). Demo records locally; live failures land here (no toast —
+/// the target timeline isn't open to own one).
+struct QuickSendRecord: Equatable {
+    let targetID: String
+    let targetName: String
+    let text: String
+    let failed: Bool
+    let error: String?
 }
 
 @MainActor
@@ -442,6 +472,18 @@ final class AppState: ObservableObject {
     @Published var showJump = false
     /// Saved collection sheet (e2-saved): Go-menu command + --show-saved.
     @Published var showSaved = false
+    /// f1-composer: global hotkey manager (Carbon seam) + floating
+    /// panel controller. AppKit-level (no SwiftUI scene) so summon
+    /// works backgrounded and with all windows closed.
+    let quickComposeHotKey = QuickComposerHotKey()
+    private var composerPanel: QuickComposerPanelController?
+    /// --show-quickcompose: summon the composer at launch (shot hook).
+    let showQuickComposerShot: Bool
+    /// One-shot field preseeds (--quickcompose-query/-text/-pick-first);
+    /// consumed by the first summon, blank after.
+    private var quickComposePreseed: (query: String, text: String, pickFirst: Bool)?
+    /// Last off-screen quick send (demo record + live failure surface).
+    @Published var lastQuickSend: QuickSendRecord?
     @AppStorage("selectedChatID") private var persistedSelection: String?
 
     private let preselectID: String?
@@ -509,6 +551,15 @@ final class AppState: ObservableObject {
             || args.contains("--show-saved")
         showNotes = args.contains("--show-notes")
         showJump = args.contains("--show-jump") // shot hook: palette open at launch
+        showQuickComposerShot = args.contains("--show-quickcompose") // shot hook: composer open at launch
+        if showQuickComposerShot {
+            quickComposePreseed = (
+                query: OstMacAppMain.argValue(args: args, flag: "--quickcompose-query"),
+                text: OstMacAppMain.argValue(args: args, flag: "--quickcompose-text"),
+                pickFirst: args.contains("--quickcompose-pick-first"))
+        } else {
+            quickComposePreseed = nil
+        }
         activityPane = ActivityPane.initial(
             showActivity: args.contains("--show-activity"),
             showMentions: args.contains("--show-mentions"))
@@ -784,6 +835,18 @@ final class AppState: ObservableObject {
             else { return }
             Task { @MainActor [weak self] in self?.sendFromNotification(chatID: id, text: text) }
         }
+        // f1-composer: global hotkey → floating composer; Settings
+        // toggle/remap/reset re-registers without a relaunch.
+        quickComposeHotKey.onFire = { [weak self] in
+            Task { @MainActor [weak self] in self?.summonComposer() }
+        }
+        applyQuickComposePrefs()
+        NotificationCenter.default.publisher(for: .quickComposePrefsChanged)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                Task { @MainActor [weak self] in self?.applyQuickComposePrefs() }
+            }
+            .store(in: &cancellables)
         // d1-accounts: ordered switch stages (drain → flip → reset →
         // resume). Demo never switches (single canned identity).
         accounts.hooks = AccountSwitchHooks(
@@ -1233,6 +1296,67 @@ final class AppState: ObservableObject {
     /// palette opens for this bubble; picking sends via conv.forward).
     func beginForward(_ message: ChatMessage) {
         forwardMessage = message
+    }
+
+    // MARK: - Quick composer (f1-composer)
+
+    /// Reconcile the global hotkey with prefs (launch + every Settings
+    /// toggle/remap/reset — no relaunch).
+    func applyQuickComposePrefs() {
+        _ = quickComposeHotKey.update(
+            combo: QuickComposerPrefs.loadCombo(),
+            enabled: QuickComposerPrefs.isEnabled())
+    }
+
+    /// Summon the floating composer (global hotkey, Go menu, shot hook).
+    func summonComposer() {
+        if composerPanel == nil { composerPanel = QuickComposerPanelController() }
+        let signedIn = isDemo || auth.state.allowsContent
+        let preseed = quickComposePreseed
+        quickComposePreseed = nil // one-shot: later summons are blank
+        composerPanel?.summon(
+            chats: chats, teams: teams, signedIn: signedIn,
+            initialTargetQuery: preseed?.query, initialMessage: preseed?.text,
+            initialPickFirst: preseed?.pickFirst ?? false
+        ) { [weak self] id, name, text in
+            self?.quickSend(targetID: id, targetName: name, text: text)
+        }
+    }
+
+    /// Post one quick message. Open target → the open ConversationStore
+    /// (the optimistic own-bubble lands in the main-window timeline);
+    /// off-screen target → direct core send (demo records locally).
+    /// Never changes the selection, never refetches — zero-refresh.
+    func quickSend(targetID: String, targetName: String, text: String) {
+        let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !body.isEmpty else { return }
+        if QuickComposerRouting.sendThroughOpenStore(
+            targetID: targetID, openChatID: conv.chatID)
+        {
+            conv.send(text: body)
+            return
+        }
+        if isDemo {
+            lastQuickSend = QuickSendRecord(
+                targetID: targetID, targetName: targetName, text: body,
+                failed: false, error: nil)
+            return
+        }
+        Task {
+            do {
+                let (id, content) = (targetID, body)
+                _ = try await Task.detached {
+                    try RustCore.send(chatID: id, text: content)
+                }.value
+                self.lastQuickSend = QuickSendRecord(
+                    targetID: targetID, targetName: targetName, text: body,
+                    failed: false, error: nil)
+            } catch {
+                self.lastQuickSend = QuickSendRecord(
+                    targetID: targetID, targetName: targetName, text: body,
+                    failed: true, error: "\(error)")
+            }
+        }
     }
 
     /// Forward palette pick: send the armed bubble's text to the
@@ -2314,6 +2438,9 @@ struct RootView: View {
         .onReceive(NotificationCenter.default.publisher(for: .showSavedMessages)) { _ in
             state.showSaved = true
         }
+        .onReceive(NotificationCenter.default.publisher(for: .showQuickComposer)) { _ in
+            state.summonComposer()
+        }
         // e1-popout shot hook: open the armed pop-out window once the
         // list lands (openWindow lives in the view layer only).
         .onChange(of: state.pendingPopoutID) {
@@ -2380,6 +2507,9 @@ struct RootView: View {
             }
             if CommandLine.arguments.contains("--show-meetings") {
                 openWindow(id: AppIdentity.meetWindowID)
+            }
+            if state.showQuickComposerShot {
+                state.summonComposer()
             }
             if CommandLine.arguments.contains("--show-settings")
                 || CommandLine.arguments.contains("--show-settings-keywords")

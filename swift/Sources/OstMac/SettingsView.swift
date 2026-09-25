@@ -462,6 +462,7 @@ struct SettingsView: View {
             }
         }
         TemplatesSettingsSection(canned: canned)
+        QuickComposerSettingsSection()
     }
 
     @ViewBuilder
