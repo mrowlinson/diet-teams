@@ -640,6 +640,8 @@ needing maintainer buy-in. Minor PRs stand alone; majors are separate PRs.
     (`status/refresh/sign_out/whoami/device_start/authcode_start`
     `_for` variants + `profile_set`/`profile_active` FFI, per-profile
     whoami cache, session→profile binding; no ledger item — own crate).
+   Upstream: https://github.com/eisbaw/ost/pull/50 (wave 8, after
+   #30).
 
 ## Upstream PRs (2026-09-22, base 0892144; main red on sdp E0308 until #5)
 
@@ -861,8 +863,27 @@ Notes:
 - §51 is the exact lane hunk (+6/-5) applied clean to base; §48, §50
   verbatim copies + mod.rs lines.
 
-## Upstream PRs, wave 8 (pending)
+## Upstream PRs, wave 8 (2026-09-25, base 0892144; origin/main still 0892144)
 
-Held: ledger 52 [major] per-account token profiles (d1-accounts;
-renumbered from a duplicate §49 at the R4 merge — unfiled upstream,
-needs future PR).
+Filed the one held item (ledger 52 [major] per-account token
+profiles, d1-accounts; renumbered from a duplicate §49 at the R4
+merge).
+
+Major (need maintainer buy-in):
+- (as) [major] per-account token profiles (ledger 52, after #30 —
+  extends its `load_cached` cache into a per-profile map; #30 after
+  #10; only the top commit new):
+  https://github.com/eisbaw/ost/pull/50
+
+Held: none.
+
+Notes:
+- Test counts quoted in the PR body (sdp dance: temp fix for the
+  local `cargo test` run, reverted, tree clean): 96/96 on the stack
+  (bin + lib targets; 3 new profile tests).
+- Vendored lane evidence at the merge (e9a6f48): ost lib 257 passed,
+  ostmac-core lib 204 passed; FFI twins (`status`/`refresh`/
+  `sign_out`/`whoami`/`device_start`/`authcode_start` `_for` +
+  `profile_set`/`profile_active`) consume the `_for` surface.
+- Verification limit stated in the body: no live 2-account sign-in
+  (second sign-in is interactive, owner-driven).
