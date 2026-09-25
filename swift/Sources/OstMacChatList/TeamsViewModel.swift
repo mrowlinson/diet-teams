@@ -89,6 +89,34 @@ public final class TeamsViewModel: ObservableObject {
         Task { await load() }
     }
 
+    /// Account switch (d1-accounts): drop every row + transient state.
+    /// Lands on `.empty` (static, no spinner); the caller follows
+    /// with `loadQuietly`.
+    public func resetForAccount() {
+        teams = []
+        createError = nil
+        joiningIDs = []
+        joinError = nil
+        teamCreating = false
+        teamCreateError = nil
+        state = .empty
+    }
+
+    /// Fetch without the `.loading` spinner (account-switch follow-up
+    /// to `resetForAccount`): state only moves when results land.
+    public func loadQuietly() async {
+        let fetcher = fetcher
+        do {
+            let response = try await Task.detached {
+                try fetcher()
+            }.value
+            teams = response.teams
+            state = response.teams.isEmpty ? .empty : .loaded
+        } catch {
+            state = .error(Self.message(for: error))
+        }
+    }
+
     /// Create one channel in a team, appending the returned row. Blank
     /// names never reach core; an unknown team id (stale list) lands
     /// silently. Failures surface in `createError`.

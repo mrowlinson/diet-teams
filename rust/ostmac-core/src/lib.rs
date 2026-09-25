@@ -119,7 +119,13 @@ pub(crate) fn token_summary(cfg: &Config) -> serde_json::Value {
 
 /// JSON auth status. Pure read of the cached config, no network.
 pub fn status_json() -> String {
-    match Config::load_cached() {
+    status_json_for(&ost::config::active_profile())
+}
+
+/// JSON auth status for one account profile (switcher reads every
+/// account without switching active). Pure read, no network.
+pub fn status_json_for(profile: &str) -> String {
+    match Config::load_cached_for(profile) {
         Ok(cfg) => {
             let summary = token_summary(&cfg);
             let signed_in = summary["aad"]["expired"] == false
@@ -128,6 +134,21 @@ pub fn status_json() -> String {
         }
         Err(e) => err_json("config_load", e),
     }
+}
+
+/// Switch the active account profile (`""` → default). Every
+/// profile-agnostic path (clients, trouter, legacy entry points)
+/// follows it. Returns `{ok:true, profile}`.
+pub fn profile_set_json(profile: &str) -> String {
+    ost::config::set_active_profile(profile);
+    let active = ost::config::active_profile();
+    json!({"ok": true, "profile": active}).to_string()
+}
+
+/// Current active profile id. Returns `{ok:true, profile}`.
+pub fn profile_active_json() -> String {
+    let active = ost::config::active_profile();
+    json!({"ok": true, "profile": active}).to_string()
 }
 
 // ---------------------------------------------------------------------------
@@ -141,6 +162,9 @@ struct PendingSession {
     created_at: u64,
     expires_in: u64,
     interval: u64,
+    /// Account profile the polled tokens land in (add-account signs
+    /// into a fresh profile while another stays active).
+    profile: String,
 }
 
 fn sessions() -> &'static Mutex<HashMap<String, PendingSession>> {
@@ -162,6 +186,13 @@ fn lock_sessions() -> std::sync::MutexGuard<'static, HashMap<String, PendingSess
 /// Start device-code flow. Returns JSON with `session`, `verification_uri`,
 /// `user_code` (and `message`) or `{ok:false,...}`.
 pub fn device_start_json() -> String {
+    device_start_json_for(&ost::config::active_profile())
+}
+
+/// Start device-code flow for one account profile: the session's
+/// polled tokens land in that profile, never the active one.
+pub fn device_start_json_for(profile: &str) -> String {
+    let target = ost::config::normalize_profile(profile);
     let auth = AuthConfig::default();
     let device_url = format!(
         "https://login.microsoftonline.com/{}/oauth2/v2.0/devicecode",
@@ -217,6 +248,7 @@ pub fn device_start_json() -> String {
                     created_at: now_secs(),
                     expires_in,
                     interval,
+                    profile: target.clone(),
                 },
             );
             Ok(json!({
@@ -243,7 +275,7 @@ pub fn device_start_json() -> String {
 /// - `{ok:true, status:"complete", tokens:{...}}` — tokens saved
 /// - `{ok:false, ...}` — fatal (session dropped)
 pub fn device_poll_json(session: &str) -> String {
-    let (device_code, token_url, client_id, interval) = {
+    let (device_code, token_url, client_id, interval, profile) = {
         let map = lock_sessions();
         match map.get(session) {
             Some(s) => {
@@ -257,6 +289,7 @@ pub fn device_poll_json(session: &str) -> String {
                     s.token_url.clone(),
                     s.client_id.clone(),
                     s.interval,
+                    s.profile.clone(),
                 )
             }
             None => return err_json("no_session", "unknown or finished session"),
@@ -314,7 +347,8 @@ pub fn device_poll_json(session: &str) -> String {
             let save = (|| -> Result<(), String> {
                 let rt = rt()?;
                 rt.block_on(async {
-                    let mut cfg = Config::load_cached().map_err(|e| e.to_string())?;
+                    let mut cfg =
+                        Config::load_cached_for(&profile).map_err(|e| e.to_string())?;
                     cfg.set_access_token(
                         t["access_token"].as_str().unwrap_or("").to_string(),
                         t["expires_in"].as_u64(),
@@ -323,9 +357,9 @@ pub fn device_poll_json(session: &str) -> String {
                     if !rt_tok.is_empty() {
                         cfg.set_refresh_token(rt_tok.to_string());
                     }
-                    cfg.save().map_err(|e| e.to_string())?;
+                    cfg.save_to(&profile).map_err(|e| e.to_string())?;
                     // Best-effort derived tokens (each warns, never fails login).
-                    let _ = ost::auth::oauth::refresh().await;
+                    let _ = ost::auth::oauth::refresh_for(&profile).await;
                     Ok(())
                 })
             })();
@@ -333,8 +367,8 @@ pub fn device_poll_json(session: &str) -> String {
                 return err_json("token_save", e);
             }
             lock_sessions().remove(session);
-            whoami_cache_clear(); // new sign-in may be a different user
-            let tokens = Config::load_cached()
+            whoami_cache_clear_for(&profile); // new sign-in may be a different user
+            let tokens = Config::load_cached_for(&profile)
                 .map(|c| token_summary(&c))
                 .unwrap_or(json!({}));
             json!({"ok": true, "status": "complete", "tokens": tokens}).to_string()
@@ -356,17 +390,24 @@ pub fn device_poll_json(session: &str) -> String {
 /// - `{ok:true, refreshed:false}` — no refresh token stored (run device flow)
 /// - `{ok:false, ...}` — refresh attempted and failed (retryable)
 pub fn refresh_json() -> String {
+    refresh_json_for(&ost::config::active_profile())
+}
+
+/// Refresh one account profile's tokens (per-account refresh without
+/// switching active). Same envelope as [`refresh_json`].
+pub fn refresh_json_for(profile: &str) -> String {
+    let target = ost::config::normalize_profile(profile);
     let run = || -> Result<bool, String> {
         let rt = rt()?;
         rt.block_on(async {
-            ost::auth::oauth::refresh()
+            ost::auth::oauth::refresh_for(&target)
                 .await
                 .map_err(|e| format!("{:#}", e))
         })
     };
     match run() {
         Ok(true) => {
-            let tokens = Config::load_cached()
+            let tokens = Config::load_cached_for(&target)
                 .map(|c| token_summary(&c))
                 .unwrap_or(json!({}));
             json!({"ok": true, "refreshed": true, "tokens": tokens}).to_string()
@@ -379,13 +420,27 @@ pub fn refresh_json() -> String {
 /// Clear all stored tokens (sign out). Drops pending device-code sessions
 /// too. Returns `{ok:true}` or `{ok:false}` when the config can't load/save.
 pub fn sign_out_json() -> String {
-    lock_sessions().clear();
-    browser_auth::clear_browser_sessions();
-    whoami_cache_clear();
+    sign_out_json_for(&ost::config::active_profile())
+}
+
+/// Sign one account profile out (remove-account): clears its tokens
+/// and deletes a non-default profile file, so re-adding needs a full
+/// sign-in. Other profiles are untouched. Pending auth sessions and
+/// the profile's whoami cache entry are dropped. Same envelope.
+pub fn sign_out_json_for(profile: &str) -> String {
+    let target = ost::config::normalize_profile(profile);
+    lock_sessions().retain(|_, s| s.profile != target);
+    browser_auth::clear_browser_sessions_for(&target);
+    whoami_cache_clear_for(&target);
     let run = || -> Result<(), String> {
-        let mut cfg = Config::load_cached().map_err(|e| e.to_string())?;
+        let mut cfg =
+            Config::load_cached_for(&target).map_err(|e| e.to_string())?;
         cfg.clear_tokens();
-        cfg.save().map_err(|e| e.to_string())
+        cfg.save_to(&target).map_err(|e| e.to_string())?;
+        if target != ost::config::DEFAULT_PROFILE {
+            Config::delete_for(&target).map_err(|e| e.to_string())?;
+        }
+        Ok(())
     };
     match run() {
         Ok(()) => json!({"ok": true}).to_string(),
@@ -397,26 +452,41 @@ pub fn sign_out_json() -> String {
 // Whoami (om-identity-own lane)
 // ---------------------------------------------------------------------------
 
-/// Process-lifetime cache of the last successful whoami envelope.
-/// Who Am I can't change without a sign-out/sign-in cycle, and both
-/// [`sign_out_json`] and [`device_poll_json`] (on complete) clear it.
-fn whoami_cache() -> &'static Mutex<Option<String>> {
-    static W: OnceLock<Mutex<Option<String>>> = OnceLock::new();
-    W.get_or_init(|| Mutex::new(None))
+/// Process-lifetime cache of the last successful whoami envelope,
+/// one slot per account profile. Who Am I can't change without a
+/// sign-out/sign-in cycle, and both [`sign_out_json_for`] and the
+/// auth-complete paths clear the profile's slot.
+fn whoami_cache() -> &'static Mutex<HashMap<String, String>> {
+    static W: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+    W.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 fn whoami_cache_clear() {
-    *whoami_cache().lock().unwrap_or_else(|e| e.into_inner()) = None;
+    whoami_cache()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clear();
 }
 
-/// Crate-visible clear for the browser-auth module (same new-user rule).
-pub(crate) fn whoami_cache_clear_pub() {
-    whoami_cache_clear();
+/// Drop one profile's whoami slot (sign-out / new sign-in there).
+fn whoami_cache_clear_for(profile: &str) {
+    whoami_cache()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(&ost::config::normalize_profile(profile));
+}
+
+/// Crate-visible per-profile clear for the browser-auth module.
+pub(crate) fn whoami_cache_clear_for_pub(profile: &str) {
+    whoami_cache_clear_for(profile);
 }
 
 #[cfg(test)]
 fn whoami_cache_store(s: String) {
-    *whoami_cache().lock().unwrap_or_else(|e| e.into_inner()) = Some(s);
+    whoami_cache()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(ost::config::active_profile(), s);
 }
 
 fn whoami_envelope(id: &str, display_name: &str, mail: Option<&str>) -> String {
@@ -432,17 +502,25 @@ fn whoami_envelope(id: &str, display_name: &str, mail: Option<&str>) -> String {
 /// Current user via Graph /me. Requires sign-in; unsigned yields
 /// `{ok:false}`. First call hits network, later calls serve the cache.
 pub fn whoami_json() -> String {
+    whoami_json_for(&ost::config::active_profile())
+}
+
+/// Current user for one account profile (per-profile cache slot +
+/// per-profile client; no active switch needed).
+pub fn whoami_json_for(profile: &str) -> String {
+    let target = ost::config::normalize_profile(profile);
     if let Some(hit) = whoami_cache()
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .clone()
+        .get(&target)
+        .cloned()
     {
         return hit;
     }
     let run = || -> Result<String, String> {
         let rt = rt()?;
         rt.block_on(async {
-            let client = ost::api::client::TeamsClient::new()
+            let client = ost::api::client::TeamsClient::new_for_profile(&target)
                 .await
                 .map_err(|e| format!("{:#}", e))?;
             let info = ost::api::whoami_data(&client)
@@ -453,7 +531,10 @@ pub fn whoami_json() -> String {
     };
     match run() {
         Ok(s) => {
-            *whoami_cache().lock().unwrap_or_else(|e| e.into_inner()) = Some(s.clone());
+            whoami_cache()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(target, s.clone());
             s
         }
         Err(e) => err_json("whoami", e),
@@ -2680,10 +2761,43 @@ pub extern "C" fn ostmac_status() -> *mut c_char {
     string_to_c(status_json())
 }
 
+/// Auth status JSON for one account profile. See [`status_json_for`].
+#[no_mangle]
+pub extern "C" fn ostmac_status_for(profile: *const c_char) -> *mut c_char {
+    match cstr_to_string(profile) {
+        Ok(p) => string_to_c(status_json_for(&p)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
+/// Switch the active account profile. See [`profile_set_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_profile_set(profile: *const c_char) -> *mut c_char {
+    match cstr_to_string(profile) {
+        Ok(p) => string_to_c(profile_set_json(&p)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
+/// Current active profile id. See [`profile_active_json`].
+#[no_mangle]
+pub extern "C" fn ostmac_profile_active() -> *mut c_char {
+    string_to_c(profile_active_json())
+}
+
 /// Device-code start JSON (`session`, `verification_uri`, `user_code`).
 #[no_mangle]
 pub extern "C" fn ostmac_device_start() -> *mut c_char {
     string_to_c(device_start_json())
+}
+
+/// Device-code start for one account profile. See [`device_start_json_for`].
+#[no_mangle]
+pub extern "C" fn ostmac_device_start_for(profile: *const c_char) -> *mut c_char {
+    match cstr_to_string(profile) {
+        Ok(p) => string_to_c(device_start_json_for(&p)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
 }
 
 /// Single poll for `session` (NUL-terminated). See [`device_poll_json`].
@@ -2728,11 +2842,30 @@ pub extern "C" fn ostmac_authcode_cancel(session: *const c_char) -> *mut c_char 
     }
 }
 
+/// Browser-capture start for one account profile.
+/// See [`browser_auth::authcode_start_json_for`]. No network. Caller frees.
+#[no_mangle]
+pub extern "C" fn ostmac_authcode_start_for(profile: *const c_char) -> *mut c_char {
+    match cstr_to_string(profile) {
+        Ok(p) => string_to_c(browser_auth::authcode_start_json_for(&p)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
 /// Current-user JSON (Graph /me, cached). See [`whoami_json`].
 /// Caller frees with [`ostmac_free`].
 #[no_mangle]
 pub extern "C" fn ostmac_whoami() -> *mut c_char {
     string_to_c(whoami_json())
+}
+
+/// Current-user JSON for one account profile. See [`whoami_json_for`].
+#[no_mangle]
+pub extern "C" fn ostmac_whoami_for(profile: *const c_char) -> *mut c_char {
+    match cstr_to_string(profile) {
+        Ok(p) => string_to_c(whoami_json_for(&p)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
 }
 
 /// Chat list JSON. See [`chats_json`].
@@ -3469,10 +3602,28 @@ pub extern "C" fn ostmac_refresh() -> *mut c_char {
     string_to_c(refresh_json())
 }
 
+/// Refresh one account profile's tokens. See [`refresh_json_for`].
+#[no_mangle]
+pub extern "C" fn ostmac_refresh_for(profile: *const c_char) -> *mut c_char {
+    match cstr_to_string(profile) {
+        Ok(p) => string_to_c(refresh_json_for(&p)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
+}
+
 /// Clear all stored tokens (sign out). See [`sign_out_json`].
 #[no_mangle]
 pub extern "C" fn ostmac_sign_out() -> *mut c_char {
     string_to_c(sign_out_json())
+}
+
+/// Sign one account profile out. See [`sign_out_json_for`].
+#[no_mangle]
+pub extern "C" fn ostmac_sign_out_for(profile: *const c_char) -> *mut c_char {
+    match cstr_to_string(profile) {
+        Ok(p) => string_to_c(sign_out_json_for(&p)),
+        Err(e) => string_to_c(err_json("arg", e)),
+    }
 }
 
 /// Own presence JSON (Graph /me/presence). See [`presence_json`].
@@ -4529,7 +4680,32 @@ mod tests {
         assert!(whoami_cache()
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .is_none());
+            .is_empty());
+    }
+
+    #[test]
+    fn profile_set_and_status_for_isolate_accounts() {
+        let prev: serde_json::Value =
+            serde_json::from_str(&profile_active_json()).unwrap();
+        let prev_id = prev["profile"].as_str().unwrap_or("default").to_string();
+        // Switch active and restore immediately (parallel tests in
+        // this binary assume the default active profile).
+        let v: serde_json::Value =
+            serde_json::from_str(&profile_set_json("d1-acct-a")).unwrap();
+        assert_eq!(v["ok"], true);
+        assert_eq!(v["profile"], "d1-acct-a");
+        let back: serde_json::Value =
+            serde_json::from_str(&profile_set_json(&prev_id)).unwrap();
+        assert_eq!(back["profile"], prev_id);
+        // Unknown profile: pure read, unsigned, no writes.
+        let st: serde_json::Value =
+            serde_json::from_str(&status_json_for("d1-acct-no-such")).unwrap();
+        assert_eq!(st["ok"], true);
+        assert_eq!(st["signed_in"], false);
+        // Sign-out of a missing profile still reports ok (nothing to clear).
+        let so: serde_json::Value =
+            serde_json::from_str(&sign_out_json_for("d1-acct-no-such")).unwrap();
+        assert_eq!(so["ok"], true);
     }
 
     #[test]

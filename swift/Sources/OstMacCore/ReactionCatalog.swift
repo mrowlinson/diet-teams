@@ -166,17 +166,30 @@ public enum ReactionRecents {
         return out
     }
 
+    /// Per-account key (d1-accounts): default keeps the legacy key.
+    public static func key(for accountID: String) -> String {
+        AccountProfile.key(defaultsKey, for: accountID)
+    }
+
     /// Load recents, dropping stale non-emoji values defensively.
     /// Empty (fresh user) loads the full seed grid.
-    public static func load(defaults: UserDefaults = .standard) -> [String] {
-        let raw = defaults.stringArray(forKey: defaultsKey) ?? []
+    public static func load(
+        defaults: UserDefaults = .standard,
+        accountID: String = AccountProfile.defaultID
+    ) -> [String] {
+        let raw = defaults.stringArray(forKey: key(for: accountID)) ?? []
         let valid = Array(raw.filter { $0.count == 1 }.prefix(maxCount))
         return valid.isEmpty ? seed : valid
     }
 
     /// Record one reacted emoji (single graphemes only).
-    public static func record(_ emoji: String, defaults: UserDefaults = .standard) {
+    public static func record(
+        _ emoji: String, defaults: UserDefaults = .standard,
+        accountID: String = AccountProfile.defaultID
+    ) {
         guard emoji.count == 1 else { return }
-        defaults.set(withRecorded(load(defaults: defaults), emoji: emoji), forKey: defaultsKey)
+        defaults.set(
+            withRecorded(load(defaults: defaults, accountID: accountID), emoji: emoji),
+            forKey: key(for: accountID))
     }
 }

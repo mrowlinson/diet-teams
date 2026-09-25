@@ -14,12 +14,17 @@
 //
 // Threading: @MainActor (ObservableObject for the sidebar).
 import Foundation
+import OstMacCore
 
 /// User-pinned chat ids in pin-time order (oldest first).
 @MainActor
 public final class UserPinStore: ObservableObject {
     /// UserDefaults key for the ordered id array.
     public static let defaultsKey = "omUserPinsV1"
+    /// Per-account key (d1-accounts): default keeps the legacy key.
+    nonisolated public static func key(for accountID: String) -> String {
+        AccountProfile.key(defaultsKey, for: accountID)
+    }
 
     /// Pinned ids, oldest pin first. Sanitized on load (blanks and
     /// dupes dropped, first occurrence kept).

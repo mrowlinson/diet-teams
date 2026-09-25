@@ -139,6 +139,10 @@ public final class CallHistoryStore: ObservableObject {
     public var onRedial: ((CallRecord) -> Void)?
 
     public static let defaultsKey = "omCallHistoryV1"
+    /// Per-account key (d1-accounts): default keeps the legacy key.
+    nonisolated public static func key(for accountID: String) -> String {
+        AccountProfile.key(defaultsKey, for: accountID)
+    }
     public static let maxRecords = 100
 
     private let defaults: UserDefaults

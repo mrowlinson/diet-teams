@@ -24,6 +24,12 @@ struct SettingsView: View {
     @ObservedObject private var chats: ChatListViewModel
     @ObservedObject private var quiet: QuietHoursStore
     @ObservedObject private var blocked: BlockedStore
+    @ObservedObject private var accounts: AccountStore
+    private let onAccountAdded: (AuthViewModel) -> Void
+    private let onRemoveAccount: (String) -> Void
+    @State private var pendingAddVM: AuthViewModel?
+    @State private var showAddAccount = false
+    @State private var removeCandidate: AccountRecord?
     /// KLIPY BYO key, keychain-backed (never UserDefaults). Loaded on
     /// appear, saved on every edit (blank clears).
     @State private var klipyAPIKey = ""
@@ -37,7 +43,10 @@ struct SettingsView: View {
         rules: RulesStore = RulesStore(),
         chats: ChatListViewModel,
         quiet: QuietHoursStore = QuietHoursStore(),
-        blocked: BlockedStore = BlockedStore(defaults: nil)
+        blocked: BlockedStore = BlockedStore(defaults: nil),
+        accounts: AccountStore = AccountStore(),
+        onAccountAdded: @escaping (AuthViewModel) -> Void = { _ in },
+        onRemoveAccount: @escaping (String) -> Void = { _ in }
     ) {
         _auth = ObservedObject(wrappedValue: auth)
         _catchUp = ObservedObject(wrappedValue: catchUp)
@@ -46,6 +55,9 @@ struct SettingsView: View {
         _chats = ObservedObject(wrappedValue: chats)
         _quiet = ObservedObject(wrappedValue: quiet)
         _blocked = ObservedObject(wrappedValue: blocked)
+        _accounts = ObservedObject(wrappedValue: accounts)
+        self.onAccountAdded = onAccountAdded
+        self.onRemoveAccount = onRemoveAccount
         fixedAccount = nil
     }
 
@@ -59,6 +71,9 @@ struct SettingsView: View {
         _chats = ObservedObject(wrappedValue: ChatListViewModel())
         _quiet = ObservedObject(wrappedValue: QuietHoursStore())
         _blocked = ObservedObject(wrappedValue: BlockedStore(defaults: nil))
+        _accounts = ObservedObject(wrappedValue: AccountStore())
+        onAccountAdded = { _ in }
+        onRemoveAccount = { _ in }
         fixedAccount = account
     }
 
@@ -70,6 +85,47 @@ struct SettingsView: View {
                         .textSelection(.enabled)
                 }
                 if fixedAccount == nil {
+                    Section("Accounts") {
+                        if accounts.accounts.isEmpty {
+                            Text("No accounts yet — sign in below to add the first.")
+                                .font(DietType.caption1)
+                                .foregroundStyle(DietColor.textSecondaryColor)
+                        } else {
+                            ForEach(accounts.accounts) { record in
+                                SettingsAccountRow(
+                                    record: record,
+                                    vm: accounts.vm(for: record.id),
+                                    isActive: record.id == accounts.activeID,
+                                    onRemove: { removeCandidate = record })
+                            }
+                            Button("Add Account…") {
+                                pendingAddVM = accounts.beginAdd()
+                                showAddAccount = true
+                            }
+                        }
+                    }
+                    .sheet(isPresented: $showAddAccount) {
+                        if let vm = pendingAddVM {
+                            AddAccountSheet(vm: vm, onAdded: onAccountAdded)
+                        }
+                    }
+                    .confirmationDialog(
+                        "Remove this account?",
+                        isPresented: Binding(
+                            get: { removeCandidate != nil },
+                            set: { if !$0 { removeCandidate = nil } }),
+                        titleVisibility: .visible
+                    ) {
+                        Button("Remove Account", role: .destructive) {
+                            if let id = removeCandidate?.id {
+                                onRemoveAccount(id)
+                            }
+                            removeCandidate = nil
+                        }
+                        Button("Cancel", role: .cancel) { removeCandidate = nil }
+                    } message: {
+                        Text("Its sign-in and per-account caches are deleted from this Mac. Other accounts are unaffected.")
+                    }
                     Section("Sign in") {
                         AuthView(model: auth, embedded: true)
                     }
@@ -283,5 +339,67 @@ struct SettingsView: View {
     private func dayName(_ day: Int) -> String {
         let symbols = Calendar.current.weekdaySymbols
         return symbols[(day - 1 + symbols.count) % symbols.count]
+    }
+}
+
+/// One Settings Accounts row: state dot + name + per-account status +
+/// active marker + remove. Observes the account's VM when present.
+struct SettingsAccountRow: View {
+    let record: AccountRecord
+    let vm: AuthViewModel?
+    let isActive: Bool
+    let onRemove: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if let vm {
+                ObservedAccountDot(vm: vm)
+            } else {
+                Circle().fill(Color.gray).frame(width: 8, height: 8)
+            }
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: 6) {
+                    Text(record.displayName).lineLimit(1)
+                    if isActive {
+                        Text("Active")
+                            .font(DietType.caption1)
+                            .foregroundStyle(DietColor.textSecondaryColor)
+                    }
+                }
+                if let upn = record.upn, !upn.isEmpty {
+                    Text(upn)
+                        .font(DietType.caption1)
+                        .foregroundStyle(DietColor.textSecondaryColor)
+                        .lineLimit(1)
+                }
+                if let vm {
+                    ObservedAccountStatus(vm: vm)
+                }
+            }
+            Spacer()
+            Button("Remove", role: .destructive, action: onRemove)
+        }
+        .accessibilityLabel("\(record.displayName)\(isActive ? ", active" : "")")
+    }
+}
+
+private struct ObservedAccountDot: View {
+    @ObservedObject var vm: AuthViewModel
+
+    var body: some View {
+        Circle()
+            .fill(AccountStateDot.color(for: vm.state))
+            .frame(width: 8, height: 8)
+    }
+}
+
+private struct ObservedAccountStatus: View {
+    @ObservedObject var vm: AuthViewModel
+
+    var body: some View {
+        Text(AccountStateDot.label(for: vm.state))
+            .font(DietType.caption1)
+            .foregroundStyle(DietColor.textSecondaryColor)
+            .lineLimit(1)
     }
 }

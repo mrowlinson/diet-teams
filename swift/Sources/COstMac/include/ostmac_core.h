@@ -17,9 +17,24 @@ int ostmac_init(void);
 // Auth status JSON. Caller frees.
 char *ostmac_status(void);
 
+// Auth status JSON for one account profile (no active switch).
+// Caller frees. No network.
+char *ostmac_status_for(const char *profile);
+
+// Switch the active account profile ("" = default): {ok, profile}.
+// Caller frees. No network.
+char *ostmac_profile_set(const char *profile);
+
+// Current active profile id: {ok, profile}. Caller frees. No network.
+char *ostmac_profile_active(void);
+
 // Device-code start JSON: session, verification_uri, user_code, message.
 // Caller frees. Hits network.
 char *ostmac_device_start(void);
+
+// Device-code start for one account profile (polled tokens land there).
+// Caller frees. Hits network.
+char *ostmac_device_start_for(const char *profile);
 
 // Single poll for session (NUL-terminated C string).
 // pending | complete (+tokens saved) | {ok:false}. Caller frees.
@@ -40,10 +55,18 @@ char *ostmac_authcode_complete(const char *session, const char *callback);
 // Drop one pending browser session: {ok, cancelled}. Caller frees.
 char *ostmac_authcode_cancel(const char *session);
 
+// Browser-capture start for one account profile (exchanged tokens land
+// there). No network. Caller frees.
+char *ostmac_authcode_start_for(const char *profile);
+
 // Current-user JSON (Graph /me): {ok,id,display_name,mail?}.
 // Requires sign-in. Core caches after the first call; sign-out clears.
 // Caller frees.
 char *ostmac_whoami(void);
+
+// Current-user JSON for one account profile (per-profile cache, no
+// active switch). Caller frees.
+char *ostmac_whoami_for(const char *profile);
 
 // Chat list JSON (requires sign-in). Caller frees.
 char *ostmac_chats(int limit);
@@ -342,6 +365,14 @@ char *ostmac_refresh(void);
 // Clear all stored tokens (sign out); drops pending device sessions.
 // {ok:true} or {ok:false}. Caller frees. No network.
 char *ostmac_sign_out(void);
+
+// Sign one account profile out (clears its tokens, deletes a
+// non-default profile file; other profiles untouched). Caller frees.
+char *ostmac_sign_out_for(const char *profile);
+
+// Refresh one account profile's tokens (no active switch). Same
+// envelope as ostmac_refresh. Caller frees.
+char *ostmac_refresh_for(const char *profile);
 
 // Own presence JSON (Graph /me/presence): {ok,availability,activity}.
 // Requires sign-in. Caller frees. Hits network.

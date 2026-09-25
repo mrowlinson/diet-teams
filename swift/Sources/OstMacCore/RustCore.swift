@@ -13,6 +13,64 @@ public enum RustCore {
         try call(ostmac_status(), as: StatusResponse.self)
     }
 
+    // MARK: - Account profiles (d1-accounts)
+
+    /// Auth status for one account profile (no active switch).
+    public static func status(profile: String) throws -> StatusResponse {
+        try profile.withCString { ptr in
+            try call(ostmac_status_for(ptr), as: StatusResponse.self)
+        }
+    }
+
+    /// Switch the core's active account profile. Every profile-agnostic
+    /// path (clients, trouter, legacy entry points) follows it.
+    public static func profileSet(_ profile: String) throws -> ProfileResponse {
+        try profile.withCString { ptr in
+            try call(ostmac_profile_set(ptr), as: ProfileResponse.self)
+        }
+    }
+
+    /// Current active profile id (pure core read, no network).
+    public static func profileActive() throws -> ProfileResponse {
+        try call(ostmac_profile_active(), as: ProfileResponse.self)
+    }
+
+    /// Device-code start for one account profile (polled tokens land there).
+    public static func deviceStart(profile: String) throws -> DeviceStart {
+        try profile.withCString { ptr in
+            try call(ostmac_device_start_for(ptr), as: DeviceStart.self)
+        }
+    }
+
+    /// Browser-capture start for one account profile.
+    public static func browserStart(profile: String) throws -> AuthCodeStart {
+        try profile.withCString { ptr in
+            try call(ostmac_authcode_start_for(ptr), as: AuthCodeStart.self)
+        }
+    }
+
+    /// Current user for one account profile (no active switch).
+    public static func whoami(profile: String) throws -> WhoamiResponse {
+        try profile.withCString { ptr in
+            try call(ostmac_whoami_for(ptr), as: WhoamiResponse.self)
+        }
+    }
+
+    /// Refresh one account profile's tokens (no active switch).
+    public static func refresh(profile: String) throws -> RefreshResponse {
+        try profile.withCString { ptr in
+            try call(ostmac_refresh_for(ptr), as: RefreshResponse.self)
+        }
+    }
+
+    /// Sign one account profile out (clears its tokens, deletes a
+    /// non-default profile file; other profiles untouched).
+    public static func signOut(profile: String) throws -> SignOutResponse {
+        try profile.withCString { ptr in
+            try call(ostmac_sign_out_for(ptr), as: SignOutResponse.self)
+        }
+    }
+
     public static func deviceStart() throws -> DeviceStart {
         try call(ostmac_device_start(), as: DeviceStart.self)
     }

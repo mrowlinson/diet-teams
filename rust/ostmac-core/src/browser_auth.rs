@@ -39,6 +39,8 @@ struct BrowserSession {
     redirect_uri: String,
     created_at: u64,
     expires_in: u64,
+    /// Account profile the exchanged tokens land in.
+    profile: String,
 }
 
 fn browser_sessions() -> &'static Mutex<HashMap<String, BrowserSession>> {
@@ -50,9 +52,9 @@ fn lock_browser() -> std::sync::MutexGuard<'static, HashMap<String, BrowserSessi
     browser_sessions().lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// Drop all pending browser sessions (sign-out also calls this).
-pub(crate) fn clear_browser_sessions() {
-    lock_browser().clear();
+/// Drop pending browser sessions for one account profile only.
+pub(crate) fn clear_browser_sessions_for(profile: &str) {
+    lock_browser().retain(|_, s| s.profile != profile);
 }
 
 fn new_browser_session_id() -> String {
@@ -213,6 +215,13 @@ fn parse_callback(callback: &str) -> Option<CallbackParse> {
 /// Start browser-capture login. No network. Returns
 /// `{ok, session, authorize_url, redirect_uri, expires_in}`.
 pub fn authcode_start_json() -> String {
+    authcode_start_json_for(&ost::config::active_profile())
+}
+
+/// Start browser-capture login for one account profile: the
+/// exchanged tokens land in that profile, never the active one.
+pub fn authcode_start_json_for(profile: &str) -> String {
+    let target = ost::config::normalize_profile(profile);
     let auth = AuthConfig::default();
     let verifier = rand_verifier();
     let state = rand_state();
@@ -236,6 +245,7 @@ pub fn authcode_start_json() -> String {
             redirect_uri: auth.redirect_uri.to_string(),
             created_at: now_secs(),
             expires_in: EXPIRES_IN,
+            profile: target,
         },
     );
     json!({
@@ -257,7 +267,7 @@ pub fn authcode_start_json() -> String {
 /// Parse/state failures keep the session (user can retry in the webview);
 /// only success drops it. Exchange network failures also keep it.
 pub fn authcode_complete_json(session: &str, callback: &str) -> String {
-    let (verifier, expect_state, token_url, client_id, redirect_uri) = {
+    let (verifier, expect_state, token_url, client_id, redirect_uri, profile) = {
         let map = lock_browser();
         match map.get(session) {
             Some(s) => {
@@ -272,6 +282,7 @@ pub fn authcode_complete_json(session: &str, callback: &str) -> String {
                     s.token_url.clone(),
                     s.client_id.clone(),
                     s.redirect_uri.clone(),
+                    s.profile.clone(),
                 )
             }
             None => return err_json("no_session", "unknown or finished session"),
@@ -348,24 +359,24 @@ pub fn authcode_complete_json(session: &str, callback: &str) -> String {
     let save = (|| -> Result<serde_json::Value, String> {
         let r = crate::rt()?;
         r.block_on(async {
-            let mut cfg =
-                ost::config::Config::load_cached().map_err(|e| e.to_string())?;
+            let mut cfg = ost::config::Config::load_cached_for(&profile)
+                .map_err(|e| e.to_string())?;
             cfg.set_access_token(access, expires_in);
             if !refresh.is_empty() {
                 cfg.set_refresh_token(refresh);
             }
-            cfg.save().map_err(|e| e.to_string())?;
-            let _ = ost::auth::oauth::refresh().await;
+            cfg.save_to(&profile).map_err(|e| e.to_string())?;
+            let _ = ost::auth::oauth::refresh_for(&profile).await;
             Ok::<(), String>(())
         })?;
-        ost::config::Config::load_cached()
+        ost::config::Config::load_cached_for(&profile)
             .map(|c| crate::token_summary(&c))
             .map_err(|e| e.to_string())
     })();
     match save {
         Ok(tokens) => {
             lock_browser().remove(session);
-            crate::whoami_cache_clear_pub();
+            crate::whoami_cache_clear_for_pub(&profile);
             json!({"ok": true, "status": "complete", "tokens": tokens}).to_string()
         }
         Err(e) => err_json("token_save", e),

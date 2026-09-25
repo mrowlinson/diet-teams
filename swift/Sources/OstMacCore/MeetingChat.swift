@@ -408,13 +408,22 @@ public final class MeetingChatStore: ObservableObject {
 
     // MARK: - File persistence (default seam)
 
-    public static func meetingsDirectory() -> URL? {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
-            .appendingPathComponent("Diet Teams/meetings", isDirectory: true)
+    nonisolated public static func meetingsDirectory() -> URL? {
+        meetingsDirectory(for: AccountProfile.defaultID)
+    }
+
+    /// Per-account meetings dir (d1-accounts): default keeps the
+    /// legacy dir; others nest `<accountId>/` under it.
+    nonisolated public static func meetingsDirectory(for accountID: String) -> URL? {
+        guard let dir = FileManager.default.urls(
+            for: .applicationSupportDirectory, in: .userDomainMask
+        ).first?.appendingPathComponent("Diet Teams/meetings", isDirectory: true)
+        else { return nil }
+        return AccountProfile.dir(dir, for: accountID)
     }
 
     /// Thread id → safe filename (alphanumerics kept, capped length).
-    public static func fileName(for threadID: String) -> String {
+    nonisolated public static func fileName(for threadID: String) -> String {
         let safe = threadID.unicodeScalars.map {
             CharacterSet.alphanumerics.contains($0) ? String($0) : "_"
         }.joined()
@@ -422,22 +431,37 @@ public final class MeetingChatStore: ObservableObject {
         return (trimmed.isEmpty ? "meeting" : trimmed) + ".json"
     }
 
-    public static func fileLoad(threadID: String) -> [ChatMessage] {
-        guard let dir = meetingsDirectory() else { return [] }
+    nonisolated public static func fileLoad(threadID: String) -> [ChatMessage] {
+        fileLoad(threadID: threadID, for: AccountProfile.defaultID)
+    }
+
+    /// Load one thread's snapshot from one account's namespace.
+    nonisolated public static func fileLoad(threadID: String, for accountID: String) -> [ChatMessage] {
+        guard let dir = meetingsDirectory(for: accountID) else { return [] }
         let url = dir.appendingPathComponent(fileName(for: threadID))
         guard let data = try? Data(contentsOf: url) else { return [] }
         return (try? JSONDecoder().decode([ChatMessage].self, from: data)) ?? []
     }
 
-    public static func fileSave(threadID: String, messages: [ChatMessage]) {
-        guard let dir = meetingsDirectory() else { return }
+    nonisolated public static func fileSave(threadID: String, messages: [ChatMessage]) {
+        fileSave(threadID: threadID, messages: messages, for: AccountProfile.defaultID)
+    }
+
+    /// Save one thread's snapshot into one account's namespace.
+    nonisolated public static func fileSave(threadID: String, messages: [ChatMessage], for accountID: String) {
+        guard let dir = meetingsDirectory(for: accountID) else { return }
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         guard let data = try? JSONEncoder().encode(messages) else { return }
         try? data.write(to: dir.appendingPathComponent(fileName(for: threadID)), options: .atomic)
     }
 
-    public static func fileDelete(threadID: String) {
-        guard let dir = meetingsDirectory() else { return }
+    nonisolated public static func fileDelete(threadID: String) {
+        fileDelete(threadID: threadID, for: AccountProfile.defaultID)
+    }
+
+    /// Delete one thread's snapshot from one account's namespace.
+    nonisolated public static func fileDelete(threadID: String, for accountID: String) {
+        guard let dir = meetingsDirectory(for: accountID) else { return }
         try? FileManager.default.removeItem(at: dir.appendingPathComponent(fileName(for: threadID)))
     }
 }

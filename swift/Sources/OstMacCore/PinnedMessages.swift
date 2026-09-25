@@ -52,6 +52,10 @@ public struct PinnedMessage: Codable, Sendable, Equatable, Identifiable {
 /// Pure pinned-strip helpers (store, strip view, and tests share them).
 public enum PinnedMessages {
     public static let defaultsKey = "om.pinnedMessages.v1"
+    /// Per-account key (d1-accounts): default keeps the legacy key.
+    public static func key(for accountID: String) -> String {
+        AccountProfile.key(defaultsKey, for: accountID)
+    }
     /// Strip preview width: one collapsed line, 80 chars + ellipsis.
     public static let previewMax = 80
 
