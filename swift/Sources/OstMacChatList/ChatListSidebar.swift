@@ -12,8 +12,14 @@ public struct ChatListSidebar: View {
     @ObservedObject private var mentions: MentionStore
     @ObservedObject private var rules: RulesStore
     @ObservedObject private var snooze: SnoozeStore
+    @ObservedObject private var activity: ActivityStore
+    @ObservedObject private var notifs: MessageNotifications
+    private let onJumpActivity: (ActivityTarget) -> Void
     @State private var searchText = ""
     @State private var mentionsOnly = false
+    /// e1-activity sheets (native, section-local).
+    @State private var showActivity = false
+    @State private var showMentionsCenter = false
     @State private var showHidden = false
     /// Selected folder filter (d1-folders): nil = "All chats".
     @State private var selectedFolderID: String?
@@ -40,10 +46,15 @@ public struct ChatListSidebar: View {
         mentions: MentionStore = MentionStore(),
         rules: RulesStore = RulesStore(),
         snooze: SnoozeStore = SnoozeStore(),
+        activity: ActivityStore = ActivityStore(),
+        notifs: MessageNotifications = MessageNotifications(),
+        onJumpActivity: @escaping (ActivityTarget) -> Void = { _ in },
         initialFilter: String = "",
         initialFolderID: String? = nil,
         folderManageOpen: Bool = false,
         initialEditingRuleID: String? = nil,
+        activityOpen: Bool = false,
+        mentionsCenterOpen: Bool = false,
         onPopOut: ((String) -> Void)? = nil
     ) {
         self.model = model
@@ -52,11 +63,16 @@ public struct ChatListSidebar: View {
         self.mentions = mentions
         self.rules = rules
         self.snooze = snooze
+        self.activity = activity
+        self.notifs = notifs
+        self.onJumpActivity = onJumpActivity
         self.onPopOut = onPopOut
         _searchText = State(initialValue: initialFilter)
         _selectedFolderID = State(initialValue: initialFolderID)
         _showFolderManager = State(initialValue: folderManageOpen)
         self.initialEditingRuleID = initialEditingRuleID
+        _showActivity = State(initialValue: activityOpen)
+        _showMentionsCenter = State(initialValue: mentionsCenterOpen)
     }
 
     public var body: some View {
@@ -127,6 +143,28 @@ public struct ChatListSidebar: View {
             SnoozePickerSheet(chat: chat) { duration in
                 snooze.snooze(chatID: chat.id, duration: duration)
                 pendingSnooze = nil
+            }
+        }
+        // e1-activity: feed + mentions-center sheets. Row taps dismiss
+        // then jump (the sheet never hosts the conversation itself).
+        .sheet(isPresented: $showActivity) {
+            NavigationStack {
+                ActivityFeedView(
+                    store: activity, showPreview: notifs.showPreview
+                ) { target in
+                    showActivity = false
+                    onJumpActivity(target)
+                }
+            }
+        }
+        .sheet(isPresented: $showMentionsCenter) {
+            NavigationStack {
+                MentionsCenterView(
+                    store: activity, showPreview: notifs.showPreview
+                ) { target in
+                    showMentionsCenter = false
+                    onJumpActivity(target)
+                }
             }
         }
     }
@@ -208,6 +246,10 @@ public struct ChatListSidebar: View {
             folderRow
             DietSeamH()
             mentionsRow
+            DietSeamH()
+            activityRow
+            DietSeamH()
+            mentionsCenterRow
             DietSeamH()
             hiddenRow
             DietSeamH()
@@ -425,6 +467,71 @@ public struct ChatListSidebar: View {
         .accessibilityIdentifier("mentions")
         .plainFocusRing()
         .help("Show only threads that mention you")
+    }
+
+    /// Activity row (e1-activity): stable id `activity`. Tapping opens
+    /// the feed sheet; the count names unreviewed items. Always
+    /// present (stable for shots/tests), muted at zero. The Mentions
+    /// filter row above is untouched (separate behavior).
+    private var activityRow: some View {
+        Button {
+            showActivity = true
+        } label: {
+            HStack(spacing: DietSpace.sm) {
+                Image(systemName: "bell.circle")
+                    .font(.system(size: DietSize.iconMD))
+                    .foregroundStyle(DietColor.textSecondaryColor)
+                Text("Activity")
+                    .font(DietType.headline)
+                    .foregroundStyle(DietColor.textSecondaryColor)
+                Spacer()
+                if activity.unreviewedCount > 0 {
+                    Text("\(activity.unreviewedCount)")
+                        .font(DietType.captionMono)
+                        .foregroundStyle(DietColor.textSecondaryColor)
+                }
+            }
+            .padding(.horizontal, DietSpace.sm)
+            .padding(.vertical, DietSpace.xs)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .id("activity")
+        .accessibilityIdentifier("activity")
+        .plainFocusRing()
+        .help("Open the activity feed")
+    }
+
+    /// Mentions-center row (e1-activity): stable id
+    /// `mentions-center`. Tapping opens the reviewable center sheet;
+    /// the count names unreviewed mentions + channel blasts.
+    private var mentionsCenterRow: some View {
+        Button {
+            showMentionsCenter = true
+        } label: {
+            HStack(spacing: DietSpace.sm) {
+                Image(systemName: "tray.full")
+                    .font(.system(size: DietSize.iconMD))
+                    .foregroundStyle(DietColor.textSecondaryColor)
+                Text("All Mentions")
+                    .font(DietType.headline)
+                    .foregroundStyle(DietColor.textSecondaryColor)
+                Spacer()
+                if activity.mentionItems.count > 0 {
+                    Text("\(activity.mentionItems.count)")
+                        .font(DietType.captionMono)
+                        .foregroundStyle(DietColor.textSecondaryColor)
+                }
+            }
+            .padding(.horizontal, DietSpace.sm)
+            .padding(.vertical, DietSpace.xs)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .id("mentions-center")
+        .accessibilityIdentifier("mentions-center")
+        .plainFocusRing()
+        .help("Review every mention across chats and channels")
     }
 
     /// Show-hidden row (om-mute-hide): stable id `show-hidden`. Tapping

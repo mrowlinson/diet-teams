@@ -25,6 +25,9 @@ public struct SidebarColumn: View {
     @ObservedObject private var mentions: MentionStore
     @ObservedObject private var rules: RulesStore
     @ObservedObject private var snooze: SnoozeStore
+    @ObservedObject private var activity: ActivityStore
+    @ObservedObject private var notifs: MessageNotifications
+    private let onJumpActivity: (ActivityTarget) -> Void
     private let openChatID: String?
     private let initialFilter: String
     private let channelCreateOpen: Bool
@@ -35,6 +38,9 @@ public struct SidebarColumn: View {
     private let folderManageOpen: Bool
     /// d1-folders shot hook: rule id with its editor expanded.
     private let initialEditingRuleID: String?
+    /// e1-activity shot hooks: feed / center sheets open at launch.
+    private let activityOpen: Bool
+    private let mentionsCenterOpen: Bool
     private let onOpenChannel: (String, String) -> Void
     /// Pop-out tap passthrough (e1-popout): sidebar → host openWindow.
     private let onPopOut: ((String) -> Void)?
@@ -52,6 +58,9 @@ public struct SidebarColumn: View {
         mentions: MentionStore = MentionStore(),
         rules: RulesStore = RulesStore(),
         snooze: SnoozeStore = SnoozeStore(),
+        activity: ActivityStore = ActivityStore(),
+        notifs: MessageNotifications = MessageNotifications(),
+        onJumpActivity: @escaping (ActivityTarget) -> Void = { _ in },
         openChatID: String? = nil,
         initialSection: SidebarSection = .chats,
         initialFilter: String = "",
@@ -60,6 +69,8 @@ public struct SidebarColumn: View {
         initialFolderID: String? = nil,
         folderManageOpen: Bool = false,
         initialEditingRuleID: String? = nil,
+        activityOpen: Bool = false,
+        mentionsCenterOpen: Bool = false,
         onOpenChannel: @escaping (String, String) -> Void,
         onPopOut: ((String) -> Void)? = nil
     ) {
@@ -75,6 +86,9 @@ public struct SidebarColumn: View {
         self.mentions = mentions
         self.rules = rules
         self.snooze = snooze
+        self.activity = activity
+        self.notifs = notifs
+        self.onJumpActivity = onJumpActivity
         self.openChatID = openChatID
         self.initialFilter = initialFilter
         self.channelCreateOpen = channelCreateOpen
@@ -82,6 +96,8 @@ public struct SidebarColumn: View {
         self.initialFolderID = initialFolderID
         self.folderManageOpen = folderManageOpen
         self.initialEditingRuleID = initialEditingRuleID
+        self.activityOpen = activityOpen
+        self.mentionsCenterOpen = mentionsCenterOpen
         _section = State(initialValue: initialSection)
         self.onOpenChannel = onOpenChannel
         self.onPopOut = onPopOut
@@ -95,7 +111,7 @@ public struct SidebarColumn: View {
             DietSeamH()
             switch section {
             case .chats:
-                ChatListSidebar(model: chats, presence: presence, unread: unread, mentions: mentions, rules: rules, snooze: snooze, initialFilter: initialFilter, initialFolderID: initialFolderID, folderManageOpen: folderManageOpen, initialEditingRuleID: initialEditingRuleID, onPopOut: onPopOut)
+                ChatListSidebar(model: chats, presence: presence, unread: unread, mentions: mentions, rules: rules, snooze: snooze, activity: activity, notifs: notifs, onJumpActivity: onJumpActivity, initialFilter: initialFilter, initialFolderID: initialFolderID, folderManageOpen: folderManageOpen, initialEditingRuleID: initialEditingRuleID, activityOpen: activityOpen, mentionsCenterOpen: mentionsCenterOpen, onPopOut: onPopOut)
                     .transition(.opacity)
             case .teams:
                 TeamsBrowser(
