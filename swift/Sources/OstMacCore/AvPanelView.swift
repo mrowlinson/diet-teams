@@ -768,13 +768,13 @@ public struct AvPanelView: View {
                                     model.refreshCaps()
                                     model.refreshProbe()
                                 }
-                                .buttonStyle(.dietSecondary)
+                                .buttonStyle(.bordered)
                                 Button("Rescan Devices") {
                                     model.rescanDevices()
                                     cameras = CameraCapture
                                         .videoDevices()
                                 }
-                                .buttonStyle(.dietSecondary)
+                                .buttonStyle(.bordered)
                             }
                             diagRow("core", model.caps)
                             diagRow("devices", model.probe)
@@ -782,7 +782,7 @@ public struct AvPanelView: View {
                                 Button("Echo check") {
                                     model.runToneCheck()
                                 }
-                                .buttonStyle(.dietSecondary)
+                                .buttonStyle(.bordered)
                                 Text(model.check)
                                     .font(DietType.caption1)
                                     .foregroundStyle(DietColor
@@ -792,7 +792,7 @@ public struct AvPanelView: View {
                                 Button("Dry run") {
                                     model.runDryRun()
                                 }
-                                .buttonStyle(.dietSecondary)
+                                .buttonStyle(.bordered)
                                 Text(model.dry)
                                     .font(DietType.caption1)
                                     .foregroundStyle(DietColor
@@ -802,11 +802,11 @@ public struct AvPanelView: View {
                                 Button("VT round-trip") {
                                     model.runRoundTrip()
                                 }
-                                .buttonStyle(.dietSecondary)
+                                .buttonStyle(.bordered)
                                 Button("Remote loopback") {
                                     model.runRemoteLoopback()
                                 }
-                                .buttonStyle(.dietSecondary)
+                                .buttonStyle(.bordered)
                                 Text(model.decode)
                                     .font(DietType.caption1)
                                     .foregroundStyle(DietColor
@@ -816,7 +816,7 @@ public struct AvPanelView: View {
                                 Button("Live loopback") {
                                     model.runLiveLoopback()
                                 }
-                                .buttonStyle(.dietSecondary)
+                                .buttonStyle(.bordered)
                                 Text(model.loop)
                                     .font(DietType.caption1)
                                     .foregroundStyle(DietColor
@@ -870,11 +870,11 @@ public struct AvPanelView: View {
                         CallBanner(store: call)
                         HStack(spacing: DietSpace.sm) {
                             Button("Echo live") { call.echoLive() }
-                                .buttonStyle(.dietPrimary)
+                                .buttonStyle(.borderedProminent)
                                 .disabled(call.busy
                                     || (call.call?.isActive ?? false))
-                            Button("End") { call.end() }
-                                .buttonStyle(.dietDestructive)
+                            Button("End", role: .destructive) { call.end() }
+                                .buttonStyle(.bordered)
                                 .disabled(call.busy
                                     || !(call.call?.isActive ?? false))
                             if let m = call.media {
@@ -910,7 +910,7 @@ public struct AvPanelView: View {
                                         startCamera(live: true)
                                     }
                                 }
-                                .buttonStyle(.dietSecondary)
+                                .buttonStyle(.bordered)
                             }
                         }
                     }

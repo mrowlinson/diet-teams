@@ -26,8 +26,8 @@ public enum A11yLabels {
 
 /// Visible keyboard-focus ring for `.plain` icon buttons. The plain
 /// style strips the bezel that carries the system ring, so focus
-/// would be invisible; this overlays the repo's 2pt accent outline
-/// (same language as DietField/sendBox) only while focused.
+/// would be invisible; this overlays a 2pt accent outline (same
+/// weight as the system ring) only while focused.
 public struct PlainFocusRing: ViewModifier {
     @FocusState private var focused: Bool
     private let radius: CGFloat

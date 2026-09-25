@@ -51,7 +51,7 @@ public struct InCallView: View {
                         .foregroundStyle(DietColor.textSecondaryColor)
                     if call.phase == .ended {
                         Button("Clear") { call.clearEnded() }
-                            .buttonStyle(.dietSecondary)
+                            .buttonStyle(.bordered)
                     }
                 }
             }
@@ -75,7 +75,7 @@ public struct InCallView: View {
                 .help("Switches live call audio now; stored for the next call when idle")
                 HStack {
                     Button("Rescan speakers") { call.refreshSpeakers() }
-                        .buttonStyle(.dietSecondary)
+                        .buttonStyle(.bordered)
                     if let route = call.media?.speaker, !route.isEmpty {
                         Text("Route: \(route)")
                             .font(DietType.caption1)
@@ -128,7 +128,7 @@ public struct InCallView: View {
                         Button("Open Privacy Settings", systemImage: "arrow.up.forward.app") {
                             openURL(cameraPrivacyURL)
                         }
-                        .buttonStyle(.dietSecondary)
+                        .buttonStyle(.bordered)
                     }
                 }
             }
@@ -140,8 +140,8 @@ public struct InCallView: View {
             Section {
                 HStack {
                     Spacer()
-                    Button("Hang Up", systemImage: "phone.down.fill") { hangUp() }
-                        .buttonStyle(.dietDestructive)
+                    Button("Hang Up", systemImage: "phone.down.fill", role: .destructive) { hangUp() }
+                        .buttonStyle(.bordered)
                         .disabled(call.phase != .active && call.phase != .inviting)
                         .keyboardShortcut(.defaultAction)
                     Spacer()

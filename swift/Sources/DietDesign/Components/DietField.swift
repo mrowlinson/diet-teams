@@ -1,12 +1,13 @@
-// DietField.swift — text fields: search + composer. Focus ring
-// via accent outline; keyboard: Escape clears search.
+// DietField.swift — text fields: search + composer. NATIVE UI ONLY:
+// system rounded-bezel fields; the system focus ring carries focus.
+// Diet tokens for type/color only. Keyboard: Escape clears search,
+// Return sends the composer.
 import SwiftUI
 
 /// Search field: magnifier, clear button, Escape-to-clear.
 public struct DietSearchField: View {
     private let prompt: String
     @Binding private var text: String
-    @FocusState private var focused: Bool
 
     public init(_ prompt: String, text: Binding<String>) {
         self.prompt = prompt
@@ -19,9 +20,8 @@ public struct DietSearchField: View {
                 .font(.system(size: DietSize.iconMD))
                 .foregroundStyle(DietColor.textTertiaryColor)
             TextField(prompt, text: $text)
-                .textFieldStyle(.plain)
+                .textFieldStyle(.roundedBorder)
                 .font(DietType.body)
-                .focused($focused)
                 .onExitCommand { text = "" }
             if !text.isEmpty {
                 Button("Clear search", systemImage: "xmark.circle.fill") {
@@ -31,26 +31,14 @@ public struct DietSearchField: View {
                 .foregroundStyle(DietColor.textTertiaryColor)
             }
         }
-        .padding(.horizontal, DietSpace.sm)
-        .frame(height: DietSize.controlHeight)
-        .background(DietColor.wellColor)
-        .clipShape(RoundedRectangle(cornerRadius: DietRadius.control))
-        .overlay(
-            RoundedRectangle(cornerRadius: DietRadius.control)
-                .stroke(
-                    focused ? Color.accentColor
-                        : DietColor.dividerColor,
-                    lineWidth: focused ? 2 : 1)
-        )
     }
 }
 
-/// Composer row: multiline field + send button (Return sends).
+/// Composer row: field + send button (Return sends).
 public struct DietComposer: View {
     private let prompt: String
     @Binding private var text: String
     private let onSend: () -> Void
-    @FocusState private var focused: Bool
 
     public init(
         _ prompt: String, text: Binding<String>,
@@ -64,28 +52,14 @@ public struct DietComposer: View {
     public var body: some View {
         HStack(alignment: .bottom, spacing: DietSpace.sm) {
             TextField(prompt, text: $text)
-                .textFieldStyle(.plain)
+                .textFieldStyle(.roundedBorder)
                 .font(DietType.body)
-                .focused($focused)
-                .padding(.horizontal, DietSpace.sm)
-                .frame(minHeight: DietSize.controlHeight)
-                .background(DietColor.wellColor)
-                .clipShape(
-                    RoundedRectangle(cornerRadius: DietRadius.control))
-                .overlay(
-                    RoundedRectangle(
-                        cornerRadius: DietRadius.control
-                    ).stroke(
-                        focused ? Color.accentColor
-                            : DietColor.dividerColor,
-                        lineWidth: focused ? 2 : 1)
-                )
                 .onSubmit { if !text.isEmpty { onSend() } }
             Button(
                 "Send", systemImage: "paperplane.fill",
                 action: onSend
             )
-            .buttonStyle(.dietPrimary)
+            .buttonStyle(.borderedProminent)
             .disabled(text.isEmpty)
             .keyboardShortcut(.return, modifiers: .command)
         }

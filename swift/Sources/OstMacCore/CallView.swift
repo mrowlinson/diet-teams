@@ -657,33 +657,33 @@ public struct CallBanner: View {
     private func buttons(for c: CallInfo) -> some View {
         if c.dir == "in", c.state == "ringing" {
             Button("Accept live") { store.acceptLive() }
-                .buttonStyle(.dietPrimary)
+                .buttonStyle(.borderedProminent)
                 .disabled(store.busy)
                 .help("Accept with live audio/video")
             Button("Accept") { store.accept() }
-                .buttonStyle(.dietSecondary)
+                .buttonStyle(.bordered)
                 .disabled(store.busy)
                 .help("Accept signaling only")
-            Button("Decline") { store.end() }
-                .buttonStyle(.dietDestructive)
+            Button("Decline", role: .destructive) { store.end() }
+                .buttonStyle(.bordered)
                 .disabled(store.busy)
             Button("Dismiss") { store.dismiss() }
-                .buttonStyle(.dietSecondary)
+                .buttonStyle(.bordered)
                 .help("Hide this banner — the call keeps ringing (answer from Diagnostics)")
         } else {
             if c.state == "connected", c.dir == "out" {
                 Button("● Rec") { store.injectRecorder() }
-                    .buttonStyle(.dietSecondary)
+                    .buttonStyle(.bordered)
                     .disabled(store.busy)
                     .help("Inject the recorder bot (signaling only)")
             }
             if c.state == "connected", let open = onOpenCallWindow {
                 Button("Call…") { open() }
-                    .buttonStyle(.dietSecondary)
+                    .buttonStyle(.bordered)
                     .help("Open the in-call window (mute, camera, speaker)")
             }
-            Button("End") { store.end() }
-                .buttonStyle(.dietDestructive)
+            Button("End", role: .destructive) { store.end() }
+                .buttonStyle(.bordered)
                 .disabled(store.busy)
         }
     }
