@@ -228,7 +228,11 @@ struct OstMacAppMain: App {
         }
         .defaultSize(width: 560, height: 640)
         Settings {
-            if SettingsRouting.useIsolatedDemo(
+            if CommandLine.arguments.contains("--show-settings-templates") {
+                // Shot hook (e2-canned): the real Templates section
+                // standalone in a compact window.
+                TemplatesShotView(canned: state.canned)
+            } else if SettingsRouting.useIsolatedDemo(
                 isDemo: state.isDemo, args: CommandLine.arguments)
             {
                 // Isolated fixed view (om-settings-org): demo launches
@@ -243,6 +247,7 @@ struct OstMacAppMain: App {
                     quiet: state.quietHours, focus: state.focusSync,
                     sched: state.presenceSchedule, blocked: state.blocked,
                     accounts: state.accounts, call: state.call,
+                    canned: state.canned,
                     onAccountAdded: { state.completePendingAdd($0) },
                     onRemoveAccount: { state.removeAccount($0) })
             }
@@ -340,6 +345,8 @@ final class AppState: ObservableObject {
     /// d2-send: per-chat snooze expiries + the scheduled-send queue.
     let snooze = SnoozeStore()
     let scheduled = ScheduledSendStore()
+    /// e2-canned: user-authored message templates (composer + Settings).
+    let canned = CannedResponsesStore()
     // om-mention-alerts: the Mentions row count owns the Dock tile, so
     // unread counts stay sidebar-only here (per-chat badges + Diagnostics).
     let unread = UnreadStore(dock: NullDockBadge())
@@ -2130,6 +2137,7 @@ struct PopOutRootView: View {
             receipts: state.receipts,
             pins: state.pinnedMessages,
             scheduled: state.scheduled,
+            canned: state.canned,
             isGroup: state.chats.chat(id: chatID)?.is_group ?? true,
             onForward: { state.beginForward($0) },
             initialDraft: state.popouts.draft(for: chatID),
@@ -2268,6 +2276,7 @@ struct RootView: View {
                             pins: state.pinnedMessages,
                             saved: state.savedMessages,
                             scheduled: state.scheduled,
+                            canned: state.canned,
                             isGroup: state.chats.selectedChat?.is_group ?? true,
                             initialTab: CommandLine.arguments.contains("--show-shared") ? 1
                                 : (state.showNotes ? 2 : 0),
@@ -2372,7 +2381,8 @@ struct RootView: View {
                 || CommandLine.arguments.contains("--show-settings-keywords")
                 || CommandLine.arguments.contains("--show-settings-calls")
                 || CommandLine.arguments.contains("--show-settings-summaries")
-                || CommandLine.arguments.contains("--show-settings-attention") {
+                || CommandLine.arguments.contains("--show-settings-attention")
+                || CommandLine.arguments.contains("--show-settings-templates") {
                 openSettings()
             }
             if OstMacAppMain.authStateName(args: CommandLine.arguments) != nil {

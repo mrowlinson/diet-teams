@@ -7,7 +7,8 @@
 //   Account: status, Accounts, Sign in (live only).
 //   Notifications: banners, Keyword alerts, Quiet hours, DND,
 //     Focus sync, Presence schedules (the Attention surface).
-//   Chats: Per-chat overrides, Blocked users, Translation.
+//   Chats: Per-chat overrides, Blocked users, Translation,
+//     Templates (message templates, composer picker source).
 //   Calls: echo-bot test call (shared slot).
 //   Summaries: Thread catch-up (provider picker + BYO key).
 //   GIFs: KLIPY key (keychain).
@@ -49,6 +50,8 @@ struct SettingsView: View {
     @State private var selection: SettingsCategory = SettingsRouting.initialCategory(
         args: CommandLine.arguments)
     @Environment(\.openWindow) private var openWindow
+    /// Message templates (e2-canned): composer picker + Chats section.
+    @ObservedObject private var canned: CannedResponsesStore
     private let onAccountAdded: (AuthViewModel) -> Void
     private let onRemoveAccount: (String) -> Void
     @State private var pendingAddVM: AuthViewModel?
@@ -84,6 +87,7 @@ struct SettingsView: View {
         blocked: BlockedStore = BlockedStore(defaults: nil),
         accounts: AccountStore = AccountStore(),
         call: CallStore = CallStore(),
+        canned: CannedResponsesStore = CannedResponsesStore(),
         onAccountAdded: @escaping (AuthViewModel) -> Void = { _ in },
         onRemoveAccount: @escaping (String) -> Void = { _ in }
     ) {
@@ -98,6 +102,7 @@ struct SettingsView: View {
         _blocked = ObservedObject(wrappedValue: blocked)
         _accounts = ObservedObject(wrappedValue: accounts)
         _call = ObservedObject(wrappedValue: call)
+        _canned = ObservedObject(wrappedValue: canned)
         self.onAccountAdded = onAccountAdded
         self.onRemoveAccount = onRemoveAccount
         fixedAccount = nil
@@ -127,6 +132,7 @@ struct SettingsView: View {
         _accounts = ObservedObject(wrappedValue: AccountStore())
         // Demo slot: taps flip local state only, never touch core.
         _call = ObservedObject(wrappedValue: CallStore(demo: true))
+        _canned = ObservedObject(wrappedValue: CannedResponsesStore())
         onAccountAdded = { _ in }
         onRemoveAccount = { _ in }
         fixedAccount = account
@@ -444,6 +450,7 @@ struct SettingsView: View {
                     .foregroundStyle(DietColor.textSecondaryColor)
             }
         }
+        TemplatesSettingsSection(canned: canned)
     }
 
     @ViewBuilder
@@ -802,5 +809,133 @@ private struct ObservedAccountStatus: View {
             .font(DietType.caption1)
             .foregroundStyle(DietColor.textSecondaryColor)
             .lineLimit(1)
+    }
+}
+
+/// Templates Settings section (e2-canned): rows with Up/Down/Edit/
+/// Remove, create fields with inline refusal text. Extracted
+/// (CatchUpSettingsSection precedent) so the shot hook renders the
+/// real section standalone.
+struct TemplatesSettingsSection: View {
+    @ObservedObject var canned: CannedResponsesStore
+    @State private var titleDraft = ""
+    @State private var bodyDraft = ""
+    @State private var error: String?
+    @State private var editingTemplate: CannedTemplate?
+
+    var body: some View {
+        Section("Templates") {
+            if canned.templates.isEmpty {
+                Text("No templates yet. Add one below — the composer button inserts it into your draft.")
+                    .font(DietType.caption1)
+                    .foregroundStyle(DietColor.textSecondaryColor)
+            } else {
+                ForEach(Array(canned.templates.enumerated()), id: \.element.id) { i, template in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(template.title)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Text(template.body)
+                                .font(DietType.caption1)
+                                .foregroundStyle(DietColor.textSecondaryColor)
+                                .lineLimit(2)
+                        }
+                        Spacer()
+                        Button("Up") { canned.move(from: i, to: i - 1) }
+                            .disabled(i == 0)
+                        Button("Down") { canned.move(from: i, to: i + 1) }
+                            .disabled(i == canned.templates.count - 1)
+                        Button("Edit") { editingTemplate = template }
+                        Button("Remove") { canned.delete(id: template.id) }
+                    }
+                }
+            }
+            TextField("Title, e.g. Standup", text: $titleDraft)
+            TextField("Message text", text: $bodyDraft, axis: .vertical)
+                .lineLimit(2...4)
+            HStack {
+                Button("Add template") {
+                    error = canned.add(title: titleDraft, body: bodyDraft)
+                    if error == nil {
+                        titleDraft = ""
+                        bodyDraft = ""
+                    }
+                }
+                Spacer()
+            }
+            if let error {
+                Text(error)
+                    .font(DietType.caption1)
+                    .foregroundStyle(Color(nsColor: DietColor.danger))
+            }
+            Text("Templates insert into the composer draft — nothing sends until you hit Send. Stored on this Mac only.")
+                .font(DietType.caption1)
+                .foregroundStyle(DietColor.textSecondaryColor)
+        }
+        .sheet(item: $editingTemplate) { template in
+            TemplateEditSheet(canned: canned, template: template)
+        }
+    }
+}
+
+/// Standalone shot view (--show-settings-templates): the real
+/// Templates section in a compact window (Form-embedded scrollTo is
+/// broken for every section, keywords included — no scroll hook can
+/// land it in the full Settings window).
+struct TemplatesShotView: View {
+    @ObservedObject var canned: CannedResponsesStore
+
+    var body: some View {
+        Form {
+            TemplatesSettingsSection(canned: canned)
+        }
+        .formStyle(.grouped)
+        .padding()
+        .frame(width: 460)
+    }
+}
+
+/// Edit sheet for one template (e2-canned): native fields + Save with
+/// inline refusal text. Dismisses on save.
+private struct TemplateEditSheet: View {
+    @ObservedObject var canned: CannedResponsesStore
+    let template: CannedTemplate
+    @Environment(\.dismiss) private var dismiss
+    @State private var title: String
+    @State private var draftBody: String
+    @State private var error: String?
+
+    init(canned: CannedResponsesStore, template: CannedTemplate) {
+        self.canned = canned
+        self.template = template
+        _title = State(initialValue: template.title)
+        _draftBody = State(initialValue: template.body)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DietSpace.sm) {
+            Text("Edit template")
+                .font(DietType.headline)
+            TextField("Title", text: $title)
+            TextField("Message text", text: $draftBody, axis: .vertical)
+                .lineLimit(2...6)
+            if let error {
+                Text(error)
+                    .font(DietType.caption1)
+                    .foregroundStyle(Color(nsColor: DietColor.danger))
+            }
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }
+                Button("Save") {
+                    error = canned.update(id: template.id, title: title, body: draftBody)
+                    if error == nil { dismiss() }
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(DietSpace.md)
+        .frame(width: 380)
     }
 }
