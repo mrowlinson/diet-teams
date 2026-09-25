@@ -35,6 +35,9 @@
 // standalone in a compact window (e2-canned shot hook, offline).
 // --show-settings-chats preselects Chats (Templates section
 // in-situ shot hook, offline).
+// --show-settings-composer preselects Chats with the full detail
+// (through the Quick Composer section) fitting the frame
+// (f1-composer shot hook, offline).
 // --show-catchup-ondevice is --show-catchup with the on-device provider (canned, shot hook).
 // --show-meeting seeds the Meeting window offline + opens it (shot hook).
 // --show-diagnostics opens the Diagnostics window at launch (shot hook).
@@ -2517,7 +2520,8 @@ struct RootView: View {
                 || CommandLine.arguments.contains("--show-settings-summaries")
                 || CommandLine.arguments.contains("--show-settings-attention")
                 || CommandLine.arguments.contains("--show-settings-templates")
-                || CommandLine.arguments.contains("--show-settings-chats") {
+                || CommandLine.arguments.contains("--show-settings-chats")
+                || CommandLine.arguments.contains("--show-settings-composer") {
                 openSettings()
             }
             if OstMacAppMain.authStateName(args: CommandLine.arguments) != nil {

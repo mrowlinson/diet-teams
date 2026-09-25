@@ -274,6 +274,14 @@ final class QuickComposerTests: XCTestCase {
         XCTAssertTrue(titles.contains("#shipping"))
     }
 
+    func testComposerSettingsShotStaysIsolated() {
+        XCTAssertTrue(SettingsRouting.useIsolatedDemo(
+            isDemo: false, args: ["--show-settings-composer"]))
+        XCTAssertEqual(
+            SettingsRouting.initialCategory(args: ["--show-settings-composer"]),
+            .chats)
+    }
+
     func testComposerTargetFilterMatchesJumpRows() {
         // Same row data as Cmd+K (JumpTargets), narrowed to sendable.
         let all = JumpTargets.build(

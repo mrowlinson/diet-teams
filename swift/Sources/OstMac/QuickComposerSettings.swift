@@ -106,7 +106,7 @@ struct QuickComposerSettingsSection: View {
                 NotificationCenter.default.post(name: .quickComposePrefsChanged, object: nil)
             }
             .disabled(recorder.combo == .default)
-            Text("Summons a floating quick message from any app while Better Teams runs — backgrounded, windows closed, anywhere. Plain text; ⌘⏎ sends.")
+            Text("Summons a floating quick message from any app while Better Teams runs — backgrounded, windows closed, anywhere. Plain text; ⏎ or ⌘⏎ sends.")
                 .font(DietType.caption1)
                 .foregroundStyle(DietColor.textSecondaryColor)
         }

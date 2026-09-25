@@ -29,6 +29,9 @@ public struct QuickComposerView: View {
     @State private var highlight = 0
     @State private var picked: JumpTarget?
     @State private var message: String
+    /// Shot-hook auto-pick fired (once: the list loads async after
+    /// appear, so appear alone can't trigger it).
+    @State private var didAutoPick = false
     @FocusState private var focus: Field?
 
     public init(
@@ -80,15 +83,15 @@ public struct QuickComposerView: View {
         .frame(minWidth: 440, idealWidth: 460, maxWidth: 460)
         .background(DietColor.windowColor)
         .onAppear {
-            if initialPickFirst, picked == nil, !matches.isEmpty {
-                picked = matches[0]
-                DispatchQueue.main.async { focus = .message }
-            } else {
+            if !autoPickIfNeeded() {
                 // Deferred: at summon the panel keys a beat after the
                 // content appears, which eats a synchronous focus grab
                 // (JumpPaletteView precedent).
                 DispatchQueue.main.async { focus = picked == nil ? .target : .message }
             }
+        }
+        .onChange(of: matches.count) {
+            autoPickIfNeeded()
         }
         .onKeyPress(.upArrow) {
             guard focus == .target, picked == nil else { return .ignored }
@@ -255,6 +258,20 @@ public struct QuickComposerView: View {
     }
 
     // MARK: - Actions
+
+    /// Shot-hook pre-pick (once): top match + message focus. Returns
+    /// whether it picked (the list may still be loading at appear —
+    /// the matches-count change retries when rows land).
+    @discardableResult
+    private func autoPickIfNeeded() -> Bool {
+        guard initialPickFirst, !didAutoPick, picked == nil, !matches.isEmpty else {
+            return picked != nil
+        }
+        didAutoPick = true
+        picked = matches[0]
+        focus = .message
+        return true
+    }
 
     private func pick(_ i: Int) {
         guard matches.indices.contains(i) else { return }

@@ -132,9 +132,9 @@ struct SettingsView: View {
         _accounts = ObservedObject(wrappedValue: AccountStore())
         // Demo slot: taps flip local state only, never touch core.
         _call = ObservedObject(wrappedValue: CallStore(demo: true))
-        if Self.isChatsShot {
-            // Chats shot: throwaway suite + two demo rows (never the
-            // real templates), wiped first for determinism.
+        if Self.isChatsShot || Self.isComposerShot {
+            // Chats/composer shot: throwaway suite + two demo rows
+            // (never the real templates), wiped first for determinism.
             let suite = UserDefaults(suiteName: "shot-chats") ?? .standard
             suite.removePersistentDomain(forName: "shot-chats")
             let seeded = CannedResponsesStore(defaults: suite)
@@ -623,11 +623,20 @@ struct SettingsView: View {
         CommandLine.arguments.contains("--show-settings-chats")
     }
 
+    /// Shot hook flag (f1-composer): fixed view preselected on Chats
+    /// with the full detail (through Quick Composer) fitting without
+    /// scrolling (Form-embedded scrollTo is broken — height only).
+    fileprivate static var isComposerShot: Bool {
+        CommandLine.arguments.contains("--show-settings-composer")
+    }
+
     /// Shot window heights: the full Attention surface (banners
-    /// through schedules) and the Chats detail (through Templates)
-    /// fit without scrolling; real launches stay 520.
+    /// through schedules) and the Chats detail (through Templates,
+    /// or through Quick Composer for the composer shot) fit without
+    /// scrolling; real launches stay 520.
     private static var shotHeight: CGFloat {
         if isAttentionShot { return 2150 }
+        if isComposerShot { return 1250 }
         if isChatsShot { return 950 }
         return 520
     }
