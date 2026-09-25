@@ -8,12 +8,12 @@ import OstMacChatList
 /// Rail layout math + section catalog. Failing-first for the section-bar
 /// → rail replacement (R8 app-nav lane).
 final class AppNavRailTests: XCTestCase {
-    /// All 7 sections ship in the rail, in stable order.
-    func testRailHostsAllSevenSections() {
+    /// All 8 sections ship in the rail, in stable order.
+    func testRailHostsAllEightSections() {
         XCTAssertEqual(
             SidebarSection.allCases.map(\.rawValue),
-            ["Chats", "Teams", "Reminders", "Planner", "Recordings",
-             "Transcripts", "Shifts"])
+            ["Chats", "Teams", "Contacts", "Reminders", "Planner",
+             "Recordings", "Transcripts", "Shifts"])
     }
 
     /// Rail rows track the enum, so future E/F surfaces appear with no

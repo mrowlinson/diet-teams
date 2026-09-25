@@ -48,6 +48,7 @@ public extension SidebarSection {
         switch self {
         case .chats: "bubble.left.and.bubble.right"
         case .teams: "person.3"
+        case .contacts: "person.crop.circle"
         case .reminders: "checklist"
         case .planner: "square.grid.2x2"
         case .recordings: "record.circle"

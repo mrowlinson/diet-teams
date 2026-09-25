@@ -4,9 +4,10 @@ import OstMacCore
 import SwiftUI
 
 /// Sidebar column hosting the chats list, the teams/channels browser,
-/// the reminders browser, the planner boards browser, the recordings
-/// browser, the transcripts browser, and the shifts week grid behind
-/// the Teams-like `AppNavRail` (fixed 72pt, native buttons).
+/// the contacts browser, the reminders browser, the planner boards
+/// browser, the recordings browser, the transcripts browser, and the
+/// shifts week grid behind the Teams-like `AppNavRail` (fixed 72pt,
+/// native buttons).
 /// Channel taps open as conversations via
 /// `onOpenChannel` (channel id + "Team > #channel" display name).
 ///
@@ -22,6 +23,7 @@ public struct SidebarColumn: View {
     @ObservedObject private var recordings: RecordingsViewModel
     @ObservedObject private var transcripts: TranscriptsViewModel
     @ObservedObject private var shifts: ShiftsStore
+    @ObservedObject private var contacts: ContactsStore
     @ObservedObject private var presence: PresenceStore
     @ObservedObject private var unread: UnreadStore
     @ObservedObject private var mentions: MentionStore
@@ -42,6 +44,8 @@ public struct SidebarColumn: View {
     /// d1-folders shot hook: rule id with its editor expanded.
     private let initialEditingRuleID: String?
     private let onOpenChannel: (String, String) -> Void
+    /// Contacts row tap (f2-contacts): the host's shared person11 open.
+    private let onPickContact: ((TeamMember) -> Void)?
     /// Pop-out tap passthrough (e1-popout): sidebar → host openWindow.
     private let onPopOut: ((String) -> Void)?
     @State private var section: SidebarSection
@@ -53,6 +57,7 @@ public struct SidebarColumn: View {
         reminders: RemindersViewModel, planner: PlannerViewModel,
         recordings: RecordingsViewModel,
         transcripts: TranscriptsViewModel, shifts: ShiftsStore,
+        contacts: ContactsStore = ContactsStore(),
         presence: PresenceStore = PresenceStore(),
         unread: UnreadStore = UnreadStore(),
         mentions: MentionStore = MentionStore(),
@@ -69,6 +74,7 @@ public struct SidebarColumn: View {
         folderManageOpen: Bool = false,
         initialEditingRuleID: String? = nil,
         onOpenChannel: @escaping (String, String) -> Void,
+        onPickContact: ((TeamMember) -> Void)? = nil,
         onPopOut: ((String) -> Void)? = nil
     ) {
         self.chats = chats
@@ -78,6 +84,7 @@ public struct SidebarColumn: View {
         self.recordings = recordings
         self.transcripts = transcripts
         self.shifts = shifts
+        self.contacts = contacts
         self.presence = presence
         self.unread = unread
         self.mentions = mentions
@@ -94,6 +101,7 @@ public struct SidebarColumn: View {
         self.initialEditingRuleID = initialEditingRuleID
         _section = State(initialValue: initialSection)
         self.onOpenChannel = onOpenChannel
+        self.onPickContact = onPickContact
         self.onPopOut = onPopOut
     }
 
@@ -113,6 +121,11 @@ public struct SidebarColumn: View {
                     teamCreateOpen: teamCreateOpen,
                     onOpen: onOpenChannel)
                     .transition(.opacity)
+            case .contacts:
+                ContactsBrowser(model: contacts, presence: presence) { person in
+                    onPickContact?(person)
+                }
+                .transition(.opacity)
             case .reminders:
                 RemindersBrowser(model: reminders)
                     .transition(.opacity)
@@ -140,6 +153,7 @@ public struct SidebarColumn: View {
 public enum SidebarSection: String, CaseIterable {
     case chats = "Chats"
     case teams = "Teams"
+    case contacts = "Contacts"
     case reminders = "Reminders"
     case planner = "Planner"
     case recordings = "Recordings"
