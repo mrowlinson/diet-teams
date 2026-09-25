@@ -59,6 +59,18 @@ public enum ChatListFormat {
         return chats.filter { !hiddenIDs.contains($0.id) }
     }
 
+    /// Folder filter (d1-folders): keep chats resolving to `folderID`
+    /// (manual override first, then first matching auto-rule). Nil =
+    /// "All chats" (input untouched, same order). Order is preserved
+    /// exactly — filtering never re-sorts. Pure projection over the
+    /// FolderStore snapshot; ingest/load never migrate membership.
+    public static func filterFolder(
+        _ chats: [ChatItem], folderID: String?,
+        rules: [FolderRule], overrides: [String: String]
+    ) -> [ChatItem] {
+        FolderResolve.filter(chats, folderID: folderID, rules: rules, overrides: overrides)
+    }
+
     /// One-line `sender: preview` summary. Missing parts are dropped;
     /// both missing → `""` (view shows a placeholder).
     public static func previewLine(sender: String?, preview: String?) -> String {

@@ -434,4 +434,109 @@ final class ChatListTests: XCTestCase {
         XCTAssertEqual(publishes, 1)
         withExtendedLifetime(sub) {}
     }
+
+    // MARK: - d1-folders composition
+
+    nonisolated static func folderChats() -> ChatsResponse {
+        chatsJSON([
+            chatJSON(id: "8:alice", name: "Alice Carter"),
+            chatJSON(id: "19:standup@thread", name: "Team Standup", group: true),
+            chatJSON(id: "8:bob", name: "Bob Miller"),
+        ].joined(separator: ","))
+    }
+
+    private func folderModel() -> (ChatListViewModel, FolderStore) {
+        let suite = UserDefaults(
+            suiteName: "test-list-folders-\(UUID().uuidString)") ?? .standard
+        let folders = FolderStore(defaults: suite)
+        let model = ChatListViewModel(
+            fetcher: { _ in Self.folderChats() },
+            pins: UserPinStore(defaults: suite),
+            folders: folders)
+        return (model, folders)
+    }
+
+    /// Sidebar chain over displayChats: hidden → folder → text →
+    /// mentions (mirrors ChatListSidebar.visibleChats).
+    private func visible(
+        _ model: ChatListViewModel, folders: FolderStore,
+        folderID: String?, hidden: Set<String> = [],
+        showHidden: Bool = false, query: String = "",
+        mentionsOnly: Bool = false, mentioned: Set<String> = []
+    ) -> [ChatItem] {
+        var list = ChatListFormat.filterHidden(
+            model.displayChats, hiddenIDs: hidden, showHidden: showHidden)
+        list = ChatListFormat.filterFolder(
+            list, folderID: folderID,
+            rules: folders.rules, overrides: folders.overrides)
+        list = ChatListFormat.filter(list, query: query)
+        if mentionsOnly {
+            list = ChatListFormat.filterMentions(list, mentionedIDs: mentioned)
+        }
+        return list
+    }
+
+    func testFolderFilterPreservesPinTopOrder() async {
+        let (model, folders) = folderModel()
+        await model.load()
+        model.pin("8:bob")
+        let work = folders.createFolder(name: "Work")!
+        folders.assign(chatID: "8:alice", folderID: work.id)
+        folders.assign(chatID: "8:bob", folderID: work.id)
+        // Pins still lead inside the folder; the folder never re-sorts.
+        XCTAssertEqual(
+            visible(model, folders: folders, folderID: work.id).map(\.id),
+            ["8:bob", "8:alice"])
+        XCTAssertEqual(
+            visible(model, folders: folders, folderID: nil).map(\.id),
+            ["8:bob", "8:alice", "19:standup@thread"])
+    }
+
+    func testHiddenComposesInsideFolders() async {
+        let (model, folders) = folderModel()
+        await model.load()
+        let work = folders.createFolder(name: "Work")!
+        folders.addRule(FolderRule(folderID: work.id, kind: .direct))
+        XCTAssertEqual(
+            visible(
+                model, folders: folders, folderID: work.id,
+                hidden: ["8:alice"]).map(\.id),
+            ["8:bob"])
+        // Show-hidden restores inside the folder too.
+        XCTAssertEqual(
+            visible(
+                model, folders: folders, folderID: work.id,
+                hidden: ["8:alice"], showHidden: true).map(\.id),
+            ["8:alice", "8:bob"])
+    }
+
+    func testTextAndMentionsComposeInsideFolders() async {
+        let (model, folders) = folderModel()
+        await model.load()
+        let work = folders.createFolder(name: "Work")!
+        folders.addRule(FolderRule(folderID: work.id, kind: .direct))
+        XCTAssertEqual(
+            visible(
+                model, folders: folders, folderID: work.id,
+                query: "bob").map(\.id),
+            ["8:bob"])
+        XCTAssertEqual(
+            visible(
+                model, folders: folders, folderID: work.id,
+                mentionsOnly: true, mentioned: ["8:alice"]).map(\.id),
+            ["8:alice"])
+    }
+
+    func testFolderMembershipSurvivesIngestBubble() async {
+        let (model, folders) = folderModel()
+        await model.load()
+        let work = folders.createFolder(name: "Work")!
+        folders.addRule(FolderRule(folderID: work.id, namePattern: "standup"))
+        model.ingest(realtime: Self.realtime(chat: "8:bob", text: "live hello"))
+        // Bob bubbled to top; the standup thread keeps its folder.
+        XCTAssertEqual(model.chats.first?.id, "8:bob")
+        XCTAssertEqual(
+            visible(model, folders: folders, folderID: work.id).map(\.id),
+            ["19:standup@thread"])
+    }
 }
