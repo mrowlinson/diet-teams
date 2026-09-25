@@ -74,14 +74,24 @@ final class NativeControlsTests: XCTestCase {
             [],
             ".plain text field with custom chrome remains")
         // The allowlisted files still render their main fields
-        // native: the conversation send box keeps its bezel.
+        // consistently: the conversation send box uses the plain+well
+        // recipe (a still-native TextField with well fill + divider
+        // stroke). The roundedBorder bezel will not stretch to the
+        // 48pt 2-line height, so it cannot carry the send box
+        // (pixel-verified, see COMPOSER-2LINE-PROOF.md).
         let files = try Self.swiftFiles()
         let conv = try XCTUnwrap(
             files.first(where: { $0.name == "ConversationView.swift" }),
             "ConversationView.swift missing")
         XCTAssertTrue(
-            conv.text.contains(".textFieldStyle(.roundedBorder)"),
-            "conversation send box must keep the system bezel")
+            conv.text.contains(".textFieldStyle(.plain)"),
+            "conversation send box must keep the plain+well recipe")
+        XCTAssertTrue(
+            conv.text.contains("DietColor.wellColor"),
+            "conversation send box must keep the well fill")
+        XCTAssertTrue(
+            conv.text.contains(".plainFocusRing()"),
+            "conversation send box must keep the focus ring")
     }
 
     func testFieldComponentsRenderNative() throws {
