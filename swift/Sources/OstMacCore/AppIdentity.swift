@@ -18,6 +18,7 @@ public enum AppIdentity {
     public static let meetWindowID = "meetings"
     public static let meetingWindowID = "meeting"
     public static let chatPopoutID = "chat-popout"
+    public static let quickComposerPanelID = "quick-composer"
     public static let tagline = "Teams client for macOS"
 }
 

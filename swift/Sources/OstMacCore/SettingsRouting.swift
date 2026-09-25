@@ -14,6 +14,7 @@ public enum SettingsRouting {
         isDemo || args.contains("--show-settings-keywords")
             || args.contains("--show-settings-attention")
             || args.contains("--show-settings-chats")
+            || args.contains("--show-settings-composer")
     }
 
     /// Sanitized account row for isolated Settings (never live state).
@@ -28,6 +29,7 @@ public enum SettingsRouting {
         if args.contains("--show-settings-keywords") { return .notifications }
         if args.contains("--show-settings-attention") { return .notifications }
         if args.contains("--show-settings-chats") { return .chats }
+        if args.contains("--show-settings-composer") { return .chats }
         return .account
     }
 }
