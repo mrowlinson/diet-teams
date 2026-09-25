@@ -266,6 +266,162 @@ final class FfiMoveNowTests: XCTestCase {
         XCTAssertTrue(st.signed_in)
     }
 
+    // MARK: - B1: join-parse (port of Rust join_parse_json_matrix + edges)
+
+    func parse(_ raw: String) throws -> JoinTarget {
+        try RustCore.meetingJoinParse(raw: raw).target
+    }
+
+    func testJoinParseThreadLink() throws {
+        let t = try parse("https://teams.microsoft.com/l/meetup-join/19%3Ameeting_abc%40thread.v2/0")
+        XCTAssertEqual(t.kind, "thread")
+        XCTAssertEqual(t.threadID, "19:meeting_abc@thread.v2")
+        XCTAssertNil(t.meetingID)
+        XCTAssertTrue(t.canJoinInApp)
+    }
+
+    func testJoinParseBareThreadIDs() throws {
+        for id in ["19:abc@thread.v2", "19:x@thread.tacv2", "48:1234abcd", "8:orgid:xyz"] {
+            let t = try parse(id)
+            XCTAssertEqual(t.kind, "thread", id)
+            XCTAssertEqual(t.threadID, id)
+            XCTAssertEqual(t.url, id)
+        }
+    }
+
+    func testJoinParseLiveMeet() throws {
+        let t = try parse("https://teams.live.com/meet/9347123456789")
+        XCTAssertEqual(t.kind, "meeting-id")
+        XCTAssertEqual(t.meetingID, "9347123456789")
+        XCTAssertNil(t.threadID)
+        XCTAssertTrue(t.canOpenExternally)
+    }
+
+    func testJoinParseLiveMeetStopsAtQuery() throws {
+        let t = try parse("https://teams.live.com/meet/9347123456789?x=1&y=2")
+        XCTAssertEqual(t.meetingID, "9347123456789")
+    }
+
+    func testJoinParseLiveMeetEmptyIDFallsToURL() throws {
+        let t = try parse("https://teams.live.com/meet/")
+        XCTAssertEqual(t.kind, "url")
+        XCTAssertNil(t.meetingID)
+    }
+
+    func testJoinParseLiveMeetUppercaseIsURL() throws {
+        // Gate is case-insensitive but the marker search is case-sensitive.
+        let t = try parse("https://TEAMS.LIVE.COM/MEET/123")
+        XCTAssertEqual(t.kind, "url")
+    }
+
+    func testJoinParseGarbageNeverDials() throws {
+        let t = try parse("hello")
+        XCTAssertEqual(t.kind, "unknown")
+        XCTAssertNil(t.threadID)
+        XCTAssertNil(t.meetingID)
+        XCTAssertEqual(t.url, "hello")
+        XCTAssertFalse(t.canJoinInApp)
+        XCTAssertFalse(t.canOpenExternally)
+    }
+
+    func testJoinParseEmptyIsUnknownBlankURL() throws {
+        for raw in ["", "   ", "<>"] {
+            let t = try parse(raw)
+            XCTAssertEqual(t.kind, "unknown", raw)
+            XCTAssertEqual(t.url, "", raw)
+        }
+    }
+
+    func testJoinParseStripsBracketsAndQuotes() throws {
+        let t = try parse("<https://teams.live.com/meet/123>")
+        XCTAssertEqual(t.kind, "meeting-id")
+        XCTAssertEqual(t.meetingID, "123")
+        XCTAssertEqual(t.url, "https://teams.live.com/meet/123")
+        let q = try parse("\"19:abc@thread.v2\"")
+        XCTAssertEqual(q.kind, "thread")
+        XCTAssertEqual(q.threadID, "19:abc@thread.v2")
+    }
+
+    func testJoinParseMeetupWithoutThreadIsURL() throws {
+        let t = try parse("https://teams.microsoft.com/l/meetup-join/abc")
+        XCTAssertEqual(t.kind, "url")
+        let h = try parse("http://teams.microsoft.com/l/meetup-join/abc")
+        XCTAssertEqual(h.kind, "url")
+    }
+
+    func testJoinParseMeetupWithoutSchemeFallsThrough() throws {
+        // No thread + no http(s) prefix: falls past the meetup branch.
+        let t = try parse("teams.microsoft.com/l/meetup-join/abc")
+        XCTAssertEqual(t.kind, "unknown")
+    }
+
+    func testJoinParseMeetPathIsURL() throws {
+        let t = try parse("https://teams.microsoft.com/meet/123")
+        XCTAssertEqual(t.kind, "url")
+    }
+
+    func testJoinParseThreadIDWithWhitespaceIsUnknown() throws {
+        let t = try parse("19:a b@thread.v2")
+        XCTAssertEqual(t.kind, "unknown")
+    }
+
+    func testJoinParseThread19WithoutAtIsURL() throws {
+        let t = try parse("https://teams.microsoft.com/l/meetup-join/19:abc/0")
+        XCTAssertEqual(t.kind, "url")
+    }
+
+    func testJoinParseUppercaseHostStillExtracts() throws {
+        let t = try parse("HTTPS://TEAMS.MICROSOFT.COM/L/MEETUP-JOIN/19:abc@thread.v2/0")
+        XCTAssertEqual(t.kind, "thread")
+        XCTAssertEqual(t.threadID, "19:abc@thread.v2")
+    }
+
+    func testJoinParseStopsAtDelimitersAndTrimsPunct() throws {
+        let t = try parse("https://teams.microsoft.com/l/meetup-join/19:abc@thread.v2?x=1")
+        XCTAssertEqual(t.threadID, "19:abc@thread.v2")
+        let p = try parse("https://teams.microsoft.com/l/meetup-join/19:abc@thread.v2).")
+        XCTAssertEqual(p.threadID, "19:abc@thread.v2")
+    }
+
+    func testJoinParseMalformedPctPassesThrough() throws {
+        // %zz stays literal, so no "19:" span exists → url (matches Rust).
+        let t = try parse("https://teams.microsoft.com/l/meetup-join/19%zzabc%40thread.v2")
+        XCTAssertEqual(t.kind, "url")
+        XCTAssertNil(t.threadID)
+        // ...but a valid span keeps the literal run inside the id.
+        let u = try parse("https://teams.microsoft.com/l/meetup-join/19:abc@thread.v2%zz")
+        XCTAssertEqual(u.kind, "thread")
+        XCTAssertEqual(u.threadID, "19:abc@thread.v2%zz")
+    }
+
+    func testJoinParsePlainHTTPIsUnknown() throws {
+        let t = try parse("http://example.com/x")
+        XCTAssertEqual(t.kind, "unknown")
+        let h = try parse("https://example.com/x")
+        XCTAssertEqual(h.kind, "url")
+        XCTAssertEqual(h.url, "https://example.com/x")
+    }
+
+    func testJoinParseResponseOK() throws {
+        let r = try RustCore.meetingJoinParse(raw: "hello")
+        XCTAssertTrue(r.ok)
+    }
+
+    // MARK: - B1: av_info (mirror of deleted Rust av_info_shape, full keys)
+
+    func testAvInfoCaps() throws {
+        let info = try RustCore.avInfo()
+        XCTAssertTrue(info.ok)
+        XCTAssertEqual(info.mic, "cpal")
+        XCTAssertEqual(info.speaker, "cpal")
+        XCTAssertEqual(info.camera, "avfoundation")
+        XCTAssertEqual(info.display, "swiftui")
+        XCTAssertTrue(info.tone)
+        XCTAssertEqual(info.packetizer, "rust-h264")
+        XCTAssertEqual(info.srtp, "rust-aes-128-cm")
+        XCTAssertTrue(info.dry_run)
+    }
+
     // MARK: - B0: perf smoke (generous bounds; guards against regressions)
 
     func testStatusParsePerf() throws {
@@ -283,6 +439,20 @@ final class FfiMoveNowTests: XCTestCase {
         """
         let t0 = Date()
         for _ in 0 ..< 1000 { _ = try TomlConfig.parse(body) }
+        XCTAssertLessThan(Date().timeIntervalSince(t0), 2.0)
+    }
+
+    func testJoinParsePerf() {
+        let urls = [
+            "https://teams.microsoft.com/l/meetup-join/19%3Ameeting_abc%40thread.v2/0",
+            "19:abc@thread.v2",
+            "https://teams.live.com/meet/9347123456789",
+            "hello",
+        ]
+        let t0 = Date()
+        for _ in 0 ..< 2500 {
+            for u in urls { _ = JoinParse.parse(raw: u) }
+        }
         XCTAssertLessThan(Date().timeIntervalSince(t0), 2.0)
     }
 }

@@ -614,7 +614,7 @@ public struct MeetingsResponse: Decodable, Sendable {
     }
 }
 
-/// Join-target classification from core `ostmac_meeting_join_parse`:
+/// Join-target classification from Swift `JoinParse` (was core FFI):
 /// `{"kind","thread_id?","meeting_id?","url"}`. `kind` is
 /// thread|meeting-id|url|unknown.
 public struct JoinTarget: Decodable, Sendable, Equatable {
@@ -644,7 +644,7 @@ public struct JoinTarget: Decodable, Sendable, Equatable {
     public var canOpenExternally: Bool { kind == "meeting-id" || kind == "url" }
 }
 
-/// `{ok,target}` from `ostmac_meeting_join_parse`.
+/// `{ok,target}` from Swift `JoinParse` (was core FFI).
 public struct JoinParseResponse: Decodable, Sendable {
     public let ok: Bool
     public let target: JoinTarget

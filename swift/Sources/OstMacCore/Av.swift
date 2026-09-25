@@ -270,8 +270,9 @@ func withOptCString<T>(_ s: String?, _ body: (UnsafePointer<CChar>?) throws -> T
 }
 
 public extension RustCore {
+    /// Swift-native (R12 ffi-move-now B1; was `ostmac_av_info`).
     static func avInfo() throws -> AvInfo {
-        try call(ostmac_av_info(), as: AvInfo.self)
+        try CoreLocal.avInfo()
     }
 
     static func micProbe() throws -> MicProbe {

@@ -2362,21 +2362,8 @@ pub fn meetings_json(limit: usize) -> String {
     }
 }
 
-/// Classify a pasted join string. Pure (no network, no sign-in needed).
-/// Returns `{ok:true, target:{kind,thread_id?,meeting_id?,url}}`.
-pub fn meeting_join_parse_json(raw: &str) -> String {
-    let t = ost::api::parse_join_url(raw);
-    json!({
-        "ok": true,
-        "target": {
-            "kind": t.kind,
-            "thread_id": t.thread_id,
-            "meeting_id": t.meeting_id,
-            "url": t.url,
-        },
-    })
-    .to_string()
-}
+// NOTE (R12 ffi-move-now B1): meeting_join_parse moved to Swift
+// (JoinParse); backing fn + export deleted.
 
 // ---------------------------------------------------------------------------
 // Notes (om-notes lane: OneNote read + paragraph append)
@@ -3488,15 +3475,6 @@ pub extern "C" fn ostmac_reminder_done(
 pub extern "C" fn ostmac_meetings(limit: c_int) -> *mut c_char {
     let lim = if limit <= 0 { 20 } else { limit as usize };
     string_to_c(meetings_json(lim))
-}
-
-/// Classify a pasted join string (pure, no network). Caller frees.
-#[no_mangle]
-pub extern "C" fn ostmac_meeting_join_parse(raw: *const c_char) -> *mut c_char {
-    match cstr_to_string(raw) {
-        Ok(s) => string_to_c(meeting_join_parse_json(&s)),
-        Err(e) => string_to_c(err_json("arg", e)),
-    }
 }
 
 /// Start background Trouter push. See [`trouter_start`].
@@ -5165,46 +5143,8 @@ mod tests {
         assert_eq!(v["is_online"], true);
     }
 
-    #[test]
-    fn join_parse_json_matrix() {
-        // Thread-shaped meetup link.
-        let v: serde_json::Value = serde_json::from_str(&meeting_join_parse_json(
-            "https://teams.microsoft.com/l/meetup-join/19%3Ameeting_abc%40thread.v2/0",
-        ))
-        .unwrap();
-        assert_eq!(v["ok"], true);
-        assert_eq!(v["target"]["kind"], "thread");
-        assert_eq!(v["target"]["thread_id"], "19:meeting_abc@thread.v2");
-        // Bare thread id.
-        let v: serde_json::Value =
-            serde_json::from_str(&meeting_join_parse_json("19:abc@thread.v2")).unwrap();
-        assert_eq!(v["target"]["kind"], "thread");
-        // Live meet id.
-        let v: serde_json::Value = serde_json::from_str(&meeting_join_parse_json(
-            "https://teams.live.com/meet/9347123456789",
-        ))
-        .unwrap();
-        assert_eq!(v["target"]["kind"], "meeting-id");
-        assert_eq!(v["target"]["meeting_id"], "9347123456789");
-        // Garbage never dials.
-        let v: serde_json::Value =
-            serde_json::from_str(&meeting_join_parse_json("hello")).unwrap();
-        assert_eq!(v["ok"], true);
-        assert_eq!(v["target"]["kind"], "unknown");
-        assert!(v["target"]["thread_id"].is_null());
-    }
-
-    #[test]
-    fn ffi_meeting_null_is_arg_error() {
-        unsafe {
-            let p = ostmac_meeting_join_parse(std::ptr::null());
-            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
-            ostmac_free(p);
-            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
-            assert_eq!(v["ok"], false);
-            assert_eq!(v["error"], "arg");
-        }
-    }
+    // NOTE (R12 ffi-move-now B1): join-parse matrix + null-arg test
+    // moved to Swift (FfiMoveNowTests).
 
     #[test]
     fn ffi_reminder_nulls_are_arg_errors() {

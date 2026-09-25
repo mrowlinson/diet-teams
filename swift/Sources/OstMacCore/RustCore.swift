@@ -565,12 +565,10 @@ public enum RustCore {
         try call(ostmac_meetings(limit), as: MeetingsResponse.self)
     }
 
-    /// Classify a pasted join string (pure core parse, no network).
-    /// Still crosses FFI: call off the main thread like every wrapper.
+    /// Classify a pasted join string (pure parse, no network, no FFI).
+    /// Swift-native (R12 ffi-move-now B1; was `ostmac_meeting_join_parse`).
     public static func meetingJoinParse(raw: String) throws -> JoinParseResponse {
-        try raw.withCString { ptr in
-            try call(ostmac_meeting_join_parse(ptr), as: JoinParseResponse.self)
-        }
+        try CoreLocal.meetingJoinParse(raw: raw)
     }
 
     public static func notePage(pageID: String, groupID: String? = nil) throws -> NotePageResponse {

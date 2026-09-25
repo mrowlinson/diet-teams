@@ -290,10 +290,8 @@ char *ostmac_planner_reopen(const char *task_id, const char *etag);
 // organizer?,is_online}]}. Caller frees.
 char *ostmac_meetings(int limit);
 
-// Classify a pasted join string (pure, no network, no sign-in):
-// {ok,target:{kind,thread_id?,meeting_id?,url}}. kind is
-// thread|meeting-id|url|unknown. Caller frees.
-char *ostmac_meeting_join_parse(const char *raw);
+// NOTE (R12 ffi-move-now B1): meeting_join_parse moved to Swift
+// (JoinParse); decl deleted.
 
 // Week-window meetings JSON (Graph calendarView [week_start,
 // week_start+days], requires sign-in): {ok,week_start,days,
@@ -466,8 +464,8 @@ char *ostmac_call_end(void);
 // {ok,injected,response_bytes}. Caller frees.
 char *ostmac_call_record_inject(void);
 
-// A/V capability map (static, no hardware). Caller frees.
-char *ostmac_av_info(void);
+// NOTE (R12 ffi-move-now B1): av_info moved to Swift (CoreLocal);
+// decl deleted.
 
 // Mic/speaker availability probe (cpal open+close, fast). Caller frees.
 char *ostmac_mic_probe(void);

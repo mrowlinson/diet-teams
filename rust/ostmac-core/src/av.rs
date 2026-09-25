@@ -55,21 +55,8 @@ fn bytes_arg<'a>(ptr: *const u8, len: usize) -> Result<&'a [u8], String> {
 // JSON bodies
 // ---------------------------------------------------------------------------
 
-/// Static capability map. No hardware touched.
-pub fn av_info_json() -> String {
-    json!({
-        "ok": true,
-        "mic": "cpal",
-        "speaker": "cpal",
-        "camera": "avfoundation",
-        "display": "swiftui",
-        "tone": true,
-        "packetizer": "rust-h264",
-        "srtp": "rust-aes-128-cm",
-        "dry_run": true,
-    })
-    .to_string()
-}
+// NOTE (R12 ffi-move-now B1): av_info moved to Swift (CoreLocal);
+// backing fn + export deleted.
 
 /// Fast mic/speaker availability probe.
 pub fn mic_probe_json() -> String {
@@ -305,11 +292,6 @@ pub fn call_dry_run_json() -> String {
 // ---------------------------------------------------------------------------
 
 #[no_mangle]
-pub extern "C" fn ostmac_av_info() -> *mut c_char {
-    string_to_c(av_info_json())
-}
-
-#[no_mangle]
 pub extern "C" fn ostmac_mic_probe() -> *mut c_char {
     string_to_c(mic_probe_json())
 }
@@ -470,16 +452,8 @@ mod tests {
     use super::*;
     use std::ffi::CString;
 
-    #[test]
-    fn av_info_shape() {
-        let v: serde_json::Value = serde_json::from_str(&av_info_json()).unwrap();
-        assert_eq!(v["ok"], true);
-        assert_eq!(v["mic"], "cpal");
-        assert_eq!(v["camera"], "avfoundation");
-        assert_eq!(v["display"], "swiftui");
-        assert_eq!(v["tone"], true);
-        assert_eq!(v["dry_run"], true);
-    }
+    // NOTE (R12 ffi-move-now B1): av_info shape test moved to Swift
+    // (FfiMoveNowTests).
 
     #[test]
     fn av_tone_check_detects() {
