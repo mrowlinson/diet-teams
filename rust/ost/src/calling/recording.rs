@@ -367,6 +367,7 @@ pub async fn start_call_recording(
     recorder_token: &str,
     skype_token: &str,
     add_participant_url_override: Option<&str>,
+    region: &TeamsRegion,
 ) -> Result<RecordingSession> {
     // Use the exact addParticipant URL from the epconv response if available,
     // otherwise derive it from conversationController as a fallback.
@@ -388,7 +389,6 @@ pub async fn start_call_recording(
     let placeholder_conv_id =
         extract_conversation_id(conversation_controller).unwrap_or_else(|| "unknown".to_string());
 
-    let region = TeamsRegion::from_env_or_default();
     let params = RecordingParams {
         caller_mri,
         participant_id,
@@ -403,7 +403,7 @@ pub async fn start_call_recording(
         skype_token,
         conversation_id: &placeholder_conv_id,
         add_participant_url: &add_url,
-        region: &region,
+        region,
     };
 
     tracing::info!("Starting recording flow (add URL: {})", add_url);
@@ -437,7 +437,7 @@ pub async fn start_call_recording(
                 message_id,
                 caller_oid: "", // not needed for acknowledgement
                 tenant_id: "",  // not needed for acknowledgement
-                region: &region,
+                region,
             };
             wait_for_recorder_info(
                 ws,
