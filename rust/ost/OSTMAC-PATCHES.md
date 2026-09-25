@@ -658,6 +658,22 @@ needing maintainer buy-in. Minor PRs stand alone; majors are separate PRs.
     `TEAMS_REGION`/`TEAMS_RING` env, per-field AMER fallback; +2
     tests, hermetic `with_overrides`).
 
+53. [minor] `src/calling/turn.rs` + `Cargo.toml`/`Cargo.lock` —
+    **RFC 5389 MD5 long-term credential key (om-turn-md5 lane)**.
+    `compute_long_term_key` ignored its MD5(username:realm:password)
+    contract and returned raw password bytes (short-term fallback
+    with a TODO); every authenticated Allocate/Permission/ChannelBind
+    derived the wrong HMAC key against long-term servers. Now
+    `md5::compute` via new `md5 = "0.8"` dep. 2 key-vector tests
+    (user:realm:pass, empty) cross-checked against system md5(1);
+    MI/fingerprint test re-keyed through the same helper. Genuine
+    signaling bugfix, not OstMac-specific. Merged `4129087`
+    (lanes/om-turn-md5).
+    Upstream: https://github.com/eisbaw/ost/pull/51 (filed
+    2026-09-25, base 0892144; verbatim lane hunk, 93/93 bin tests
+    with sdp-dance temp-fix reverted; unit vectors only, no live
+    TURN-server verification — stated in body).
+
 ## Upstream PRs (2026-09-22, base 0892144; main red on sdp E0308 until #5)
 
 Minor (standalone modulo #5-first; merge in any order after):
