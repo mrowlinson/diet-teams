@@ -137,6 +137,9 @@ public final class CallHistoryStore: ObservableObject {
     /// Redial seam (AppState: place on the record's thread). Injectable
     /// so tests assert the action without the call slot.
     public var onRedial: ((CallRecord) -> Void)?
+    /// Record hook (e1-activity: missed calls land in the feed).
+    /// Fires once per finalized record, after persistence.
+    public var onRecord: ((CallRecord) -> Void)?
 
     public static let defaultsKey = "omCallHistoryV1"
     /// Per-account key (d1-accounts): default keeps the legacy key.
@@ -310,6 +313,7 @@ public final class CallHistoryStore: ObservableObject {
             records = Array(records.prefix(Self.maxRecords))
         }
         save()
+        onRecord?(record)
     }
 
     private func stampOr(_ unix: UInt64, _ fallback: Date) -> Date {

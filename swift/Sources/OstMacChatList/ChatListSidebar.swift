@@ -12,6 +12,11 @@ public struct ChatListSidebar: View {
     @ObservedObject private var mentions: MentionStore
     @ObservedObject private var rules: RulesStore
     @ObservedObject private var snooze: SnoozeStore
+    @ObservedObject private var activity: ActivityStore
+    /// In-window pane selection (e1-inwindow): the Activity / All
+    /// Mentions rows drive this; the main pane shows the list. Owned
+    /// by AppState (chat opens clear it through the `open` funnel).
+    private var pane: Binding<ActivityPane?>
     @State private var searchText = ""
     @State private var mentionsOnly = false
     @State private var showHidden = false
@@ -40,6 +45,8 @@ public struct ChatListSidebar: View {
         mentions: MentionStore = MentionStore(),
         rules: RulesStore = RulesStore(),
         snooze: SnoozeStore = SnoozeStore(),
+        activity: ActivityStore = ActivityStore(),
+        activityPane: Binding<ActivityPane?> = .constant(nil),
         initialFilter: String = "",
         initialFolderID: String? = nil,
         folderManageOpen: Bool = false,
@@ -52,6 +59,8 @@ public struct ChatListSidebar: View {
         self.mentions = mentions
         self.rules = rules
         self.snooze = snooze
+        self.activity = activity
+        self.pane = activityPane
         self.onPopOut = onPopOut
         _searchText = State(initialValue: initialFilter)
         _selectedFolderID = State(initialValue: initialFolderID)
@@ -129,6 +138,8 @@ public struct ChatListSidebar: View {
                 pendingSnooze = nil
             }
         }
+        // e1-inwindow: NO sheets for Activity / Mentions — the rows
+        // select a pane and the main pane shows the list in-window.
     }
 
     /// Confirm bindings: shown while a target is armed.
@@ -208,6 +219,10 @@ public struct ChatListSidebar: View {
             folderRow
             DietSeamH()
             mentionsRow
+            DietSeamH()
+            activityRow
+            DietSeamH()
+            mentionsCenterRow
             DietSeamH()
             hiddenRow
             DietSeamH()
@@ -409,11 +424,7 @@ public struct ChatListSidebar: View {
                     .font(DietType.headline)
                     .foregroundStyle(mentionsOnly ? DietColor.textPrimaryColor : DietColor.textSecondaryColor)
                 Spacer()
-                if mentions.count > 0 {
-                    Text("\(mentions.count)")
-                        .font(DietType.captionMono)
-                        .foregroundStyle(DietColor.textSecondaryColor)
-                }
+                SidebarCountBadge(count: mentions.count)
             }
             .padding(.horizontal, DietSpace.sm)
             .padding(.vertical, DietSpace.xs)
@@ -425,6 +436,78 @@ public struct ChatListSidebar: View {
         .accessibilityIdentifier("mentions")
         .plainFocusRing()
         .help("Show only threads that mention you")
+    }
+
+    /// Activity row (e1-inwindow): stable id `activity`. Tapping
+    /// selects the feed pane (the main pane shows the list
+    /// in-window — never a sheet); the count names unreviewed
+    /// items. Always present (stable for shots/tests). The Mentions
+    /// filter row above is untouched (separate behavior).
+    private var activityRow: some View {
+        let selected = pane.wrappedValue == .feed
+        return Button {
+            selectPane(.feed)
+        } label: {
+            HStack(spacing: DietSpace.sm) {
+                Image(systemName: "bell.circle")
+                    .font(.system(size: DietSize.iconMD))
+                    .foregroundStyle(selected ? Color.accentColor : DietColor.textSecondaryColor)
+                Text("Activity")
+                    .font(DietType.headline)
+                    .foregroundStyle(selected ? DietColor.textPrimaryColor : DietColor.textSecondaryColor)
+                Spacer()
+                SidebarCountBadge(count: activity.unreviewedCount)
+            }
+            .padding(.horizontal, DietSpace.sm)
+            .padding(.vertical, DietSpace.xs)
+            .contentShape(Rectangle())
+            .background(selected ? Color.accentColor.opacity(0.12) : .clear)
+        }
+        .buttonStyle(.plain)
+        .id("activity")
+        .accessibilityIdentifier("activity")
+        .plainFocusRing()
+        .help("Show the activity feed in the main pane")
+    }
+
+    /// Mentions-center row (e1-inwindow): stable id
+    /// `mentions-center`. Tapping selects the center pane (the main
+    /// pane shows the list in-window — never a sheet); the count
+    /// names unreviewed mentions + channel blasts.
+    private var mentionsCenterRow: some View {
+        let selected = pane.wrappedValue == .center
+        return Button {
+            selectPane(.center)
+        } label: {
+            HStack(spacing: DietSpace.sm) {
+                Image(systemName: "tray.full")
+                    .font(.system(size: DietSize.iconMD))
+                    .foregroundStyle(selected ? Color.accentColor : DietColor.textSecondaryColor)
+                Text("All Mentions")
+                    .font(DietType.headline)
+                    .foregroundStyle(selected ? DietColor.textPrimaryColor : DietColor.textSecondaryColor)
+                Spacer()
+                SidebarCountBadge(count: activity.mentionItems.count)
+            }
+            .padding(.horizontal, DietSpace.sm)
+            .padding(.vertical, DietSpace.xs)
+            .contentShape(Rectangle())
+            .background(selected ? Color.accentColor.opacity(0.12) : .clear)
+        }
+        .buttonStyle(.plain)
+        .id("mentions-center")
+        .accessibilityIdentifier("mentions-center")
+        .plainFocusRing()
+        .help("Review every mention across chats and channels")
+    }
+
+    /// Pane select (e1-inwindow): the main pane shows the list; the
+    /// chat selection clears so one highlight wins (the sink closes
+    /// the conversation behind the pane — standard navigation, and
+    /// tapping any chat row re-opens it and clears the pane).
+    private func selectPane(_ next: ActivityPane) {
+        model.selectedChatID = nil
+        pane.wrappedValue = next
     }
 
     /// Show-hidden row (om-mute-hide): stable id `show-hidden`. Tapping
@@ -545,6 +628,24 @@ extension View {
         }
     }
 
+}
+
+/// Stable trailing count for the sidebar filter rows (e1-inwindow
+/// badge fix): the node stays in the tree at zero (transparent +
+/// hidden from AX) instead of a conditional insert — late-arriving
+/// counts paint, and the row never jumps when the count lands
+/// (zero-refresh). Shared by the Mentions / Activity / All Mentions
+/// rows (same module).
+struct SidebarCountBadge: View {
+    let count: Int
+
+    var body: some View {
+        Text("\(count)")
+            .font(DietType.captionMono)
+            .foregroundStyle(DietColor.textSecondaryColor)
+            .opacity(count > 0 ? 1 : 0)
+            .accessibilityHidden(count == 0)
+    }
 }
 
 /// Snooze duration picker (d2-send). Native Form in a Sheet: one

@@ -27,6 +27,10 @@ public struct SidebarColumn: View {
     @ObservedObject private var mentions: MentionStore
     @ObservedObject private var rules: RulesStore
     @ObservedObject private var snooze: SnoozeStore
+    @ObservedObject private var activity: ActivityStore
+    /// In-window pane selection (e1-inwindow): AppState-owned, passed
+    /// to the chats sidebar (the rows drive it; the main pane shows).
+    private var activityPane: Binding<ActivityPane?>
     private let openChatID: String?
     private let initialFilter: String
     private let channelCreateOpen: Bool
@@ -54,6 +58,8 @@ public struct SidebarColumn: View {
         mentions: MentionStore = MentionStore(),
         rules: RulesStore = RulesStore(),
         snooze: SnoozeStore = SnoozeStore(),
+        activity: ActivityStore = ActivityStore(),
+        activityPane: Binding<ActivityPane?> = .constant(nil),
         openChatID: String? = nil,
         initialSection: SidebarSection = .chats,
         initialFilter: String = "",
@@ -77,6 +83,8 @@ public struct SidebarColumn: View {
         self.mentions = mentions
         self.rules = rules
         self.snooze = snooze
+        self.activity = activity
+        self.activityPane = activityPane
         self.openChatID = openChatID
         self.initialFilter = initialFilter
         self.channelCreateOpen = channelCreateOpen
@@ -95,7 +103,7 @@ public struct SidebarColumn: View {
             DietDividerV()
             switch section {
             case .chats:
-                ChatListSidebar(model: chats, presence: presence, unread: unread, mentions: mentions, rules: rules, snooze: snooze, initialFilter: initialFilter, initialFolderID: initialFolderID, folderManageOpen: folderManageOpen, initialEditingRuleID: initialEditingRuleID, onPopOut: onPopOut)
+                ChatListSidebar(model: chats, presence: presence, unread: unread, mentions: mentions, rules: rules, snooze: snooze, activity: activity, activityPane: activityPane, initialFilter: initialFilter, initialFolderID: initialFolderID, folderManageOpen: folderManageOpen, initialEditingRuleID: initialEditingRuleID, onPopOut: onPopOut)
                     .transition(.opacity)
             case .teams:
                 TeamsBrowser(
