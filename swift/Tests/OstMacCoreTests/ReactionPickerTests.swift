@@ -118,4 +118,62 @@ final class ReactionPickerTests: XCTestCase {
         XCTAssertEqual(
             ReactionRecents.load(defaults: defaults), ["🎉", "👍"])
     }
+
+    // MARK: - w4-emoji-recent seeded recents
+
+    func testSeedIsFullTopFrequentGrid() {
+        XCTAssertEqual(ReactionRecents.seed.count, ReactionRecents.maxCount)
+        XCTAssertEqual(Set(ReactionRecents.seed).count, ReactionRecents.seed.count)
+        for e in ReactionRecents.seed {
+            XCTAssertEqual(e.count, 1, "not single: \(e)")
+            XCTAssertTrue(ReactionCatalog.contains(e), "not in catalog: \(e)")
+        }
+    }
+
+    func testFreshUserSeesFullSeedGrid() {
+        let suite = "om.w4recent.fresh.test"
+        guard let defaults = UserDefaults(suiteName: suite) else {
+            XCTFail("no suite defaults")
+            return
+        }
+        defer { defaults.removePersistentDomain(forName: suite) }
+        // No key at all: full grid of top-N frequent, zero empty slots.
+        XCTAssertEqual(ReactionRecents.load(defaults: defaults), ReactionRecents.seed)
+        XCTAssertEqual(
+            ReactionRecents.load(defaults: defaults).count, ReactionRecents.maxCount)
+        // Junk-only also counts as fresh.
+        defaults.set(["", "ab"], forKey: ReactionRecents.defaultsKey)
+        XCTAssertEqual(ReactionRecents.load(defaults: defaults), ReactionRecents.seed)
+    }
+
+    func testOwnPickPushesOutLowestSeed() {
+        let suite = "om.w4recent.pushout.test"
+        guard let defaults = UserDefaults(suiteName: suite) else {
+            XCTFail("no suite defaults")
+            return
+        }
+        defer { defaults.removePersistentDomain(forName: suite) }
+        // Fresh seed, then react with X (outside the seed): X first,
+        // lowest-ranked seed drops, grid stays full.
+        XCTAssertFalse(ReactionRecents.seed.contains("🚀"))
+        ReactionRecents.record("🚀", defaults: defaults)
+        let got = ReactionRecents.load(defaults: defaults)
+        XCTAssertEqual(got.count, ReactionRecents.maxCount)
+        XCTAssertEqual(got.first, "🚀")
+        XCTAssertEqual(got, ["🚀"] + Array(ReactionRecents.seed.prefix(11)))
+        // Re-picking a seed member moves it to front, no dupes.
+        ReactionRecents.record("👍", defaults: defaults)
+        let got2 = ReactionRecents.load(defaults: defaults)
+        XCTAssertEqual(got2.count, ReactionRecents.maxCount)
+        XCTAssertEqual(got2.first, "👍")
+        XCTAssertEqual(Set(got2).count, got2.count)
+        // Enough distinct picks push every seed out, most-recent-first.
+        for e in ["📌", "✅", "⭐", "☕", "🍕", "⚽", "🎮", "💡", "❓", "❗", "🌟", "🎊"] {
+            ReactionRecents.record(e, defaults: defaults)
+        }
+        let got3 = ReactionRecents.load(defaults: defaults)
+        XCTAssertEqual(got3.count, ReactionRecents.maxCount)
+        XCTAssertEqual(got3.first, "🎊")
+        XCTAssertTrue(Set(got3).isDisjoint(with: Set(ReactionRecents.seed)))
+    }
 }

@@ -142,9 +142,19 @@ public enum ReactionCatalog {
 
 /// Most-recently-reacted ring. Pure core (testable) + a thin
 /// UserDefaults shell (standard defaults, capped at 12).
+/// w4-emoji-recent: ships fully seeded with the global default
+/// ranking — fresh users see a full grid, zero empty slots. Own
+/// picks move to front and push the lowest-ranked seeds out.
 public enum ReactionRecents {
     public static let maxCount = 12
     public static let defaultsKey = "om.reactionRecents"
+
+    /// Global default ranking: most-frequently-used emoji first.
+    /// Exactly maxCount single graphemes, all in the catalog.
+    public static let seed: [String] = [
+        "😂", "❤️", "👍", "😍", "🙏", "👏",
+        "🎉", "🔥", "😭", "🙌", "💯", "😀",
+    ]
 
     /// Move-to-front add: dedups, newest first, capped.
     public static func withRecorded(_ list: [String], emoji: String) -> [String] {
@@ -157,9 +167,11 @@ public enum ReactionRecents {
     }
 
     /// Load recents, dropping stale non-emoji values defensively.
+    /// Empty (fresh user) loads the full seed grid.
     public static func load(defaults: UserDefaults = .standard) -> [String] {
         let raw = defaults.stringArray(forKey: defaultsKey) ?? []
-        return Array(raw.filter { $0.count == 1 }.prefix(maxCount))
+        let valid = Array(raw.filter { $0.count == 1 }.prefix(maxCount))
+        return valid.isEmpty ? seed : valid
     }
 
     /// Record one reacted emoji (single graphemes only).
