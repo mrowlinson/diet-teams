@@ -10,6 +10,7 @@ mod me;
 pub mod media;
 mod notes;
 mod presence;
+mod recordings;
 mod search;
 mod tabs;
 mod teams;
@@ -26,6 +27,12 @@ pub use files::{FileVersion, SharedFile};
 pub use me::UserInfo;
 pub use notes::{NotePage, NotebookInfo, PageInfo, SectionInfo};
 pub use presence::PresenceInfo;
+pub use recordings::{
+    clamp_limit as recordings_clamp_limit, is_video as is_recording_video,
+    list_recordings_data, parse_recordings_response, recordings_children_path,
+    recordings_search_path, search_recordings_data, sort_newest as sort_recordings_newest,
+    RecordingInfo, RecordingSource, RECORDINGS_MAX_LIMIT,
+};
 pub use search::{clamp_size, next_from, parse_search_response, search_body, search_messages_data, SearchHitInfo, SearchPage, SEARCH_MAX_SIZE};
 pub use tabs::TabInfo;
 pub use teams::TeamInfo;
