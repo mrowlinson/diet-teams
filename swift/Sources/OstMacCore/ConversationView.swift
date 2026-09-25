@@ -891,6 +891,11 @@ struct MessageBubble: View {
     /// parent id. Default no-op (previews, tests). Evicted parents
     /// never call it (fallback line is not a button).
     var onQuoteJump: (String) -> Void = { _ in }
+    /// Inline translation (e1-translation): this bubble's cached entry
+    /// (nil = never translated). The host's TranslationStore owns it.
+    var translation: TranslatedEntry? = nil
+    /// Translate tap (e1-translation): the host toggles/translates.
+    var onTranslate: () -> Void = {}
 
     var body: some View {
         HStack(spacing: DietSpace.xs) {
@@ -932,6 +937,13 @@ struct MessageBubble: View {
                             .font(DietType.body)
                             .tint(.accentColor)
                             .textSelection(.enabled)
+                    }
+                    // Inline translation (e1-translation): the translated
+                    // text under the original (original always stays).
+                    // Bubble-local growth only — stable row identity, no
+                    // timeline refresh, no spinner (quiet captions).
+                    if let t = translation, t.isVisible {
+                        translationBlock(t)
                     }
                     let emoticons = images.filter(\.isEmoticon)
                     let photos = images.filter { !$0.isEmoticon }
@@ -1022,7 +1034,9 @@ struct MessageBubble: View {
                     onCopy: { copyBody() }, onForward: onForward,
                     onSave: { saveBody() }, onRetry: onRetry,
                     onReply: onReply, onEdit: onEdit, onDelete: onDelete,
-                    isPinned: isPinned, onTogglePin: onTogglePin))
+                    isPinned: isPinned, onTogglePin: onTogglePin,
+                    canTranslate: MessageTranslation.isEligible(message),
+                    onTranslate: onTranslate))
             // Keyboard/VO path (om-a3-keyboard): the bubble takes focus
             // and exposes the same actions as a native context menu.
             // Right-clicks still land on the AppKit menu (its monitor
@@ -1060,6 +1074,9 @@ struct MessageBubble: View {
         Button("Copy") { copyBody() }
         Button("Forward…", action: onForward)
         Button("Save…") { saveBody() }
+        if MessageTranslation.isEligible(message) {
+            Button(MessageTranslation.menuTitle, action: onTranslate)
+        }
         Button(PinnedMessages.menuTitle(isPinned: isPinned), action: onTogglePin)
         if message.isOwn {
             Button("Edit…", action: onEdit)
@@ -1068,6 +1085,85 @@ struct MessageBubble: View {
         if failed {
             Button("Retry send", action: onRetry)
         }
+    }
+
+    /// Keyboard-menu titles in order (leading React… covers the AppKit
+    /// emoji row). Must match ReactionMenuAnchorView.actionItems after
+    /// the React… head (parity pinned by MessageTranslationTests —
+    /// update BOTH with keyboardMenu above).
+    static func keyboardMenuTitles(
+        for message: ChatMessage, failed: Bool, isPinned: Bool,
+        canTranslate: Bool
+    ) -> [String] {
+        var titles = ["React…", "Reply", "Copy", "Forward…", "Save…"]
+        if canTranslate {
+            titles.append(MessageTranslation.menuTitle)
+        }
+        titles.append(PinnedMessages.menuTitle(isPinned: isPinned))
+        if message.isOwn {
+            titles += ["Edit…", "Delete…"]
+        }
+        if failed {
+            titles.append("Retry send")
+        }
+        return titles
+    }
+
+    /// Inline translated-text block (e1-translation): divider + language
+    /// tag + translated text in a secondary treatment, original above
+    /// untouched. Quiet captions for pending/no-op/failure (no spinner,
+    /// no skeleton — zero-refresh rule).
+    @ViewBuilder
+    private func translationBlock(_ t: TranslatedEntry) -> some View {
+        Divider()
+        switch t.state {
+        case .pending:
+            Text("Translating…")
+                .font(DietType.caption1)
+                .foregroundStyle(DietColor.textSecondaryColor)
+                .accessibilityLabel("Translating message")
+        case .translated:
+            VStack(alignment: .leading, spacing: DietSpace.xxs) {
+                HStack(spacing: DietSpace.xs) {
+                    Text(Self.translationTag(for: t))
+                        .font(DietType.caption2)
+                        .foregroundStyle(DietColor.textSecondaryColor)
+                    Spacer(minLength: DietSpace.sm)
+                    Button("Show original", action: onTranslate)
+                        .buttonStyle(.link)
+                        .font(DietType.caption1)
+                        .plainFocusRing()
+                }
+                Text(t.text)
+                    .font(DietType.body)
+                    .foregroundStyle(DietColor.textSecondaryColor)
+                    .textSelection(.enabled)
+            }
+            .accessibilityElement(children: .combine)
+        case .sameLanguage:
+            Text("Already in \(MessageTranslation.displayName(for: t.targetCode))")
+                .font(DietType.caption1)
+                .foregroundStyle(DietColor.textSecondaryColor)
+        case .failed:
+            HStack(spacing: DietSpace.xs) {
+                Text("Translation unavailable")
+                    .font(DietType.caption1)
+                    .foregroundStyle(DietColor.textSecondaryColor)
+                Button("Retry", action: onTranslate)
+                    .buttonStyle(.link)
+                    .font(DietType.caption1)
+                    .plainFocusRing()
+            }
+            .accessibilityElement(children: .combine)
+        }
+    }
+
+    /// "Translated from Spanish" (source known) or "Translated" + target.
+    static func translationTag(for t: TranslatedEntry) -> String {
+        if let src = t.sourceCode, !src.isEmpty {
+            return "Translated from \(MessageTranslation.displayName(for: src))"
+        }
+        return "Translated to \(MessageTranslation.displayName(for: t.targetCode))"
     }
 
     /// "Remove 👍" when the bubble already shows it, else "React 👍".
