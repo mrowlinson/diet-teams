@@ -52,6 +52,8 @@ struct SettingsView: View {
     @Environment(\.openWindow) private var openWindow
     /// Message templates (e2-canned): composer picker + Chats section.
     @ObservedObject private var canned: CannedResponsesStore
+    /// Ghost mode (f1-ghost): read-privacy toggles (Notifications).
+    @ObservedObject private var ghost: GhostStore
     private let onAccountAdded: (AuthViewModel) -> Void
     private let onRemoveAccount: (String) -> Void
     @State private var pendingAddVM: AuthViewModel?
@@ -88,6 +90,7 @@ struct SettingsView: View {
         accounts: AccountStore = AccountStore(),
         call: CallStore = CallStore(),
         canned: CannedResponsesStore = CannedResponsesStore(),
+        ghost: GhostStore = GhostStore(),
         onAccountAdded: @escaping (AuthViewModel) -> Void = { _ in },
         onRemoveAccount: @escaping (String) -> Void = { _ in }
     ) {
@@ -103,6 +106,7 @@ struct SettingsView: View {
         _accounts = ObservedObject(wrappedValue: accounts)
         _call = ObservedObject(wrappedValue: call)
         _canned = ObservedObject(wrappedValue: canned)
+        _ghost = ObservedObject(wrappedValue: ghost)
         self.onAccountAdded = onAccountAdded
         self.onRemoveAccount = onRemoveAccount
         fixedAccount = nil
@@ -144,6 +148,7 @@ struct SettingsView: View {
         } else {
             _canned = ObservedObject(wrappedValue: CannedResponsesStore())
         }
+        _ghost = ObservedObject(wrappedValue: GhostStore())
         onAccountAdded = { _ in }
         onRemoveAccount = { _ in }
         fixedAccount = account
@@ -335,6 +340,19 @@ struct SettingsView: View {
             }
             LabeledContent("Status", value: quiet.dndStatus())
             Text("Manual silence with auto-expiry. Like the schedule, it holds banners and sounds — unread pauses too while on.")
+                .font(DietType.caption1)
+                .foregroundStyle(DietColor.textSecondaryColor)
+        }
+        Section("Ghost mode") {
+            Toggle("Ghost mode", isOn: $ghost.master)
+                .help("Withhold your outbound read and presence signals")
+            Toggle("Hide read receipts", isOn: $ghost.suppressReceipts)
+                .help("Viewing chats sends no read positions to the server")
+                .disabled(!ghost.master)
+            Toggle("Freeze my presence", isOn: $ghost.suppressPresence)
+                .help("Hold your status and presence writes while ghosted")
+                .disabled(!ghost.master)
+            Text("While on, reading chats sends NO read receipts and your Teams status is frozen (picker and scheduled changes are held, never sent). Incoming receipts and presence still show; your local unread badges still clear on open. Covers this Mac only — phone and web still mark read.")
                 .font(DietType.caption1)
                 .foregroundStyle(DietColor.textSecondaryColor)
         }

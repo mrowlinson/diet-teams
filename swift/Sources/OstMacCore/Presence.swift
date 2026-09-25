@@ -133,6 +133,10 @@ public final class PresenceStore: ObservableObject {
     /// (the picker path). The app wires it to the presence schedule's
     /// noteManualSet (contract (i)); nil by default (no behavior change).
     public var manualSetHook: (() -> Void)?
+    /// Ghost-mode gate (f1-ghost): when set and suppressing presence,
+    /// `set(status:)` counts a hold and writes nothing (held sets are
+    /// dropped — never replayed, never pause the schedule). Nil = live.
+    public var ghost: GhostStore?
 
     private let ownFetcher: OwnFetcher
     private let setFetcher: SetFetcher
@@ -173,6 +177,12 @@ public final class PresenceStore: ObservableObject {
 
     /// Set own status (picker action). Applies the server-echoed value.
     public func set(status: PresenceStatus) {
+        // Ghost (f1-ghost): hold before the hook — a held set never
+        // happened (no write, no echo, no schedule pause, no spinner).
+        if let ghost, ghost.shouldSuppressPresence {
+            ghost.noteHeldPresence()
+            return
+        }
         guard !setting else { return }
         manualSetHook?() // e2-attention: manual set (pause signal)
         setting = true

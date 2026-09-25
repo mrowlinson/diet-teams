@@ -251,7 +251,7 @@ struct OstMacAppMain: App {
                     quiet: state.quietHours, focus: state.focusSync,
                     sched: state.presenceSchedule, blocked: state.blocked,
                     accounts: state.accounts, call: state.call,
-                    canned: state.canned,
+                    canned: state.canned, ghost: state.ghost,
                     onAccountAdded: { state.completePendingAdd($0) },
                     onRemoveAccount: { state.removeAccount($0) })
             }
@@ -369,6 +369,10 @@ final class AppState: ObservableObject {
     @Published var savedMessages: SavedMessageStore
     let auth = AuthViewModel()
     let presence = PresenceStore()
+    /// Ghost mode (f1-ghost): suppresses own read-receipt PUTs and
+    /// presence writes while on (injected into receipts/presence/
+    /// presenceSchedule below; toggles persist, counters clear out).
+    let ghost = GhostStore()
     let call: CallStore
     /// Rebuilt per account on switch (d1-accounts).
     @Published var history = CallHistoryStore()
@@ -501,6 +505,11 @@ final class AppState: ObservableObject {
             // Schedule adopts set-echoes into presence (weak).
             presenceSchedule = PresenceScheduleStore(presence: presence)
         }
+        // Ghost (f1-ghost): one store gates all three outbound paths
+        // (receipt sends, manual presence sets, scheduled sets).
+        receipts.ghost = ghost
+        presence.ghost = ghost
+        presenceSchedule.ghost = ghost
         isDemo = args.contains("--demo") || args.contains("--demo-rich")
             || args.contains("--demo-reactions") || args.contains("--show-sidebarchurn")
             || args.contains("--demo-botposts") || args.contains("--show-pins")
@@ -886,6 +895,7 @@ final class AppState: ObservableObject {
         unread.markAllRead()
         mentions.markAllRead()
         receipts.clear()
+        ghost.clear() // f1-ghost: counters clear, toggles persist
         Task {
             await RichMediaCache.shared.resetForAccount(id)
             await LinkPreviewCache.shared.resetForAccount()
@@ -2113,6 +2123,7 @@ final class AppState: ObservableObject {
             unread.markAllRead() // om-notifbadge: counts clear on sign-out
             mentions.markAllRead() // om-mention-alerts: flags + dock clear on sign-out
             receipts.clear() // om-receipts: positions clear on sign-out
+            ghost.clear() // f1-ghost: counters clear, toggles persist
             refreshFeedStatus()
         default:
             break

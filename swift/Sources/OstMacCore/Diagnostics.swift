@@ -152,4 +152,20 @@ public enum DiagnosticsFormat {
     public static func leaveBlockLine(leaves: Int, blocks: Int, failed: Int) -> String {
         "\(leaves) left · \(blocks) blocked · \(failed) failed"
     }
+
+    /// Ghost-mode state (f1-ghost): which signals are suppressed plus
+    /// session suppressed/held counts. Diagnostics window only — the
+    /// counters appear nowhere else (no sidebar, no Settings). Master
+    /// off reads "off" even with stale sub-toggles (subs need master).
+    public static func ghostLine(
+        master: Bool, receipts: Bool, presence: Bool, suppressed: Int, held: Int
+    ) -> String {
+        var signals: [String] = []
+        if master {
+            if receipts { signals.append("receipts") }
+            if presence { signals.append("presence") }
+        }
+        let state = signals.isEmpty ? "off" : "on (\(signals.joined(separator: " + ")))"
+        return "\(state) · \(suppressed) suppressed · \(held) held"
+    }
 }

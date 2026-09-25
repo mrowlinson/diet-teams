@@ -105,6 +105,9 @@ struct DiagnosticsView: View {
                         call: state.call, history: state.history,
                         isDemo: state.isDemo, signedIn: state.signedIn)
                 }
+                Section("Ghost mode") {
+                    GhostDiagRow(store: state.ghost)
+                }
             }
         }
         .formStyle(.grouped)
@@ -134,6 +137,25 @@ struct ReceiptsDiagRow: View {
                     .textSelection(.enabled)
             }
         }
+    }
+}
+
+/// Ghost-mode row (f1-ghost): observes the store directly so the
+/// state and suppressed/held counts tick without an AppState
+/// forward. The ONLY surface for the counters.
+struct GhostDiagRow: View {
+    @ObservedObject var store: GhostStore
+
+    var body: some View {
+        LabeledContent(
+            "State",
+            value: DiagnosticsFormat.ghostLine(
+                master: store.master,
+                receipts: store.suppressReceipts,
+                presence: store.suppressPresence,
+                suppressed: store.suppressedReceipts,
+                held: store.heldPresence))
+            .textSelection(.enabled)
     }
 }
 
