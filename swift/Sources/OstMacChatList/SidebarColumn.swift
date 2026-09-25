@@ -97,9 +97,18 @@ public struct SidebarColumn: View {
 
     public var body: some View {
         VStack(spacing: 0) {
+            // e1-inwindow badge fix: the 7-segment switcher reports a
+            // ~950px ideal width (AppKit-required resistance — it
+            // won't compress) and the VStack hugs it — the sidebar
+            // rows then lay out wider than narrow columns and their
+            // trailing counts clip under the detail pane (present in
+            // AX, no pixels). Hard-bound the switcher to the column
+            // offer (overflow clips at the trailing edge).
             DietSegmentedPicker("Section", selection: $section)
                 .padding(.horizontal, DietSpace.sm)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .frame(height: DietSize.toolbar)
+                .clipped()
             DietSeamH()
             switch section {
             case .chats:

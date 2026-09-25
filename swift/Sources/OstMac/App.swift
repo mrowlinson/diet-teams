@@ -2105,6 +2105,15 @@ struct RootView: View {
                             }
                         }
                     )
+                    // e1-inwindow badge fix: cap sidebar content at the
+                    // column max — the 7-segment switcher reports ~475pt
+                    // ideal (AppKit-required, won't compress) and the
+                    // column VStack hugs it, so rows lay out wider than
+                    // the visible column and trailing counts/times clip
+                    // under the detail pane (AX-visible, no pixels). A
+                    // finite max caps under every offer (nil included);
+                    // the switcher self-clips its own overflow.
+                    .frame(maxWidth: 420)
                     .navigationSplitViewColumnWidth(min: 240, ideal: 300, max: 420)
                 } detail: {
                     if let pane = state.activityPane {
