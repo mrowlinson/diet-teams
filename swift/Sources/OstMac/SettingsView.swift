@@ -27,6 +27,12 @@ struct SettingsView: View {
     /// KLIPY BYO key, keychain-backed (never UserDefaults). Loaded on
     /// appear, saved on every edit (blank clears).
     @State private var klipyAPIKey = ""
+    /// Keyword drafts + refusal text (Settings-local: edits never touch
+    /// the chat list or bubbles — zero-refresh by construction).
+    @State private var allowDraft = ""
+    @State private var blockDraft = ""
+    @State private var allowError: String?
+    @State private var blockError: String?
     private let fixedAccount: AccountInfo?
 
     /// Live view: shares the app's models (single source of truth).
@@ -83,17 +89,45 @@ struct SettingsView: View {
                         .help("When off, banners post silent")
                     LabeledContent("System permission", value: permissionText)
                 }
+                Section("Keyword alerts") {
+                    keywordGroup(
+                        title: "Always notify",
+                        words: rules.config.allowKeywords,
+                        draft: $allowDraft,
+                        error: allowError,
+                        placeholder: "Add word, e.g. outage",
+                        emptyText: "No always-notify words yet.",
+                        remove: rules.removeAllowKeyword,
+                        add: submitAllow)
+                    keywordGroup(
+                        title: "Never notify",
+                        words: rules.config.blockKeywords,
+                        draft: $blockDraft,
+                        error: blockError,
+                        placeholder: "Add word, e.g. lunch",
+                        emptyText: "No never-notify words yet.",
+                        remove: rules.removeBlockKeyword,
+                        add: submitBlock)
+                    Text("Always words banner even in noisy or mentions-only chats (subtitle “Keyword alert”); never words silence. Case-insensitive whole words; re: prefix is a regex. Never wins over always; muted chats, DND, and quiet hours still hold everything.")
+                        .font(DietType.caption1)
+                        .foregroundStyle(DietColor.textSecondaryColor)
+                }
                 Section("Per-chat overrides") {
-                    if chats.chats.isEmpty, rules.config.mutedChatIDs.isEmpty {
-                        Text("No chats loaded yet. Muted chats appear here once the chat list loads.")
+                    if chats.chats.isEmpty, rules.config.mutedChatIDs.isEmpty, rules.config.mentionOnlyChatIDs.isEmpty {
+                        Text("No chats loaded yet. Overridden chats appear here once the chat list loads.")
                             .font(DietType.caption1)
                             .foregroundStyle(DietColor.textSecondaryColor)
                     } else {
                         ForEach(chats.chats) { chat in
-                            Toggle(chat.name, isOn: muteBinding(chat.id))
-                                .help(muteHelp(chatID: chat.id))
+                            Picker(chat.name, selection: levelBinding(chat.id)) {
+                                ForEach(ChatNotifyLevel.allCases, id: \.self) { level in
+                                    Text(level.displayName).tag(level)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            .help(levelHelp(chatID: chat.id))
                         }
-                        ForEach(orphanedMuteIDs, id: \.self) { chatID in
+                        ForEach(orphanedOverrideIDs, id: \.self) { chatID in
                             HStack {
                                 Text(chatID)
                                     .font(DietType.caption1)
@@ -102,14 +136,14 @@ struct SettingsView: View {
                                     .lineLimit(1)
                                     .truncationMode(.middle)
                                 Spacer()
-                                Button("Unmute") {
-                                    rules.setMuted(chatID: chatID, muted: false)
+                                Button("Reset") {
+                                    rules.setLevel(chatID: chatID, level: .all)
                                 }
                             }
-                            .help("Muted, but no longer in the chat list")
+                            .help("Overridden, but no longer in the chat list")
                         }
                     }
-                    Text("Muted chats never banner and never accrue unread (rules reason “chat-muted”).")
+                    Text("Muted chats never banner and never accrue unread (rules reason “chat-muted”); mentions-only chats banner on mention alone.")
                         .font(DietType.caption1)
                         .foregroundStyle(DietColor.textSecondaryColor)
                 }
@@ -207,23 +241,81 @@ struct SettingsView: View {
         }
     }
 
-    /// Muted ids with no roster row (renamed/left chats): still
-    /// enforced, listed so they can be unmuted. Sorted for stability.
-    private var orphanedMuteIDs: [String] {
+    /// Overridden ids with no roster row (renamed/left chats): still
+    /// enforced, listed so they can be reset. Sorted for stability.
+    private var orphanedOverrideIDs: [String] {
         let known = Set(chats.chats.map(\.id))
-        return rules.config.mutedChatIDs.filter { !known.contains($0) }.sorted()
+        let overridden = rules.config.mutedChatIDs.union(rules.config.mentionOnlyChatIDs)
+        return overridden.filter { !known.contains($0) }.sorted()
     }
 
-    private func muteBinding(_ chatID: String) -> Binding<Bool> {
+    private func levelBinding(_ chatID: String) -> Binding<ChatNotifyLevel> {
         Binding(
-            get: { rules.isMuted(chatID: chatID) },
-            set: { rules.setMuted(chatID: chatID, muted: $0) })
+            get: { rules.level(chatID: chatID) },
+            set: { rules.setLevel(chatID: chatID, level: $0) })
     }
 
-    private func muteHelp(chatID: String) -> String {
-        rules.isMuted(chatID: chatID)
-            ? "Muted: no banners, no unread. Flip off to unmute."
-            : "Flip on to mute: no banners, no unread."
+    private func levelHelp(chatID: String) -> String {
+        switch rules.level(chatID: chatID) {
+        case .all: "All: every message banners. Pick Mentions only or Muted to quiet this chat."
+        case .mentions: "Mentions only: banners on mention alone. Pick All to restore, Muted to silence."
+        case .muted: "Muted: no banners, no unread. Pick All or Mentions only to restore."
+        }
+    }
+
+    /// One keyword word-list editor (always/never): rows with Remove,
+    /// TextField + Add, refusal text. Native controls only.
+    private func keywordGroup(
+        title: String,
+        words: [String],
+        draft: Binding<String>,
+        error: String?,
+        placeholder: String,
+        emptyText: String,
+        remove: @escaping (String) -> Void,
+        add: @escaping () -> Void
+    ) -> some View {
+        Group {
+            Text(title).font(DietType.headline)
+            if words.isEmpty {
+                Text(emptyText)
+                    .font(DietType.caption1)
+                    .foregroundStyle(DietColor.textSecondaryColor)
+            } else {
+                ForEach(words, id: \.self) { word in
+                    HStack {
+                        Text(word)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .textSelection(.enabled)
+                        Spacer()
+                        Button("Remove") { remove(word) }
+                    }
+                }
+            }
+            HStack {
+                TextField(placeholder, text: draft)
+                    .onSubmit(add)
+                Button("Add", action: add)
+            }
+            if let error {
+                Text(error)
+                    .font(DietType.caption1)
+                    .foregroundStyle(Color(nsColor: DietColor.danger))
+            }
+        }
+    }
+
+    /// Submit the always draft: refusal text shows, success clears.
+    private func submitAllow() {
+        allowError = rules.addAllowKeyword(allowDraft)
+        if allowError == nil { allowDraft = "" }
+    }
+
+    /// Submit the never draft: refusal text shows, success clears.
+    private func submitBlock() {
+        blockError = rules.addBlockKeyword(blockDraft)
+        if blockError == nil { blockDraft = "" }
     }
 
     private var account: AccountInfo {

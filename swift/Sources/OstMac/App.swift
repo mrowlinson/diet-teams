@@ -1218,7 +1218,8 @@ final class AppState: ObservableObject {
     /// mute set (defense in depth — the rules engine already skips muted
     /// chats), and the preview/sound toggles via the one banner home.
     /// Quiet hours/DND gate the call (never reach here while quiet).
-    /// Breakthrough mentions post elevated (OM_MENTION style + subtitle).
+    /// Breakthrough mentions and keyword hits post elevated (OM_MENTION
+    /// style + subtitle).
     private func maybeNotify(
         _ msg: RealtimeMessage, chatName: String,
         decision: ChatFilter.Decision, mutedChatIDs: Set<String>
@@ -1226,9 +1227,12 @@ final class AppState: ObservableObject {
         guard notifs.enabled else { return }
         guard !mutedChatIDs.contains(msg.chatID) else { return }
         guard case .notify(let reason) = decision else { return }
-        let breakthrough = reason == MentionAlert.breakthroughReason
-        var subtitle: String?
-        if breakthrough {
+        // d2-alerts: keyword hits elevate like breakthrough mentions
+        // (OM_MENTION style family, "Keyword alert" subtitle).
+        let keyword = KeywordAlert.elevation(forReason: reason)
+        let breakthrough = reason == MentionAlert.breakthroughReason || keyword.isElevated
+        var subtitle: String? = keyword.subtitle
+        if reason == MentionAlert.breakthroughReason {
             // Same identity the decision used (live name wins, per-chat
             // gates resolve identically — pure, no extra window claim).
             var cfg = rules.config

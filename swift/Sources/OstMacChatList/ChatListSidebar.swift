@@ -250,11 +250,22 @@ public struct ChatListSidebar: View {
                                     unread.markUnread(chatID: chat.id)
                                 }
                             }
-                            // Mute absolute (no banners, no unread,
-                            // mentions incl); hide drops row until Show
-                            // hidden restores it.
-                            Button(rules.isMuted(chatID: chat.id) ? "Unmute" : "Mute") {
-                                rules.setMuted(chatID: chat.id, muted: !rules.isMuted(chatID: chat.id))
+                            // d2-alerts: 3-state level picker (All /
+                            // Mentions only / Muted). Muted absolute (no
+                            // banners, no unread, mentions incl); hide
+                            // drops row until Show hidden restores it.
+                            Menu("Notifications") {
+                                ForEach(ChatNotifyLevel.allCases, id: \.self) { level in
+                                    Button {
+                                        rules.setLevel(chatID: chat.id, level: level)
+                                    } label: {
+                                        if rules.level(chatID: chat.id) == level {
+                                            Label(level.displayName, systemImage: "checkmark")
+                                        } else {
+                                            Text(level.displayName)
+                                        }
+                                    }
+                                }
                             }
                             Button(rules.isHidden(chatID: chat.id) ? "Unhide" : "Hide") {
                                 rules.setHidden(chatID: chat.id, hidden: !rules.isHidden(chatID: chat.id))
