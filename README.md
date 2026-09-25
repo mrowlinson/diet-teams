@@ -27,7 +27,7 @@ Chat & conversation
 : Shared files (list/upload/download, folders + drill-in, share links,
   versions, move/copy/rename/delete, resumable big uploads, drag-drop +
   QuickLook, sort/filter, save-as) + composer attachments; GIF picker
-  (bring-your-own Tenor key).
+  (bring-your-own Klipy key, kept in the macOS keychain).
 
 Teams, meetings, reminders, notes
 : Teams/channels browser (join/create team, create channel, channel
