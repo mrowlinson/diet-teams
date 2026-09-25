@@ -14,6 +14,12 @@ public struct ChatListSidebar: View {
     @State private var searchText = ""
     @State private var mentionsOnly = false
     @State private var showHidden = false
+    /// Selected folder filter (d1-folders): nil = "All chats".
+    @State private var selectedFolderID: String?
+    /// Folder manager sheet (folders CRUD + auto-rules editor).
+    @State private var showFolderManager = false
+    /// Shot hook: rule id with its editor expanded at launch.
+    private let initialEditingRuleID: String?
     /// Leave/block confirm targets (om-leave-block, native alerts below).
     @State private var pendingLeave: ChatItem?
     @State private var pendingBlock: ChatItem?
@@ -27,7 +33,10 @@ public struct ChatListSidebar: View {
         unread: UnreadStore = UnreadStore(),
         mentions: MentionStore = MentionStore(),
         rules: RulesStore = RulesStore(),
-        initialFilter: String = ""
+        initialFilter: String = "",
+        initialFolderID: String? = nil,
+        folderManageOpen: Bool = false,
+        initialEditingRuleID: String? = nil
     ) {
         self.model = model
         self.presence = presence
@@ -35,6 +44,9 @@ public struct ChatListSidebar: View {
         self.mentions = mentions
         self.rules = rules
         _searchText = State(initialValue: initialFilter)
+        _selectedFolderID = State(initialValue: initialFolderID)
+        _showFolderManager = State(initialValue: folderManageOpen)
+        self.initialEditingRuleID = initialEditingRuleID
     }
 
     public var body: some View {
@@ -150,22 +162,32 @@ public struct ChatListSidebar: View {
         lastLeaveID = nil
     }
 
-    private var loadedList: some View {
-        // Hidden filter first, text second, mentions third: all preserve
-        // order (filtering never re-sorts — displayChats owns the order).
-        // Client-side only — never refetches the list.
+    /// Filter chain: hidden → folder → text → mentions. Every stage
+    /// preserves order (filtering never re-sorts — displayChats owns
+    /// the order). Client-side only — never refetches the list.
+    private func visibleChats(folderID: String?) -> [ChatItem] {
         var visible = ChatListFormat.filterHidden(
             model.displayChats, hiddenIDs: rules.config.hiddenChatIDs,
             showHidden: showHidden)
+        visible = ChatListFormat.filterFolder(
+            visible, folderID: folderID,
+            rules: model.folders.rules, overrides: model.folders.overrides)
         visible = ChatListFormat.filter(visible, query: searchText)
         if mentionsOnly {
             visible = ChatListFormat.filterMentions(visible, mentionedIDs: mentions.mentionedIDs)
         }
+        return visible
+    }
+
+    private var loadedList: some View {
+        let visible = visibleChats(folderID: selectedFolderID)
         let queryBlank = searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         return VStack(spacing: 0) {
             DietSearchField("Filter chats", text: $searchText)
                 .padding(.horizontal, DietSpace.sm)
                 .padding(.vertical, DietSpace.sm)
+            DietSeamH()
+            folderRow
             DietSeamH()
             mentionsRow
             DietSeamH()
@@ -178,6 +200,13 @@ public struct ChatListSidebar: View {
                     message: "Threads that mention you appear here.",
                     actionLabel: "Show all chats",
                     action: { mentionsOnly = false })
+            } else if visible.isEmpty, selectedFolderID != nil, queryBlank, !mentionsOnly {
+                DietEmptyState(
+                    systemImage: "folder",
+                    title: "No chats in folder",
+                    message: "Move chats here from the row menu, or add an auto-rule.",
+                    actionLabel: "Show all chats",
+                    action: { selectedFolderID = nil })
             } else if visible.isEmpty, !queryBlank {
                 DietEmptyState(
                     systemImage: "magnifyingglass",
@@ -198,9 +227,10 @@ public struct ChatListSidebar: View {
                         )
                         .tag(chat.id)
                         .unreadBadge(unread.count(for: chat.id))
-                        // Wave G row menu: one native menu, top-level
-                        // items only (never a submenu). Badge updates
-                        // in place, list never refetches.
+                        // Row menu: native items plus one Move-to-Folder
+                        // submenu (d1-folders scope requires the nested
+                        // Menu). Badge updates in place, list never
+                        // refetches.
                         .contextMenu {
                             if model.isPinned(chat.id) {
                                 Button("Unpin", systemImage: "pin.slash") {
@@ -229,6 +259,28 @@ public struct ChatListSidebar: View {
                             Button(rules.isHidden(chatID: chat.id) ? "Unhide" : "Hide") {
                                 rules.setHidden(chatID: chat.id, hidden: !rules.isHidden(chatID: chat.id))
                             }
+                            // d1-folders: manual assign (explicit wins
+                            // over auto-rules; clearing re-exposes the
+                            // rule match). Native Menu; the row moves
+                            // with a diffed update, never a refetch.
+                            Menu("Move to Folder") {
+                                Button("All Chats (Remove)") {
+                                    model.folders.assign(chatID: chat.id, folderID: nil)
+                                }
+                                if !model.folders.folders.isEmpty {
+                                    Divider()
+                                    ForEach(model.folders.folders) { folder in
+                                        let current = model.folders.folderID(for: chat) == folder.id
+                                        Button {
+                                            model.folders.assign(chatID: chat.id, folderID: folder.id)
+                                        } label: {
+                                            Label(
+                                                folder.name,
+                                                systemImage: current ? "checkmark" : "folder")
+                                        }
+                                    }
+                                }
+                            }
                             // Leave/block arm the confirm alerts below.
                             if chat.is_group {
                                 Button("Leave Chat…") { pendingLeave = chat }
@@ -247,6 +299,44 @@ public struct ChatListSidebar: View {
                 // only (no custom drivers).
                 .animation(DietMotion.gated(reduceMotion: reduceMotion), value: visible.map(\.id))
             }
+        }
+        .sheet(isPresented: $showFolderManager) {
+            FolderManagerSheet(
+                folders: model.folders,
+                initialEditingRuleID: initialEditingRuleID)
+        }
+    }
+
+    /// Folder selector row (d1-folders): native Picker (All chats +
+    /// folders) plus a Manage button for the CRUD/rules sheet. Always
+    /// present (stable for shots/tests). Switching filters client-side
+    /// with a diffed list update — no spinner, no refetch — and the
+    /// selection survives when its chat stays visible, else clears
+    /// (never a blind jump).
+    private var folderRow: some View {
+        HStack(spacing: DietSpace.sm) {
+            Image(systemName: "folder")
+                .font(.system(size: DietSize.iconMD))
+                .foregroundStyle(DietColor.textSecondaryColor)
+            Picker("Folder", selection: $selectedFolderID) {
+                Text("All chats").tag(nil as String?)
+                ForEach(model.folders.folders) { folder in
+                    Text(folder.name).tag(folder.id as String?)
+                }
+            }
+            .pickerStyle(.menu)
+            .labelsHidden()
+            .accessibilityIdentifier("folder-picker")
+            Spacer()
+            Button("Manage…") { showFolderManager = true }
+                .accessibilityIdentifier("folder-manage")
+        }
+        .padding(.horizontal, DietSpace.sm)
+        .padding(.vertical, DietSpace.xs)
+        .onChange(of: selectedFolderID) { next in
+            model.selectedChatID = FolderResolve.selectedAfterSwitch(
+                selectedID: model.selectedChatID,
+                visible: visibleChats(folderID: next))
         }
     }
 
@@ -393,4 +483,326 @@ extension View {
         }
     }
 
+}
+
+// MARK: - d1-folders manager sheet
+
+/// Folders CRUD + auto-rules editor (d1-folders). Native Form in a
+/// Sheet: folders rename inline (Return commits; empty/duplicate names
+/// revert), delete via the row button, and one "New folder" composer;
+/// rules list each rule with an enable toggle, an inline editor, and
+/// delete, plus a "New rule" composer. Every write persists
+/// immediately; the sidebar list updates by diff, never a refetch.
+struct FolderManagerSheet: View {
+    @ObservedObject var folders: FolderStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var newFolderName = ""
+    @State private var folderError: String?
+    /// Rule id with its inline editor expanded (nil = all collapsed).
+    @State private var editingRuleID: String?
+    @State private var showNewRule = false
+
+    init(folders: FolderStore, initialEditingRuleID: String? = nil) {
+        self.folders = folders
+        _editingRuleID = State(initialValue: initialEditingRuleID)
+    }
+
+    var body: some View {
+        Form {
+            Section("Folders") {
+                if folders.folders.isEmpty {
+                    Text("No folders yet. Unassigned chats stay in All chats.")
+                        .foregroundStyle(DietColor.textSecondaryColor)
+                }
+                ForEach(folders.folders) { folder in
+                    FolderNameRow(folders: folders, folder: folder)
+                }
+                HStack {
+                    TextField(
+                        "New folder name", text: $newFolderName,
+                        prompt: Text("New folder name")
+                    )
+                    .labelsHidden()
+                    .onSubmit(addFolder)
+                    Button("Add") { addFolder() }
+                        .disabled(
+                            newFolderName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+                if let folderError {
+                    Text(folderError)
+                        .foregroundStyle(.red)
+                        .font(DietType.captionMono)
+                }
+            }
+            Section("Auto-rules") {
+                Text("First matching rule wins. Manual moves always beat rules.")
+                    .foregroundStyle(DietColor.textSecondaryColor)
+                if folders.rules.isEmpty {
+                    Text("No rules yet.")
+                        .foregroundStyle(DietColor.textSecondaryColor)
+                }
+                ForEach(folders.rules) { rule in
+                    FolderRuleRow(
+                        folders: folders, rule: rule,
+                        expanded: editingRuleID == rule.id,
+                        onToggleExpand: {
+                            editingRuleID = editingRuleID == rule.id ? nil : rule.id
+                        })
+                }
+                if folders.folders.isEmpty {
+                    Text("Create a folder before adding rules.")
+                        .foregroundStyle(DietColor.textSecondaryColor)
+                } else {
+                    Button("Add Rule…") { showNewRule = true }
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .frame(minWidth: 460, minHeight: 420)
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Done") { dismiss() }
+            }
+        }
+        .sheet(isPresented: $showNewRule) {
+            FolderRuleComposer(folders: folders)
+        }
+        .accessibilityIdentifier("folder-manager")
+    }
+
+    private func addFolder() {
+        folderError = nil
+        let name = newFolderName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        guard folders.createFolder(name: name) != nil else {
+            folderError = "That name is taken — pick another."
+            return
+        }
+        newFolderName = ""
+    }
+}
+
+/// One folder row: inline rename (Return commits, failures revert) +
+/// delete. Deleting a folder also drops its rules and assignments.
+private struct FolderNameRow: View {
+    @ObservedObject var folders: FolderStore
+    let folder: ChatFolder
+    @State private var draft: String = ""
+
+    var body: some View {
+        HStack {
+            Image(systemName: "folder")
+                .foregroundStyle(DietColor.textSecondaryColor)
+            TextField("Folder name", text: $draft)
+                .labelsHidden()
+                .onSubmit(commit)
+                .onAppear { draft = folder.name }
+                .onChange(of: folder.name) { draft = $0 }
+            Spacer()
+            Button(role: .destructive) {
+                folders.deleteFolder(id: folder.id)
+            } label: {
+                Label("Delete folder", systemImage: "trash")
+                    .labelStyle(.iconOnly)
+            }
+            .buttonStyle(.borderless)
+        }
+    }
+
+    private func commit() {
+        if !folders.renameFolder(id: folder.id, name: draft) {
+            draft = folder.name
+        }
+    }
+}
+
+/// One rule row: enable toggle + summary + expandable inline editor +
+/// delete. Matchers OR together; blank fields are off.
+private struct FolderRuleRow: View {
+    @ObservedObject var folders: FolderStore
+    let rule: FolderRule
+    let expanded: Bool
+    let onToggleExpand: () -> Void
+    @State private var draftFolderID = ""
+    @State private var draftName = ""
+    @State private var draftDomain = ""
+    @State private var draftKind = FolderRuleKindChoice.any
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DietSpace.xs) {
+            HStack {
+                Toggle("", isOn: enabledBinding)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                Button(action: onToggleExpand) {
+                    Text(summary)
+                        .foregroundStyle(DietColor.textPrimaryColor)
+                        .lineLimit(2)
+                    Spacer()
+                    Image(systemName: expanded ? "chevron.up" : "chevron.down")
+                        .foregroundStyle(DietColor.textSecondaryColor)
+                }
+                .buttonStyle(.plain)
+                Button(role: .destructive) {
+                    folders.removeRule(id: rule.id)
+                } label: {
+                    Label("Delete rule", systemImage: "trash")
+                        .labelStyle(.iconOnly)
+                }
+                .buttonStyle(.borderless)
+            }
+            if expanded {
+                FolderRuleFields(
+                    folders: folders.folders,
+                    folderID: $draftFolderID,
+                    namePattern: $draftName,
+                    senderDomain: $draftDomain,
+                    kind: $draftKind)
+                HStack {
+                    Spacer()
+                    Button("Save") { save() }
+                        .disabled(draftFolderID.isEmpty)
+                }
+            }
+        }
+        .onAppear(perform: reset)
+        .onChange(of: rule) { _ in reset() }
+        .opacity(rule.enabled ? 1 : 0.55)
+    }
+
+    private var enabledBinding: Binding<Bool> {
+        Binding(
+            get: { rule.enabled },
+            set: { folders.setRuleEnabled(id: rule.id, enabled: $0) })
+    }
+
+    private var summary: String {
+        var parts: [String] = []
+        if let p = rule.namePattern, !p.isEmpty { parts.append("name “\(p)”") }
+        if let d = rule.senderDomain, !d.isEmpty { parts.append("sender @\(d)") }
+        if let k = rule.kind {
+            parts.append(k == .group ? "group chats" : "1:1 chats")
+        }
+        let match = parts.isEmpty ? "never matches" : parts.joined(separator: " OR ")
+        let target = folders.name(for: rule.folderID) ?? "?"
+        return "→ \(target): \(match)"
+    }
+
+    private func reset() {
+        draftFolderID = rule.folderID
+        draftName = rule.namePattern ?? ""
+        draftDomain = rule.senderDomain ?? ""
+        draftKind = FolderRuleKindChoice(rule.kind)
+    }
+
+    private func save() {
+        var next = rule
+        next.folderID = draftFolderID
+        next.namePattern = draftName
+        next.senderDomain = draftDomain
+        next.kind = draftKind.folderKind
+        if folders.updateRule(next) { onToggleExpand() }
+    }
+}
+
+/// New-rule composer sheet. The folder picker defaults to the first
+/// folder; saving with all matchers blank is allowed (the rule never
+/// matches until edited).
+private struct FolderRuleComposer: View {
+    @ObservedObject var folders: FolderStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var folderID = ""
+    @State private var namePattern = ""
+    @State private var senderDomain = ""
+    @State private var kind = FolderRuleKindChoice.any
+
+    var body: some View {
+        Form {
+            Section("New auto-rule") {
+                FolderRuleFields(
+                    folders: folders.folders,
+                    folderID: $folderID,
+                    namePattern: $namePattern,
+                    senderDomain: $senderDomain,
+                    kind: $kind)
+            }
+        }
+        .formStyle(.grouped)
+        .frame(minWidth: 400, minHeight: 300)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Cancel") { dismiss() }
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Add") {
+                    folders.addRule(FolderRule(
+                        folderID: folderID, namePattern: namePattern,
+                        senderDomain: senderDomain, kind: kind.folderKind))
+                    dismiss()
+                }
+                .disabled(folderID.isEmpty)
+            }
+        }
+        .onAppear { folderID = folders.folders.first?.id ?? "" }
+        .accessibilityIdentifier("folder-rule-composer")
+    }
+}
+
+/// Shared rule fields: target folder picker, name substring/regex,
+/// sender domain, chat-kind picker.
+private struct FolderRuleFields: View {
+    let folders: [ChatFolder]
+    @Binding var folderID: String
+    @Binding var namePattern: String
+    @Binding var senderDomain: String
+    @Binding var kind: FolderRuleKindChoice
+
+    var body: some View {
+        Picker("Folder", selection: $folderID) {
+            ForEach(folders) { folder in
+                Text(folder.name).tag(folder.id)
+            }
+        }
+        TextField("Name contains (whole word; re: = regex)", text: $namePattern)
+        TextField("Sender domain (e.g. contoso.com)", text: $senderDomain)
+            .textContentType(.none)
+            .autocorrectionDisabled()
+        Picker("Chat kind", selection: $kind) {
+            ForEach(FolderRuleKindChoice.allCases) { choice in
+                Text(choice.label).tag(choice)
+            }
+        }
+        .pickerStyle(.segmented)
+    }
+}
+
+/// Segmented kind choices (Any = matcher off).
+private enum FolderRuleKindChoice: String, CaseIterable, Identifiable {
+    case any, group, direct
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .any: return "Any"
+        case .group: return "Group"
+        case .direct: return "1:1"
+        }
+    }
+
+    var folderKind: FolderKind? {
+        switch self {
+        case .any: return nil
+        case .group: return .group
+        case .direct: return .direct
+        }
+    }
+
+    init(_ kind: FolderKind?) {
+        switch kind {
+        case .group: self = .group
+        case .direct: self = .direct
+        case nil: self = .any
+        }
+    }
 }

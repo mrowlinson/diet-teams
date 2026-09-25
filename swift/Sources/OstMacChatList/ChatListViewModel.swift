@@ -85,6 +85,13 @@ public final class ChatListViewModel: ObservableObject, ChatSelection {
     /// menu acts through `pin(_:)`/`unpin(_:)` below).
     public let pins: UserPinStore
 
+    /// User chat folders + auto-rules (persisted; the sidebar's folder
+    /// picker and Move-to-folder menu read this same instance).
+    /// Membership is a pure render-time projection (`displayChats`
+    /// order is untouched; the sidebar applies the folder filter
+    /// stage), so ingest/load never migrate anything.
+    public let folders: FolderStore
+
     /// Shared blocked-user list (Settings + Diagnostics read this same
     /// instance; the app passes its persistent one). Default is
     /// memory-only so tests and previews never touch real defaults.
@@ -103,13 +110,19 @@ public final class ChatListViewModel: ObservableObject, ChatSelection {
         fetcher: @escaping Fetcher = { try RustCore.chats(limit: $0) },
         pins: UserPinStore = UserPinStore(),
         leaver: @escaping Leaver = { try RustCore.leaveChat(chatID: $0) },
-        blocked: BlockedStore = BlockedStore(defaults: nil)
+        blocked: BlockedStore = BlockedStore(defaults: nil),
+        folders: FolderStore = FolderStore()
     ) {
         self.fetcher = fetcher
         self.leaver = leaver
         self.blocked = blocked
         self.pins = pins
+        self.folders = folders
         self.pins.objectWillChange
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &cancellables)
+        self.folders.objectWillChange
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.objectWillChange.send() }
             .store(in: &cancellables)
