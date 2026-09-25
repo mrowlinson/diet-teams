@@ -28,6 +28,12 @@ public final class ReceiptStore: ObservableObject {
     private let sender: @Sendable (String, String) throws -> Void
     private let fetcher: @Sendable (String) throws -> [ReadReceipt]
 
+    /// Ghost-mode gate (f1-ghost): when set and suppressing receipts,
+    /// `sendReadPosition` counts a suppression and sends nothing
+    /// (`sent[]` stays unmoved — retryable on lift, same rule as
+    /// failure). Nil = live (pre-ghost behavior, byte-identical).
+    public var ghost: GhostStore?
+
     /// Nonisolated so views can take a default `ReceiptStore()` in their
     /// (nonisolated) inits; all members stay main-actor-isolated.
     public nonisolated init(
@@ -83,6 +89,14 @@ public final class ReceiptStore: ObservableObject {
         guard sent[chat] != latest else { return }
         if localOnly {
             sent[chat] = latest
+            return
+        }
+        // Ghost (f1-ghost): suppress the server send only — below the
+        // dedupe (repeat tails stay free no-ops) and below localOnly
+        // (demo path, no network). `sent[]` unmoved (retryable on
+        // lift), `lastError` untouched (not a failure).
+        if let ghost, ghost.shouldSuppressReceipts {
+            ghost.noteSuppressedReceipt()
             return
         }
         let send = sender

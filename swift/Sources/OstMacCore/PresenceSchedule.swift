@@ -84,6 +84,10 @@ public final class PresenceScheduleStore: ObservableObject {
     @Published public private(set) var lastStatus: PresenceStatus?
     /// Last scheduled-set failure (cleared on next success / sign-out).
     @Published public private(set) var error: String?
+    /// Ghost-mode gate (f1-ghost): when set and suppressing presence,
+    /// the applier holds the write (counted) without arming applied
+    /// state — the transition re-fires on lift. Nil = live.
+    public var ghost: GhostStore?
 
     /// Nonisolated so views can take a default
     /// `PresenceScheduleStore()` in their (nonisolated) inits; all
@@ -140,6 +144,13 @@ public final class PresenceScheduleStore: ObservableObject {
         }
         // Failure budget: initial + one retry per window, then hold.
         if (failures[active.id] ?? 0) >= Self.maxAttemptsPerWindow { return }
+        // Ghost (f1-ghost): the applier still runs to this point, then
+        // holds the write (counted) — no applied arming, no budget
+        // spend, so the CURRENT window fires on lift (no stale replay).
+        if let ghost, ghost.shouldSuppressPresence {
+            ghost.noteHeldPresence()
+            return
+        }
         fire(entry: active, now: now)
     }
 
