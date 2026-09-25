@@ -9,12 +9,14 @@ import SwiftUI
 /// (DietDesign rows, `DietSeamH`).
 public struct TranscriptsBrowser: View {
     @ObservedObject private var model: TranscriptsViewModel
+    @ObservedObject private var actions: ActionItemsStore
     @State private var query = ""
     /// Reduce Motion (om-a1-motion): state changes land instantly.
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     public init(model: TranscriptsViewModel) {
         self.model = model
+        self._actions = ObservedObject(wrappedValue: model.actionItems)
     }
 
     public var body: some View {
@@ -200,6 +202,7 @@ public struct TranscriptsBrowser: View {
                     }
                     .frame(maxHeight: 260)
                     actionsRow
+                    actionItemsSection
                 case .failed(let message):
                     VStack(alignment: .leading, spacing: DietSpace.xxs) {
                         Text(message)
@@ -216,6 +219,58 @@ public struct TranscriptsBrowser: View {
         }
     }
 
+    /// Extraction results inline in the turns card (idle shows
+    /// nothing; the list above never flashes or re-lays-out).
+    @ViewBuilder
+    private var actionItemsSection: some View {
+        switch actions.state {
+        case .idle:
+            EmptyView()
+        case .loading:
+            HStack(spacing: DietSpace.xs) {
+                ProgressView()
+                    .controlSize(.small)
+                Text("Extracting…")
+                    .font(DietType.callout)
+                    .foregroundStyle(DietColor.textSecondaryColor)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, DietSpace.xs)
+        case let .loaded(items):
+            VStack(alignment: .leading, spacing: DietSpace.xxs) {
+                DietSeamH()
+                Text("Action items")
+                    .font(DietType.caption1)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(DietColor.textSecondaryColor)
+                ActionItemsBulletsView(items: items)
+                    .frame(maxHeight: 160)
+            }
+            .padding(.top, DietSpace.xs)
+        case let .empty(copy):
+            Text(copy)
+                .font(DietType.callout)
+                .foregroundStyle(DietColor.textSecondaryColor)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, DietSpace.xs)
+        case let .failed(detail):
+            VStack(alignment: .leading, spacing: DietSpace.xxs) {
+                Text(detail)
+                    .font(DietType.callout)
+                    .foregroundStyle(.red)
+                if actions.lastError?.isOnDevice == true {
+                    CatchUpOnDeviceGuidance()
+                }
+                Button("Retry") {
+                    Task { await model.extractActionItems() }
+                }
+                .buttonStyle(.link)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, DietSpace.xs)
+        }
+    }
+
     private var actionsRow: some View {
         HStack(spacing: DietSpace.sm) {
             if let item = model.selected {
@@ -225,6 +280,12 @@ public struct TranscriptsBrowser: View {
                 Button("Save") { model.save(item) }
                     .buttonStyle(.link)
                     .disabled(item.drive_id == nil)
+                Button("Action items") {
+                    Task { await model.extractActionItems() }
+                }
+                .buttonStyle(.link)
+                .disabled(model.cues.isEmpty)
+                .help("Extract action items on this Mac (Apple Intelligence)")
             }
             if model.siblingRecording != nil {
                 Label("Matching recording", systemImage: "film")

@@ -71,6 +71,13 @@ public final class TranscriptsViewModel: ObservableObject {
     @Published public private(set) var savedPath: String?
     /// Last save failure (nil when clear).
     @Published public private(set) var actionError: String?
+    /// On-device action-items extraction over the loaded cues
+    /// (f1-actions). Owned here so the turns card and the extraction
+    /// share one lifecycle; the browser observes it directly.
+    public let actionItems: ActionItemsStore
+    /// Shot hook only (--show-transcripts-actions): extract once the
+    /// selected turns land. Real taps always come from the button.
+    public var autoExtractActionItems = false
 
     /// Selected row, if any.
     public var selected: TranscriptItem? {
@@ -100,13 +107,15 @@ public final class TranscriptsViewModel: ObservableObject {
             try RustCore.sharedDownload(driveID: drive, itemID: item, dest: dest).path
         },
         recordingLookup: @escaping RecordingLookup = { _ in nil },
-        openURL: @escaping OpenURLFn = SharedFilesStore.defaultOpenURL
+        openURL: @escaping OpenURLFn = SharedFilesStore.defaultOpenURL,
+        actionItemsTransport: (any CatchUpTransport)? = nil
     ) {
         self.listFetcher = listFetcher
         self.searchFetcher = searchFetcher
         self.downloadFetcher = downloadFetcher
         self.recordingLookup = recordingLookup
         self.openURLFn = openURL
+        self.actionItems = ActionItemsStore(transport: actionItemsTransport)
     }
 
     /// Fetch the list. Search hits showing stay until cleared.
@@ -189,6 +198,7 @@ public final class TranscriptsViewModel: ObservableObject {
         cues = []
         content = .loading
         contentTitle = item.name
+        actionItems.reset() // source switch resets the extraction
         generation += 1
         let gen = generation
         Task {
@@ -200,11 +210,21 @@ public final class TranscriptsViewModel: ObservableObject {
                 guard gen == generation else { return } // superseded
                 cues = turns
                 content = .loaded
+                if autoExtractActionItems {
+                    await extractActionItems()
+                }
             } catch {
                 guard gen == generation else { return }
                 content = .failed(Self.message(for: error))
             }
         }
+    }
+
+    /// Extract action items over the loaded cues (tap-to-run). No
+    /// selection / no cues short-circuits in the store without a
+    /// model call; an unchanged source replays the cached bullets.
+    public func extractActionItems() async {
+        await actionItems.extractFromCues(cues, transcriptID: selectedID)
     }
 
     /// Select the first row and load it (shot hook).
@@ -219,6 +239,7 @@ public final class TranscriptsViewModel: ObservableObject {
         cues = []
         content = .idle
         contentTitle = nil
+        actionItems.reset()
         generation += 1
     }
 

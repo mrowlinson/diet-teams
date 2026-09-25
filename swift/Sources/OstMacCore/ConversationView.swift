@@ -19,6 +19,9 @@ public struct ConversationView: View {
     /// channel ids only; taps deep-link into Chat/Shared/Notes/browser.
     @ObservedObject public var tabs: ChannelTabsStore
     @ObservedObject public var catchUp: CatchUpStore
+    /// On-device action-items extraction (f1-actions): same popover
+    /// path as Catch-up, adjacent header entry.
+    @ObservedObject public var actionItems: ActionItemsStore
     /// Live typing indicators (om-typing): passed to the timeline tail.
     @ObservedObject public var typing: TypingStore
     @ObservedObject public var receipts: ReceiptStore
@@ -44,6 +47,7 @@ public struct ConversationView: View {
     /// and each time the picker opens (Settings may have changed it).
     @State private var gifAPIKey = ""
     @State private var showCatchUp: Bool
+    @State private var showActionItems: Bool
     @FocusState private var boxFocused: Bool
     @State private var gifHovering = false
     @State private var mentionHovering = false
@@ -93,6 +97,7 @@ public struct ConversationView: View {
         call: CallStore = CallStore(), shared: SharedFilesStore = SharedFilesStore(),
         notes: NotesStore = NotesStore(), tabs: ChannelTabsStore = ChannelTabsStore(),
         catchUp: CatchUpStore = CatchUpStore(),
+        actionItems: ActionItemsStore = ActionItemsStore(),
         typing: TypingStore = TypingStore(),
         receipts: ReceiptStore = ReceiptStore(),
         attachments: ComposeAttachmentsStore = ComposeAttachmentsStore(),
@@ -116,6 +121,7 @@ public struct ConversationView: View {
         self.notes = notes
         self.tabs = tabs
         self.catchUp = catchUp
+        self.actionItems = actionItems
         self.typing = typing
         self.receipts = receipts
         self.attachments = attachments
@@ -128,6 +134,7 @@ public struct ConversationView: View {
         self.onForward = onForward
         _tab = State(initialValue: initialTab)
         _showCatchUp = State(initialValue: catchUpOpen)
+        _showActionItems = State(initialValue: false)
         self.editOpen = editOpen
         self.deleteOpen = deleteOpen
         _showSchedule = State(initialValue: scheduleOpen)
@@ -216,6 +223,31 @@ public struct ConversationView: View {
             // false; the router call resets the summary state. Setting
             // false → false never retriggers this handler.
             if !isOpen { CatchUpSheet.dismissViaClickOutside(presented: $showCatchUp, store: catchUp) }
+        }
+        // f1-actions: same popover path as Catch-up (Done + Esc +
+        // click-outside; every close resets the extraction state).
+        .popover(isPresented: $showActionItems, arrowEdge: .top) {
+            ActionItemsView(
+                actions: actionItems, messages: store.messages,
+                chatID: store.chatID,
+                autoRun: CommandLine.arguments.contains("--show-action-items"),
+                onDone: { ActionItemsSheet.dismissViaDone(presented: $showActionItems, store: actionItems) })
+                .onExitCommand { ActionItemsSheet.dismissViaEscape(presented: $showActionItems, store: actionItems) }
+        }
+        .onChange(of: showActionItems) { _, isOpen in
+            if !isOpen { ActionItemsSheet.dismissViaClickOutside(presented: $showActionItems, store: actionItems) }
+        }
+        .task {
+            // --show-action-items: open after the thread settles (an
+            // at-appear flip races view recreation and orphans a blank
+            // popover window; real taps always come from the header
+            // button).
+            if CommandLine.arguments.contains("--show-action-items") {
+                try? await Task.sleep(nanoseconds: 4_000_000_000)
+                if !showActionItems, !store.messages.isEmpty {
+                    ActionItemsSheet.open(presented: $showActionItems, store: actionItems)
+                }
+            }
         }
         .sheet(item: $editingMessage) { msg in
             editSheet(for: msg)
@@ -396,6 +428,11 @@ public struct ConversationView: View {
                 }
                 .buttonStyle(.bordered)
                 .help("Summarize this thread: TL;DR, key points, action items")
+                Button("Action items", systemImage: "checklist") {
+                    ActionItemsSheet.open(presented: $showActionItems, store: actionItems)
+                }
+                .buttonStyle(.bordered)
+                .help("Extract action items on this Mac (Apple Intelligence)")
             }
             if store.loading { ProgressView().controlSize(.small) }
             Text("\(store.messages.count)")
