@@ -142,41 +142,42 @@ struct ContactRow: View {
     let onTogglePin: () -> Void
 
     var body: some View {
-        HStack(spacing: DietSpace.sm) {
-            PresenceDot(availability: availability)
-            DietAvatar(displayName, size: DietSize.avatarSM)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(displayName)
-                    .font(DietType.body)
-                    .foregroundStyle(DietColor.textPrimaryColor)
-                    .lineLimit(1)
-                if let email = person.email, !email.isEmpty {
-                    Text(email)
-                        .font(DietType.callout)
-                        .foregroundStyle(DietColor.textSecondaryColor)
+        Button(action: onPick) {
+            HStack(spacing: DietSpace.sm) {
+                PresenceDot(availability: availability)
+                DietAvatar(displayName, size: DietSize.avatarSM)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(displayName)
+                        .font(DietType.body)
+                        .foregroundStyle(DietColor.textPrimaryColor)
                         .lineLimit(1)
+                    if let email = person.email, !email.isEmpty {
+                        Text(email)
+                            .font(DietType.callout)
+                            .foregroundStyle(DietColor.textSecondaryColor)
+                            .lineLimit(1)
+                    }
                 }
+                Spacer()
+                Button {
+                    onTogglePin()
+                } label: {
+                    Image(systemName: pinned ? "star.fill" : "star")
+                        .font(.system(size: DietSize.iconMD))
+                        .foregroundStyle(
+                            pinned ? Color.accentColor
+                                : DietColor.textTertiaryColor)
+                }
+                .buttonStyle(.plain)
+                .help(pinned ? "Remove from speed dial" : "Add to speed dial")
+                .accessibilityIdentifier(
+                    "contact-pin-\(person.id)")
             }
-            Spacer()
-            Button {
-                onTogglePin()
-            } label: {
-                Image(systemName: pinned ? "star.fill" : "star")
-                    .font(.system(size: DietSize.iconMD))
-                    .foregroundStyle(
-                        pinned ? Color.accentColor
-                            : DietColor.textTertiaryColor)
-            }
-            .buttonStyle(.plain)
-            .help(pinned ? "Remove from speed dial" : "Add to speed dial")
-            .accessibilityIdentifier(
-                "contact-pin-\(person.id)")
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .clipped()
+            .padding(.vertical, DietSpace.xs)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .clipped()
-        .padding(.vertical, DietSpace.xs)
-        .contentShape(Rectangle())
-        .onTapGesture(perform: onPick)
+        .buttonStyle(.plain)
         .accessibilityIdentifier("contact-row-\(person.id)")
     }
 

@@ -562,19 +562,11 @@ public struct LevelBar: View {
     }
 
     public var body: some View {
-        GeometryReader { g in
-            ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(DietColor.wellColor)
-                if live, fraction > 0 {
-                    Capsule()
-                        .fill(Color(nsColor: DietColor.success).gradient)
-                        .frame(width: g.size.width * min(1, fraction))
-                }
-            }
-        }
-        .frame(height: DietSpace.sm)
-        .accessibilityElement(children: .ignore)
+        ProgressView(
+            value: live ? min(1, max(0, fraction)) : 0,
+            total: 1
+        )
+        .progressViewStyle(.linear)
         .accessibilityLabel("Input level")
         .accessibilityValue(live ? "\(Int(fraction * 100)) percent" : "no input")
     }
