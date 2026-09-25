@@ -324,6 +324,10 @@ final class AppState: ObservableObject {
     let mentions = MentionStore()
     /// e1-activity: notification history + mentions-center data.
     let activity = ActivityStore()
+    /// In-window pane (e1-inwindow): sidebar Activity / All Mentions
+    /// selection; the detail shows the list while set. Cleared by
+    /// every chat open (the `open` funnel) and every pane jump.
+    @Published var activityPane: ActivityPane?
     let receipts = ReceiptStore()
     /// Rebuilt per account on switch (d1-accounts).
     @Published var pinnedMessages: PinnedMessageStore
@@ -429,6 +433,9 @@ final class AppState: ObservableObject {
             || args.contains("--show-folders") || args.contains("--show-folders-manage")
         showNotes = args.contains("--show-notes")
         showJump = args.contains("--show-jump") // shot hook: palette open at launch
+        activityPane = ActivityPane.initial(
+            showActivity: args.contains("--show-activity"),
+            showMentions: args.contains("--show-mentions"))
         call = CallStore(demo: isDemo)
         showCatchUp = args.contains("--show-catchup") || args.contains("--show-catchup-ondevice")
         showForward = args.contains("--show-forward")
@@ -952,7 +959,12 @@ final class AppState: ObservableObject {
         }
         switch action {
         case .select(let id):
-            chats.selectedChatID = id // sink opens it
+            // e1-inwindow: a hook-armed pane shows INSTEAD of the
+            // restored selection (explicit --chat still wins below —
+            // `open` clears the pane).
+            if activityPane == nil {
+                chats.selectedChatID = id // sink opens it
+            }
         case .openDirect(let id):
             open(chatID: id, chatName: preselectName)
         case .none:
@@ -1175,6 +1187,7 @@ final class AppState: ObservableObject {
     /// calls) open without a seek; blank chat ids no-op (never conjure).
     func jumpToActivity(_ target: ActivityTarget) {
         guard target.canJump else { return }
+        activityPane = nil // e1-inwindow: the jump lands on the chat
         guard let messageID = target.messageID else {
             jump(
                 chatID: target.chatID,
@@ -1307,6 +1320,7 @@ final class AppState: ObservableObject {
         guard isDemo || !DemoData.isDemoID(id) else { return }
         // Blocked threads never open (jump/direct paths fail closed).
         guard !blocked.isBlocked(chatID: id) else { return }
+        activityPane = nil // e1-inwindow: any open chat clears the pane
         openChatID = id
         if SelectionRestore.shouldPersist(chatID: id) {
             persistedSelection = id
@@ -1508,7 +1522,7 @@ final class AppState: ObservableObject {
         activity.ingest(
             realtime: msg, ownName: conv.ownDisplayName,
             ownerMRI: resolvedOwnerMRI, openChatID: openChatID,
-            chatName: chatName)
+            chatName: chatName, visibleChatIDs: visible)
         // e1-activity: reaction totals ride in for the count-delta
         // heuristic. Ownership resolves only for loaded open-chat
         // bubbles (unknown ownership baselines without emitting); the
@@ -2075,8 +2089,7 @@ struct RootView: View {
                         rules: state.rules,
                         snooze: state.snooze,
                         activity: state.activity,
-                        notifs: state.notifs,
-                        onJumpActivity: { state.jumpToActivity($0) },
+                        activityPane: $state.activityPane,
                         openChatID: state.openChatID,
                         initialSection: RootView.initialSection,
                         initialFilter: OstMacAppMain.filterQuery(args: CommandLine.arguments),
@@ -2085,8 +2098,6 @@ struct RootView: View {
                         initialFolderID: state.folderShotSelection,
                         folderManageOpen: CommandLine.arguments.contains("--show-folders-manage"),
                         initialEditingRuleID: state.folderShotEditingRuleID,
-                        activityOpen: CommandLine.arguments.contains("--show-activity"),
-                        mentionsCenterOpen: CommandLine.arguments.contains("--show-mentions"),
                         onOpenChannel: { id, name in state.openChannel(channelID: id, channelName: name) },
                         onPopOut: { id in
                             if let target = state.popOut(chatID: id) {
@@ -2096,7 +2107,9 @@ struct RootView: View {
                     )
                     .navigationSplitViewColumnWidth(min: 240, ideal: 300, max: 420)
                 } detail: {
-                    if state.openChatID == nil {
+                    if let pane = state.activityPane {
+                        activityDetail(pane)
+                    } else if state.openChatID == nil {
                         emptyDetail
                     } else {
                         ConversationView(
@@ -2215,6 +2228,43 @@ struct RootView: View {
                 systemImage: "bubble.left.and.bubble.right",
                 title: "Select a chat",
                 message: "Pick a conversation in the sidebar, or press ⌘K to jump.")
+        }
+    }
+
+    /// In-window Activity / Mentions list (e1-inwindow): header bar
+    /// (same seam row as the conversation header) + the feed/center
+    /// list. Row taps jump to the chat (`open` clears the pane).
+    private func activityDetail(_ pane: ActivityPane) -> some View {
+        VStack(spacing: 0) {
+            DietHeaderBar {
+                HStack(spacing: DietSpace.sm) {
+                    Text(pane.title)
+                        .font(DietType.title3)
+                        .foregroundStyle(DietColor.textPrimaryColor)
+                    Spacer()
+                    if pane == .feed {
+                        Button("Mark All Reviewed") {
+                            state.activity.markAllReviewed()
+                        }
+                        .disabled(state.activity.visibleItems.isEmpty)
+                        .help("Dismiss every activity item")
+                    }
+                }
+            }
+            Group {
+                switch pane {
+                case .feed:
+                    ActivityFeedView(
+                        store: state.activity,
+                        showPreview: state.notifs.showPreview
+                    ) { state.jumpToActivity($0) }
+                case .center:
+                    MentionsCenterView(
+                        store: state.activity,
+                        showPreview: state.notifs.showPreview
+                    ) { state.jumpToActivity($0) }
+                }
+            }
         }
     }
 }

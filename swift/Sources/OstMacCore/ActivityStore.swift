@@ -134,6 +134,33 @@ public struct ActivityItem: Codable, Sendable, Identifiable, Equatable {
     }
 }
 
+/// In-window detail pane (e1-inwindow): the sidebar Activity / All
+/// Mentions rows select one of these instead of opening a sheet; the
+/// main pane shows the list, row taps jump to the chat. Opening any
+/// chat clears the pane (the `open` funnel owns that).
+public enum ActivityPane: String, Sendable, Equatable {
+    case feed
+    case center
+
+    /// Detail header title (distinct per pane, pinned by tests).
+    public var title: String {
+        switch self {
+        case .feed: "Activity"
+        case .center: "Mentions"
+        }
+    }
+
+    /// Shot-hook resolution: feed wins when both hooks are armed
+    /// (one pane can show — deterministic, pinned by tests).
+    public static func initial(
+        showActivity: Bool, showMentions: Bool
+    ) -> ActivityPane? {
+        if showActivity { return .feed }
+        if showMentions { return .center }
+        return nil
+    }
+}
+
 /// Jump target for one feed row: open the chat, land on the message.
 /// `canJump` is false for threadless missed calls (never conjure).
 public struct ActivityTarget: Sendable, Equatable {
@@ -228,17 +255,20 @@ public final class ActivityStore: ObservableObject {
 
     /// Flag one live event: owner mention → `.mention`, channel blast →
     /// `.channelBlast`, reply-to-owner → `.reply`. Own messages,
-    /// open-chat events, blank chat ids, and already-known message ids
-    /// are no-ops (reviewed items never resurrect).
+    /// open-chat events, visible-chat events (popped windows count as
+    /// open — e1-popout parity with MentionStore), blank chat ids, and
+    /// already-known message ids are no-ops (reviewed items never
+    /// resurrect).
     public func ingest(
         realtime message: RealtimeMessage, ownName: String?,
         ownerMRI: String?, openChatID: String?, chatName: String,
-        at: Date = Date()
+        at: Date = Date(), visibleChatIDs: Set<String> = []
     ) {
         let chatID = message.chatID.trimmingCharacters(
             in: .whitespacesAndNewlines)
         guard !chatID.isEmpty else { return }
         if let open = openChatID, open == message.chatID { return }
+        if visibleChatIDs.contains(message.chatID) { return }
         let own = (ownName ?? "").trimmingCharacters(
             in: .whitespacesAndNewlines)
         if Self.isOwnMessage(

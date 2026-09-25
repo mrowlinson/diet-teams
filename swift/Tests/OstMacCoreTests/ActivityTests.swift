@@ -406,4 +406,52 @@ final class ActivityTests: XCTestCase {
         XCTAssertNotNil(target)
         XCTAssertFalse(target!.canJump, "never conjure a chat for threadless rows")
     }
+
+    // MARK: - In-window panes (e1-inwindow)
+
+    func testInitialPaneDefaultsToNil() {
+        XCTAssertNil(ActivityPane.initial(showActivity: false, showMentions: false))
+    }
+
+    func testInitialPaneFeedHook() {
+        XCTAssertEqual(
+            ActivityPane.initial(showActivity: true, showMentions: false), .feed)
+    }
+
+    func testInitialPaneMentionsHook() {
+        XCTAssertEqual(
+            ActivityPane.initial(showActivity: false, showMentions: true), .center)
+    }
+
+    func testInitialPaneFeedWinsBothHooks() {
+        XCTAssertEqual(
+            ActivityPane.initial(showActivity: true, showMentions: true), .feed)
+    }
+
+    func testPanesHaveDistinctTitles() {
+        XCTAssertFalse(ActivityPane.feed.title.isEmpty)
+        XCTAssertFalse(ActivityPane.center.title.isEmpty)
+        XCTAssertNotEqual(ActivityPane.feed.title, ActivityPane.center.title)
+    }
+
+    func testVisibleChatNeverIngests() {
+        let s = store()
+        s.ingest(
+            realtime: live(raw: "<at>Smith, Alex</at> ping"),
+            ownName: "Smith, Alex", ownerMRI: nil, openChatID: nil,
+            chatName: "General",
+            visibleChatIDs: ["19:chat@thread.v2"])
+        XCTAssertTrue(
+            s.visibleItems.isEmpty,
+            "popped chats count as open (e1-popout parity)")
+    }
+
+    func testNonVisibleChatStillIngests() {
+        let s = store()
+        s.ingest(
+            realtime: live(raw: "<at>Smith, Alex</at> ping"),
+            ownName: "Smith, Alex", ownerMRI: nil, openChatID: nil,
+            chatName: "General", visibleChatIDs: ["19:other@thread.v2"])
+        XCTAssertEqual(s.visibleItems.count, 1)
+    }
 }
