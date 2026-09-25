@@ -232,7 +232,8 @@ struct OstMacAppMain: App {
                 SettingsView(
                     auth: state.auth, catchUp: state.catchUp, notifs: state.notifs,
                     rules: state.rules, chats: state.chats,
-                    quiet: state.quietHours, blocked: state.blocked,
+                    quiet: state.quietHours, focus: state.focusSync,
+                    sched: state.presenceSchedule, blocked: state.blocked,
                     accounts: state.accounts, call: state.call,
                     onAccountAdded: { state.completePendingAdd($0) },
                     onRemoveAccount: { state.removeAccount($0) })
@@ -315,6 +316,12 @@ final class AppState: ObservableObject {
     let typing = TypingStore()
     let notifs = MessageNotifications()
     let quietHours = QuietHoursStore()
+    /// e2-attention: system Focus sync (quiet source) + presence
+    /// schedules (timetable-driven own status). The schedule adopts
+    /// set-echoes into `presence` (weak) and pauses on manual picker
+    /// sets via `presence.manualSetHook`.
+    let focusSync = FocusSyncStore()
+    let presenceSchedule: PresenceScheduleStore
     /// d2-send: per-chat snooze expiries + the scheduled-send queue.
     let snooze = SnoozeStore()
     let scheduled = ScheduledSendStore()
@@ -420,6 +427,9 @@ final class AppState: ObservableObject {
     private var ownerMRI: String?
 
     init(args: [String]) {
+        // e2-attention: schedule adopts set-echoes into presence (weak).
+        // First: `let` without a default must land before any self use.
+        presenceSchedule = PresenceScheduleStore(presence: presence)
         isDemo = args.contains("--demo") || args.contains("--demo-rich")
             || args.contains("--demo-reactions") || args.contains("--show-sidebarchurn")
             || args.contains("--demo-botposts") || args.contains("--show-pins")
@@ -631,6 +641,11 @@ final class AppState: ObservableObject {
         }
         wireChats()
         popouts.bind(main: conv) // e1-popout: send mirroring both ways
+        // e2-attention: manual picker sets pause the schedule until
+        // the next window boundary (contract (i)). Weak — no cycle.
+        presence.manualSetHook = { [weak schedule = presenceSchedule] in
+            schedule?.noteManualSet()
+        }
         // Single reaction point for the gate: every auth transition
         // (gate, Settings, Auth window — same model) runs authChanged,
         // which flips the gate via the signedIn/contentOpened flags.
@@ -756,6 +771,7 @@ final class AppState: ObservableObject {
         meetingChat = makeMeetingChat(accountID: id)
         teams.resetForAccount()
         presence.clear()
+        presenceSchedule.clearApplied() // e2-attention: drop applied state
         typing.clear()
         meeting.clear()
         unread.markAllRead()
@@ -1430,8 +1446,9 @@ final class AppState: ObservableObject {
         // (maybeNotify); no second post here — one event, one banner max.
         // om-quiet-hours: snapshot quiet ONCE per event; the banner path
         // below obeys it (banners/sounds drop; unread pauses too —
-        // quiet-hours skips never accrue).
-        let quiet = quietHours.isQuietNow
+        // quiet-hours skips never accrue). e2-attention: Focus-quiet
+        // folds into the same snapshot (identical semantics, same reason).
+        let quiet = localQuietNow
         if let mri = msg.senderID,
            msg.sender != conv.ownDisplayName,
            chats.chat(id: msg.chatID)?.is_group == false
@@ -1501,11 +1518,18 @@ final class AppState: ObservableObject {
         rules.config.owner.mri.isEmpty ? ownerMRI : rules.config.owner.mri
     }
 
+    /// Local quiet snapshot (e2-attention): schedule/DND-quiet OR
+    /// Focus-quiet — identical semantics downstream (same snapshot fed
+    /// to the banner gate and the rules quiet gate, same reason).
+    private var localQuietNow: Bool {
+        quietHours.isQuietNow || focusSync.quietNow
+    }
+
     /// One rules decision for a live event (owns the meeting-start
     /// window claim). Owner identity prefers configured/learned MRI with
     /// a live display-name backup. DND reads the own Teams presence;
-    /// quiet reads the local store (schedule or manual DND — both
-    /// suppress mentions too).
+    /// quiet reads the local snapshot (schedule, manual DND, or Focus —
+    /// all suppress mentions too).
     private func rulesDecision(for msg: RealtimeMessage, chatName: String) -> ChatFilter.Decision {
         var cfg = rules.config
         if let own = conv.ownDisplayName, !own.isEmpty { cfg.owner.displayName = own }
@@ -1513,7 +1537,7 @@ final class AppState: ObservableObject {
             message: msg, chatDisplayName: chatName, ownerMRI: resolvedOwnerMRI,
             rules: cfg, meetingDedup: &meetingDedup, now: Date(),
             dndActive: MentionAlert.isDND(ownAvailability: presence.own?.availability),
-            quietActive: quietHours.isQuietNow,
+            quietActive: localQuietNow,
             snoozedChatIDs: snooze.activeIDs())
     }
 
@@ -1691,6 +1715,10 @@ final class AppState: ObservableObject {
         if feed.pollCount != feedPolls { feedPolls = feed.pollCount }
         if feed.lastError != feedError { feedError = feed.lastError }
         quietHours.refresh() // om-quiet-hours: sweep expired DND (2s tick)
+        focusSync.refresh() // e2-attention: re-poll Focus (assign-on-change)
+        // e2-attention: scheduled presence sets (transitions only;
+        // signed-in live only — demo never touches core).
+        if signedIn == true, !isDemo { presenceSchedule.tick() }
         snooze.refresh() // d2-send: sweep expired snoozes (2s tick)
         fireScheduled() // d2-send: post due queue items (idle = no-op)
         if !isDemo { call.refresh() } // re-read slot (place/accept landed?)
@@ -1872,6 +1900,7 @@ final class AppState: ObservableObject {
             switchingAccount = false
             feed.stop()
             presence.clear()
+            presenceSchedule.clearApplied() // e2-attention: drop applied state
             typing.clear()
             meeting.clear()
             meetingChat.clear()

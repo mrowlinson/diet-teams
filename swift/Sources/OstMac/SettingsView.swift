@@ -24,6 +24,10 @@ struct SettingsView: View {
     /// chat-list refresh). Ticks without an AppState forward.
     @ObservedObject private var chats: ChatListViewModel
     @ObservedObject private var quiet: QuietHoursStore
+    /// Focus sync + presence schedules (e2-attention: the Attention
+    /// surface — these sections sit next to Quiet hours / DND).
+    @ObservedObject private var focus: FocusSyncStore
+    @ObservedObject private var sched: PresenceScheduleStore
     @ObservedObject private var blocked: BlockedStore
     @ObservedObject private var accounts: AccountStore
     /// Shared call slot (place test call reuses CallStore.echoLive).
@@ -42,6 +46,9 @@ struct SettingsView: View {
     @State private var blockDraft = ""
     @State private var allowError: String?
     @State private var blockError: String?
+    /// Attention-surface refusal text (Settings-local, zero-refresh).
+    @State private var windowError: String?
+    @State private var schedError: String?
     /// Inline-translation target (e1-translation): same key the
     /// TranslationStore reads (default = system language).
     @AppStorage("om.translation.target") private var translationTarget = MessageTranslation.defaultTargetCode()
@@ -55,6 +62,8 @@ struct SettingsView: View {
         rules: RulesStore = RulesStore(),
         chats: ChatListViewModel,
         quiet: QuietHoursStore = QuietHoursStore(),
+        focus: FocusSyncStore = FocusSyncStore(),
+        sched: PresenceScheduleStore = PresenceScheduleStore(),
         blocked: BlockedStore = BlockedStore(defaults: nil),
         accounts: AccountStore = AccountStore(),
         call: CallStore = CallStore(),
@@ -67,6 +76,8 @@ struct SettingsView: View {
         _rules = ObservedObject(wrappedValue: rules)
         _chats = ObservedObject(wrappedValue: chats)
         _quiet = ObservedObject(wrappedValue: quiet)
+        _focus = ObservedObject(wrappedValue: focus)
+        _sched = ObservedObject(wrappedValue: sched)
         _blocked = ObservedObject(wrappedValue: blocked)
         _accounts = ObservedObject(wrappedValue: accounts)
         _call = ObservedObject(wrappedValue: call)
@@ -84,6 +95,8 @@ struct SettingsView: View {
         _rules = ObservedObject(wrappedValue: RulesStore())
         _chats = ObservedObject(wrappedValue: ChatListViewModel())
         _quiet = ObservedObject(wrappedValue: QuietHoursStore())
+        _focus = ObservedObject(wrappedValue: FocusSyncStore())
+        _sched = ObservedObject(wrappedValue: PresenceScheduleStore())
         _blocked = ObservedObject(wrappedValue: BlockedStore(defaults: nil))
         _accounts = ObservedObject(wrappedValue: AccountStore())
         // Demo slot: taps flip local state only, never touch core.
@@ -264,31 +277,28 @@ struct SettingsView: View {
                             .foregroundStyle(DietColor.textSecondaryColor)
                     }
                     Section("Quiet hours") {
-                        Toggle("Scheduled quiet hours", isOn: $quiet.windowEnabled)
-                            .help("Pause banners and sounds on a daily schedule")
-                        DatePicker(
-                            "Start",
-                            selection: startBinding,
-                            displayedComponents: .hourAndMinute)
-                            .disabled(!quiet.windowEnabled)
-                        DatePicker(
-                            "End",
-                            selection: endBinding,
-                            displayedComponents: .hourAndMinute)
-                            .disabled(!quiet.windowEnabled)
-                        LabeledContent("Days") {
-                            HStack {
-                                ForEach(1 ... 7, id: \.self) { day in
-                                    Toggle(
-                                        dayLetter(day),
-                                        isOn: dayBinding(day))
-                                        .toggleStyle(.checkbox)
-                                        .help(dayName(day))
+                        ForEach(quiet.windows.indices, id: \.self) { index in
+                            QuietWindowFields(
+                                title: "Window \(index + 1)",
+                                window: windowBinding(index),
+                                onRemove: index == 0 ? nil : { quiet.removeWindow(at: index) })
+                        }
+                        HStack {
+                            Button("Add window") {
+                                if !quiet.addWindow() {
+                                    windowError = "Maximum \(QuietHoursStore.maxWindows) windows."
+                                } else {
+                                    windowError = nil
                                 }
                             }
+                            .disabled(quiet.windows.count >= QuietHoursStore.maxWindows)
+                            if let windowError {
+                                Text(windowError)
+                                    .font(DietType.caption1)
+                                    .foregroundStyle(Color(nsColor: DietColor.danger))
+                            }
                         }
-                        .disabled(!quiet.windowEnabled)
-                        Text("Banners and sounds pause on schedule (overnight ranges like 22:00–07:00 wrap past midnight), mentions included. Unread pauses too while quiet — the Mentions row still tracks threads for review; suppressions are counted in Diagnostics.")
+                        Text("Banners and sounds pause while ANY window matches (overnight ranges like 22:00–07:00 wrap past midnight), mentions included. Unread pauses too while quiet — the Mentions row still tracks threads for review; suppressions are counted in Diagnostics.")
                             .font(DietType.caption1)
                             .foregroundStyle(DietColor.textSecondaryColor)
                     }
@@ -306,6 +316,51 @@ struct SettingsView: View {
                         }
                         LabeledContent("Status", value: quiet.dndStatus())
                         Text("Manual silence with auto-expiry. Like the schedule, it holds banners and sounds — unread pauses too while on.")
+                            .font(DietType.caption1)
+                            .foregroundStyle(DietColor.textSecondaryColor)
+                    }
+                    Section("Focus sync") {
+                        Toggle("Quiet while a macOS Focus is active", isOn: $focus.syncEnabled)
+                            .help("System Focus quiets the app like scheduled quiet hours")
+                        LabeledContent("System Focus", value: focusStatusText)
+                        Text("When on, an active Focus mode holds banners and sounds exactly like quiet hours (mentions included; unread pauses; suppressions counted in Diagnostics). When the system state is unreadable the app stays loud — never stuck silent.")
+                            .font(DietType.caption1)
+                            .foregroundStyle(DietColor.textSecondaryColor)
+                    }
+                    Section("Presence schedules") {
+                        Toggle("Set my status on a schedule", isOn: $sched.enabled)
+                            .help("Switch your Teams status automatically per window below")
+                        ForEach(sched.entries) { entry in
+                            Group {
+                                Picker("Status", selection: entryStatusBinding(entry.id)) {
+                                    ForEach(PresenceStatus.allCases, id: \.rawValue) { status in
+                                        Text(status.title).tag(status)
+                                    }
+                                }
+                                .pickerStyle(.menu)
+                                QuietWindowFields(
+                                    title: "Window",
+                                    window: entryWindowBinding(entry.id),
+                                    onRemove: { sched.removeEntry(id: entry.id) })
+                            }
+                        }
+                        .disabled(!sched.enabled)
+                        HStack {
+                            Button("Add schedule") {
+                                if !sched.addEntry(PresenceScheduleEntry()) {
+                                    schedError = "Maximum \(PresenceScheduleStore.maxEntries) schedules."
+                                } else {
+                                    schedError = nil
+                                }
+                            }
+                            .disabled(!sched.enabled || sched.entries.count >= PresenceScheduleStore.maxEntries)
+                            if let schedError {
+                                Text(schedError)
+                                    .font(DietType.caption1)
+                                    .foregroundStyle(Color(nsColor: DietColor.danger))
+                            }
+                        }
+                        Text("While a window is active your Teams status switches to its target (first match wins). Picking a status yourself pauses the schedule until the next window starts. Failures keep your last status — see Diagnostics.")
                             .font(DietType.caption1)
                             .foregroundStyle(DietColor.textSecondaryColor)
                     }
@@ -470,18 +525,6 @@ struct SettingsView: View {
 
     // MARK: quiet hours bridges (minutes <-> DatePicker dates, day set)
 
-    private var startBinding: Binding<Date> {
-        Binding(
-            get: { QuietHoursStore.timeOfDay(minutes: quiet.startMinutes) },
-            set: { quiet.startMinutes = QuietHoursStore.minutes(ofTime: $0) })
-    }
-
-    private var endBinding: Binding<Date> {
-        Binding(
-            get: { QuietHoursStore.timeOfDay(minutes: quiet.endMinutes) },
-            set: { quiet.endMinutes = QuietHoursStore.minutes(ofTime: $0) })
-    }
-
     /// Enabling applies the pending auto-expiry; disabling clears it.
     private var dndBinding: Binding<Bool> {
         Binding(
@@ -489,26 +532,123 @@ struct SettingsView: View {
             set: { $0 ? quiet.enableDND(quiet.pendingDNDOption) : quiet.disableDND() })
     }
 
+    /// Element binding for quiet window `index` (bounds-safe: reads a
+    /// default out of range, drops out-of-range writes).
+    private func windowBinding(_ index: Int) -> Binding<QuietHoursWindow> {
+        Binding(
+            get: { quiet.windows.indices.contains(index) ? quiet.windows[index] : QuietHoursWindow() },
+            set: {
+                guard quiet.windows.indices.contains(index) else { return }
+                quiet.windows[index] = $0
+            })
+    }
+
+    /// Status binding for schedule entry `id` (unknown ids read Busy,
+    /// writes drop).
+    private func entryStatusBinding(_ id: UUID) -> Binding<PresenceStatus> {
+        Binding(
+            get: { sched.entries.first(where: { $0.id == id })?.status ?? .busy },
+            set: { next in
+                guard let i = sched.entries.firstIndex(where: { $0.id == id }) else { return }
+                sched.entries[i].status = next
+            })
+    }
+
+    /// Window binding for schedule entry `id` (unknown ids read a
+    /// default window, writes drop).
+    private func entryWindowBinding(_ id: UUID) -> Binding<QuietHoursWindow> {
+        Binding(
+            get: { sched.entries.first(where: { $0.id == id })?.window ?? QuietHoursWindow() },
+            set: { next in
+                guard let i = sched.entries.firstIndex(where: { $0.id == id }) else { return }
+                sched.entries[i].window = next
+            })
+    }
+
+    /// Focus sync status line (sync state + live reading + probe error).
+    private var focusStatusText: String {
+        if !focus.syncEnabled { return "off" }
+        if let error = focus.error { return "unreadable (\(error))" }
+        return focus.focusActive ? "active — quiet" : "inactive"
+    }
+}
+
+/// One schedule-window editor (e2-attention): shared by the Quiet
+/// hours window list and the presence-schedule editor. Native controls
+/// only (Toggle, DatePicker, checkboxes, Button).
+struct QuietWindowFields: View {
+    let title: String
+    @Binding var window: QuietHoursWindow
+    /// Nil for pinned window #1 (cleared, never dropped — no button).
+    let onRemove: (() -> Void)?
+
+    var body: some View {
+        Group {
+            HStack {
+                Toggle(title, isOn: $window.enabled)
+                    .help("Enable this window")
+                Spacer()
+                if let onRemove {
+                    Button("Remove", action: onRemove)
+                }
+            }
+            DatePicker(
+                "Start",
+                selection: startBinding,
+                displayedComponents: .hourAndMinute)
+                .disabled(!window.enabled)
+            DatePicker(
+                "End",
+                selection: endBinding,
+                displayedComponents: .hourAndMinute)
+                .disabled(!window.enabled)
+            LabeledContent("Days") {
+                HStack {
+                    ForEach(1 ... 7, id: \.self) { day in
+                        Toggle(
+                            Self.dayLetter(day),
+                            isOn: dayBinding(day))
+                            .toggleStyle(.checkbox)
+                            .help(Self.dayName(day))
+                    }
+                }
+            }
+            .disabled(!window.enabled)
+        }
+    }
+
+    private var startBinding: Binding<Date> {
+        Binding(
+            get: { QuietHoursStore.timeOfDay(minutes: window.startMinutes) },
+            set: { window.startMinutes = QuietHoursStore.minutes(ofTime: $0) })
+    }
+
+    private var endBinding: Binding<Date> {
+        Binding(
+            get: { QuietHoursStore.timeOfDay(minutes: window.endMinutes) },
+            set: { window.endMinutes = QuietHoursStore.minutes(ofTime: $0) })
+    }
+
     private func dayBinding(_ day: Int) -> Binding<Bool> {
         Binding(
-            get: { quiet.days.contains(day) },
+            get: { window.days.contains(day) },
             set: {
-                if $0, !quiet.days.contains(day) {
-                    quiet.days.append(day)
+                if $0, !window.days.contains(day) {
+                    window.days.append(day)
                 } else if !$0 {
-                    quiet.days.removeAll(where: { $0 == day })
+                    window.days.removeAll(where: { $0 == day })
                 }
             })
     }
 
     /// Single-letter checkbox label (Sunday-first, Calendar order).
-    private func dayLetter(_ day: Int) -> String {
+    private static func dayLetter(_ day: Int) -> String {
         let symbols = Calendar.current.veryShortWeekdaySymbols
         return symbols[(day - 1 + symbols.count) % symbols.count]
     }
 
     /// Full day name (checkbox tooltip).
-    private func dayName(_ day: Int) -> String {
+    private static func dayName(_ day: Int) -> String {
         let symbols = Calendar.current.weekdaySymbols
         return symbols[(day - 1 + symbols.count) % symbols.count]
     }

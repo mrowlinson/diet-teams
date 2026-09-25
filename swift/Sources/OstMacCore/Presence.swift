@@ -17,7 +17,8 @@ import Foundation
 import SwiftUI
 
 /// The five settable statuses (ost CLI `--set` values, verbatim).
-public enum PresenceStatus: String, CaseIterable, Sendable {
+/// Codable (e2-attention): presence-schedule entries persist the target.
+public enum PresenceStatus: String, CaseIterable, Codable, Sendable {
     case available, busy, dnd, away, offline
 
     /// Picker label.
@@ -128,6 +129,10 @@ public final class PresenceStore: ObservableObject {
     /// Min seconds between MRI refreshes of one chat (realtime feeds can
     /// burst; tests shrink it). Resolve cache makes repeats cheap anyway.
     public var resolveThrottle: TimeInterval = 300
+    /// Manual-set hook (e2-attention): invoked synchronously by set()
+    /// (the picker path). The app wires it to the presence schedule's
+    /// noteManualSet (contract (i)); nil by default (no behavior change).
+    public var manualSetHook: (() -> Void)?
 
     private let ownFetcher: OwnFetcher
     private let setFetcher: SetFetcher
@@ -169,6 +174,7 @@ public final class PresenceStore: ObservableObject {
     /// Set own status (picker action). Applies the server-echoed value.
     public func set(status: PresenceStatus) {
         guard !setting else { return }
+        manualSetHook?() // e2-attention: manual set (pause signal)
         setting = true
         let fetcher = setFetcher
         let want = status.rawValue

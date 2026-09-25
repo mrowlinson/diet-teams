@@ -81,7 +81,9 @@ struct DiagnosticsView: View {
                 PreloadDiagRow(store: ImagePreloadStore.shared)
             }
             Section("Quiet hours") {
-                QuietHoursDiagRow(store: state.quietHours)
+                QuietHoursDiagRow(
+                    store: state.quietHours, focus: state.focusSync,
+                    sched: state.presenceSchedule)
             }
             Section("Chat list") {
                 PinsDiagRow(chats: state.chats)
@@ -344,22 +346,72 @@ struct TypingDiagRow: View {
 /// Quiet-hours rows (om-quiet-hours): observes the store so state
 /// flips and the suppressed count tick live. The ONLY place the
 /// suppressed count appears — Settings and the sidebar never show it.
+/// e2-attention appends Focus + active-window rows (never reordered).
 struct QuietHoursDiagRow: View {
     @ObservedObject var store: QuietHoursStore
+    @ObservedObject var focus: FocusSyncStore
+    @ObservedObject var sched: PresenceScheduleStore
 
     var body: some View {
         LabeledContent(
             "State",
             value: DiagnosticsFormat.quietHoursLine(
                 dnd: store.dndActive(), schedule: store.scheduleActive(),
-                suppressed: store.suppressedCount))
+                suppressed: store.suppressedCount,
+                focus: focus.quietNow))
             .textSelection(.enabled)
         LabeledContent(
             "Schedule",
-            value: store.windowEnabled ? store.window.summary() : "off")
+            value: scheduleText)
             .textSelection(.enabled)
         LabeledContent("Do Not Disturb", value: store.dndStatus())
             .textSelection(.enabled)
+        LabeledContent("Focus", value: focusText)
+            .textSelection(.enabled)
+        LabeledContent("Active window", value: activeWindowText)
+            .textSelection(.enabled)
+        LabeledContent(
+            "Presence schedule",
+            value: sched.enabled
+                ? (sched.activeEntry()?.summary() ?? "idle (\(sched.entries.count) entries)")
+                : "off")
+            .textSelection(.enabled)
+        LabeledContent("Last scheduled set", value: lastSetText)
+            .textSelection(.enabled)
+        if let err = sched.error {
+            LabeledContent("Schedule error", value: err)
+                .textSelection(.enabled)
+        }
+    }
+
+    private var lastSetText: String {
+        guard let status = sched.lastStatus else { return "never" }
+        if let at = sched.lastSetAt {
+            let fmt = DateFormatter()
+            fmt.locale = Locale(identifier: "en_US_POSIX")
+            fmt.dateFormat = "HH:mm"
+            return "\(status.title) at \(fmt.string(from: at))"
+        }
+        return status.title
+    }
+
+    /// Multi-window schedule line: off when nothing is enabled, else
+    /// the active window or the idle count.
+    private var scheduleText: String {
+        let enabled = store.windows.filter(\.enabled)
+        if enabled.isEmpty { return "off" }
+        if let active = store.activeWindow() { return active.summary() }
+        return "idle (\(enabled.count) windows)"
+    }
+
+    private var focusText: String {
+        if !focus.syncEnabled { return "sync off" }
+        if let error = focus.error { return "unreadable (\(error))" }
+        return focus.focusActive ? "active — quiet" : "inactive"
+    }
+
+    private var activeWindowText: String {
+        store.activeWindow()?.summary() ?? "none"
     }
 }
 

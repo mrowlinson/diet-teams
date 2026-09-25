@@ -178,31 +178,71 @@ public enum QuietHoursGate {
     }
 }
 
-/// Quiet-hours + DND state. Owns the schedule, the manual toggle, and
-/// the session suppressed-banner count (Diagnostics only).
+/// Quiet-hours + DND state. Owns the schedule (a window LIST —
+/// e2-attention; quiet when ANY enabled window matches), the manual
+/// toggle, and the session suppressed-banner count (Diagnostics only).
+/// Window #1 is the legacy home: the single-window API
+/// (`windowEnabled`/`startMinutes`/`endMinutes`/`days`) proxies it, and
+/// the old keys stay in sync (downgrade-safe).
 @MainActor
 public final class QuietHoursStore: ObservableObject {
     public static let enabledKey = "quietHours.enabled"
     public static let startKey = "quietHours.startMinutes"
     public static let endKey = "quietHours.endMinutes"
     public static let daysKey = "quietHours.days"
+    public static let windowsKey = "quietHours.windows"
     public static let dndOnKey = "quietHours.dndOn"
     public static let dndUntilKey = "quietHours.dndUntil"
     public static let dndPendingKey = "quietHours.dndPending"
+    /// Cap (CallHistoryStore precedent: bounded persisted lists).
+    public static let maxWindows = 8
 
     private let defaults: UserDefaults
 
-    @Published public var windowEnabled = false {
-        didSet { defaults.set(windowEnabled, forKey: Self.enabledKey) }
+    /// Schedule windows (persisted as JSON; never empty — window #1 is
+    /// pinned as the legacy home).
+    @Published public var windows: [QuietHoursWindow] = [] {
+        didSet { persistWindows() }
     }
-    @Published public var startMinutes = 22 * 60 {
-        didSet { defaults.set(startMinutes, forKey: Self.startKey) }
+
+    /// Window #1 enabled (legacy proxy — reads/writes windows[0]).
+    public var windowEnabled: Bool {
+        get { windows.first?.enabled ?? false }
+        set {
+            ensureSeeded()
+            windows[0].enabled = newValue
+            defaults.set(newValue, forKey: Self.enabledKey)
+        }
     }
-    @Published public var endMinutes = 7 * 60 {
-        didSet { defaults.set(endMinutes, forKey: Self.endKey) }
+
+    /// Window #1 start (legacy proxy).
+    public var startMinutes: Int {
+        get { windows.first?.startMinutes ?? 22 * 60 }
+        set {
+            ensureSeeded()
+            windows[0].startMinutes = newValue
+            defaults.set(newValue, forKey: Self.startKey)
+        }
     }
-    @Published public var days = [1, 2, 3, 4, 5, 6, 7] {
-        didSet { defaults.set(days, forKey: Self.daysKey) }
+
+    /// Window #1 end (legacy proxy).
+    public var endMinutes: Int {
+        get { windows.first?.endMinutes ?? 7 * 60 }
+        set {
+            ensureSeeded()
+            windows[0].endMinutes = newValue
+            defaults.set(newValue, forKey: Self.endKey)
+        }
+    }
+
+    /// Window #1 days (legacy proxy).
+    public var days: [Int] {
+        get { windows.first?.days ?? [1, 2, 3, 4, 5, 6, 7] }
+        set {
+            ensureSeeded()
+            windows[0].days = newValue
+            defaults.set(newValue, forKey: Self.daysKey)
+        }
     }
     @Published public var dndOn = false {
         didSet { defaults.set(dndOn, forKey: Self.dndOnKey) }
@@ -263,26 +303,80 @@ public final class QuietHoursStore: ObservableObject {
             dndOn = false
             dndUntil = nil
         }
-        _windowEnabled = Published(initialValue: enabled)
-        _startMinutes = Published(initialValue: start)
-        _endMinutes = Published(initialValue: end)
-        _days = Published(initialValue: days)
+        // Window list: decode the blob when present, else migrate the
+        // old keys losslessly into window #1 (same behavior), else seed
+        // the historical default window.
+        let windows: [QuietHoursWindow]
+        if let data = defaults.data(forKey: Self.windowsKey),
+           let decoded = try? JSONDecoder().decode([QuietHoursWindow].self, from: data),
+           !decoded.isEmpty
+        {
+            windows = Array(decoded.prefix(Self.maxWindows))
+        } else {
+            windows = [QuietHoursWindow(
+                enabled: enabled, startMinutes: start,
+                endMinutes: end, days: days)]
+        }
+        _windows = Published(initialValue: windows)
         _dndOn = Published(initialValue: dndOn)
         _dndUntil = Published(initialValue: dndUntil)
         _pendingDNDOption = Published(initialValue: pending)
         _suppressedCount = Published(initialValue: 0)
+        // Persist the migrated/seeded list (one write; later mutations
+        // persist via didSet). Inline (nonisolated init cannot call the
+        // MainActor persist helper).
+        if defaults.data(forKey: Self.windowsKey) == nil,
+           let data = try? JSONEncoder().encode(windows)
+        {
+            defaults.set(data, forKey: Self.windowsKey)
+        }
     }
 
-    /// Current schedule window (derived from the published fields).
+    /// Window #1 (legacy home; derived from the window list).
     public var window: QuietHoursWindow {
-        QuietHoursWindow(
-            enabled: windowEnabled, startMinutes: startMinutes,
-            endMinutes: endMinutes, days: days)
+        windows.first ?? QuietHoursWindow()
     }
 
-    /// True when the schedule alone quiets `date` (pure — no sweep).
+    /// True when the schedule alone quiets `date` (pure — no sweep):
+    /// ANY enabled window matches.
     public func scheduleActive(at date: Date = Date(), calendar: Calendar = .current) -> Bool {
-        window.contains(date, calendar: calendar)
+        activeWindow(at: date, calendar: calendar) != nil
+    }
+
+    /// First window containing `date` (list order; Diagnostics row).
+    public func activeWindow(at date: Date = Date(), calendar: Calendar = .current) -> QuietHoursWindow? {
+        windows.first { $0.contains(date, calendar: calendar) }
+    }
+
+    /// Add a window (false at the cap — caller shows refusal text).
+    @discardableResult
+    public func addWindow(_ window: QuietHoursWindow = QuietHoursWindow()) -> Bool {
+        guard windows.count < Self.maxWindows else { return false }
+        windows.append(window)
+        return true
+    }
+
+    /// Remove the window at `index`. Window #1 is pinned (legacy home):
+    /// removing it clears to a default window instead of dropping, so
+    /// the list is never empty and legacy proxies stay live.
+    public func removeWindow(at index: Int) {
+        guard windows.indices.contains(index) else { return }
+        if index == 0 {
+            windows[0] = QuietHoursWindow()
+        } else {
+            windows.remove(at: index)
+        }
+    }
+
+    /// Never-empty guarantee for the legacy proxies.
+    private func ensureSeeded() {
+        if windows.isEmpty { windows = [QuietHoursWindow()] }
+    }
+
+    private func persistWindows() {
+        if let data = try? JSONEncoder().encode(windows) {
+            defaults.set(data, forKey: Self.windowsKey)
+        }
     }
 
     /// True when manual DND alone quiets `date` (pure — no sweep).
