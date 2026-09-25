@@ -48,6 +48,10 @@ public final class ConversationStore: ObservableObject {
     /// Own sender name (whoami display_name); nil until resolved or in demo.
     /// Stamps `isOwn` on history, pages, and realtime ingests.
     public private(set) var ownDisplayName: String?
+    /// Local-send tap (e1-popout): fired with the appended bubble on
+    /// every `send` (demo + live optimistic paths). The pop-out registry
+    /// mirrors through it so an own-bubble appears in both windows.
+    public var onLocalSend: ((ChatMessage) -> Void)?
     private var openGeneration = 0
 
     /// Opaque cursor for the next older page; nil = end of history.
@@ -430,10 +434,14 @@ public final class ConversationStore: ObservableObject {
     }
 
     /// Realtime feed: upsert by id (new appends, known edits in place).
-    /// Stamps `isOwn` against the known identity first.
-    public func ingest(_ message: ChatMessage) {
+    /// Stamps `isOwn` against the known identity first, unless
+    /// `keepOwnership` preserves the sender's stamp (e1-popout send
+    /// mirroring — the other window may not know our identity yet).
+    public func ingest(_ message: ChatMessage, keepOwnership: Bool = false) {
         var m = message
-        m.isOwn = ownDisplayName.map { m.sender == $0 } ?? false
+        if !keepOwnership {
+            m.isOwn = ownDisplayName.map { m.sender == $0 } ?? false
+        }
         messages = Self.upsert(m, into: messages)
     }
 
@@ -544,18 +552,22 @@ public final class ConversationStore: ObservableObject {
         let parent = replyTarget
         replyTarget = nil
         if isDemo {
-            messages.append(ChatMessage(
+            let bubble = ChatMessage(
                 id: "demo-local-\(messages.count + 1)",
                 sender: "Me", timestamp: Self.nowISO(), content: body, isOwn: true,
-                reply_to: parent?.id))
+                reply_to: parent?.id)
+            messages.append(bubble)
+            onLocalSend?(bubble)
             return
         }
         guard let id = chatID else { return }
         let pendingID = "pending-\(UUID().uuidString)"
-        messages.append(ChatMessage(
+        let bubble = ChatMessage(
             id: pendingID,
             sender: "Me", timestamp: Self.nowISO(), content: body, isOwn: true,
-            reply_to: parent?.id))
+            reply_to: parent?.id)
+        messages.append(bubble)
+        onLocalSend?(bubble)
         Task {
             do {
                 if let parent {

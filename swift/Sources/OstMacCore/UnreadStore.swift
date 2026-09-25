@@ -129,11 +129,15 @@ public final class UnreadStore: ObservableObject {
 
     /// Pure accrual gate: notify counts unless the chat is already open
     /// (visible bubbles) or the id is blank. Every skip never counts.
+    /// `visibleChatIDs` (e1-popout: main-open + popped) extends the
+    /// open-chat exemption to pop-out windows.
     nonisolated public static func shouldCount(
-        decision: ChatFilter.Decision, chatID: String, openChatID: String?
+        decision: ChatFilter.Decision, chatID: String, openChatID: String?,
+        visibleChatIDs: Set<String> = []
     ) -> Bool {
         guard case .notify = decision else { return false }
         guard !chatID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        if visibleChatIDs.contains(chatID) { return false }
         if let open = openChatID, open == chatID { return false }
         return true
     }
@@ -143,9 +147,12 @@ public final class UnreadStore: ObservableObject {
     /// visible total unchanged (an override absorbing the first point)
     /// also skip the dock write.
     public func ingest(
-        decision: ChatFilter.Decision, chatID: String, openChatID: String?
+        decision: ChatFilter.Decision, chatID: String, openChatID: String?,
+        visibleChatIDs: Set<String> = []
     ) {
-        guard Self.shouldCount(decision: decision, chatID: chatID, openChatID: openChatID) else { return }
+        guard Self.shouldCount(
+            decision: decision, chatID: chatID, openChatID: openChatID,
+            visibleChatIDs: visibleChatIDs) else { return }
         let before = total
         counts[chatID, default: 0] += 1
         if total != before {
@@ -163,7 +170,8 @@ public final class UnreadStore: ObservableObject {
         meetingDedup: inout MeetingStartDedup, now: Date,
         openChatID: String?, teamsMutedChatIDs: Set<String> = [],
         dndActive: Bool = false, quietActive: Bool = false,
-        snoozedChatIDs: Set<String> = []
+        snoozedChatIDs: Set<String> = [],
+        visibleChatIDs: Set<String> = []
     ) -> ChatFilter.Decision {
         let decision = ChatFilter.decide(
             message: message, chatDisplayName: chatDisplayName,
@@ -172,7 +180,9 @@ public final class UnreadStore: ObservableObject {
             teamsMutedChatIDs: teamsMutedChatIDs,
             dndActive: dndActive, quietActive: quietActive,
             snoozedChatIDs: snoozedChatIDs)
-        ingest(decision: decision, chatID: message.chatID, openChatID: openChatID)
+        ingest(
+            decision: decision, chatID: message.chatID, openChatID: openChatID,
+            visibleChatIDs: visibleChatIDs)
         return decision
     }
 
