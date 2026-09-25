@@ -329,4 +329,66 @@ final class MeetingChatTests: XCTestCase {
         XCTAssertEqual(DiagnosticsFormat.meetingThreadLine(messages: 5, live: true), "5 messages · live")
         XCTAssertEqual(DiagnosticsFormat.meetingThreadLine(messages: 5, live: false), "5 messages · ended")
     }
+
+    // MARK: - Meetings dir rename (om-meetings-dirname)
+
+    private func scratchAppSupport() throws -> URL {
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent("om-meetings-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        return base
+    }
+
+    func testMeetingsBaseURLUsesAppIdentityName() throws {
+        let base = try scratchAppSupport()
+        defer { try? FileManager.default.removeItem(at: base) }
+        XCTAssertEqual(
+            MeetingChatStore.meetingsBaseURL(under: base).path,
+            base.appendingPathComponent("Better Teams/meetings").path)
+        XCTAssertEqual(
+            MeetingChatStore.legacyMeetingsBaseURL(under: base).path,
+            base.appendingPathComponent("Diet Teams/meetings").path)
+    }
+
+    func testMigrateMovesLegacyDirWithAccountSubdir() throws {
+        let base = try scratchAppSupport()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let fm = FileManager.default
+        let legacy = MeetingChatStore.legacyMeetingsBaseURL(under: base)
+        let acctDir = AccountProfile.dir(legacy, for: "acct-1")
+        try fm.createDirectory(at: acctDir, withIntermediateDirectories: true)
+        try Data("t".utf8).write(to: legacy.appendingPathComponent("t.json"))
+        try Data("a".utf8).write(to: acctDir.appendingPathComponent("a.json"))
+        XCTAssertTrue(MeetingChatStore.migrateLegacyDirectory(under: base))
+        let fresh = MeetingChatStore.meetingsBaseURL(under: base)
+        XCTAssertFalse(fm.fileExists(atPath: legacy.path))
+        XCTAssertEqual(try Data(contentsOf: fresh.appendingPathComponent("t.json")), Data("t".utf8))
+        XCTAssertEqual(
+            try Data(contentsOf: AccountProfile.dir(fresh, for: "acct-1").appendingPathComponent("a.json")),
+            Data("a".utf8))
+        XCTAssertFalse(MeetingChatStore.migrateLegacyDirectory(under: base)) // idempotent
+    }
+
+    func testMigrateNoopWhenLegacyMissing() throws {
+        let base = try scratchAppSupport()
+        defer { try? FileManager.default.removeItem(at: base) }
+        XCTAssertFalse(MeetingChatStore.migrateLegacyDirectory(under: base))
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: MeetingChatStore.meetingsBaseURL(under: base).path))
+    }
+
+    func testMigrateNoopWhenNewDirExists() throws {
+        let base = try scratchAppSupport()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let fm = FileManager.default
+        let legacy = MeetingChatStore.legacyMeetingsBaseURL(under: base)
+        let fresh = MeetingChatStore.meetingsBaseURL(under: base)
+        try fm.createDirectory(at: legacy, withIntermediateDirectories: true)
+        try fm.createDirectory(at: fresh, withIntermediateDirectories: true)
+        try Data("n".utf8).write(to: fresh.appendingPathComponent("n.json"))
+        try Data("l".utf8).write(to: legacy.appendingPathComponent("l.json"))
+        XCTAssertFalse(MeetingChatStore.migrateLegacyDirectory(under: base))
+        XCTAssertEqual(try Data(contentsOf: fresh.appendingPathComponent("n.json")), Data("n".utf8))
+        XCTAssertEqual(try Data(contentsOf: legacy.appendingPathComponent("l.json")), Data("l".utf8))
+    }
 }
