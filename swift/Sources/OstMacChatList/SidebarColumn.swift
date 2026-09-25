@@ -18,6 +18,7 @@ public struct SidebarColumn: View {
     @ObservedObject private var reminders: RemindersViewModel
     @ObservedObject private var planner: PlannerViewModel
     @ObservedObject private var recordings: RecordingsViewModel
+    @ObservedObject private var transcripts: TranscriptsViewModel
     @ObservedObject private var shifts: ShiftsStore
     @ObservedObject private var presence: PresenceStore
     @ObservedObject private var unread: UnreadStore
@@ -35,7 +36,8 @@ public struct SidebarColumn: View {
     public init(
         chats: ChatListViewModel, teams: TeamsViewModel,
         reminders: RemindersViewModel, planner: PlannerViewModel,
-        recordings: RecordingsViewModel, shifts: ShiftsStore,
+        recordings: RecordingsViewModel,
+        transcripts: TranscriptsViewModel, shifts: ShiftsStore,
         presence: PresenceStore = PresenceStore(),
         unread: UnreadStore = UnreadStore(),
         mentions: MentionStore = MentionStore(),
@@ -52,6 +54,7 @@ public struct SidebarColumn: View {
         self.reminders = reminders
         self.planner = planner
         self.recordings = recordings
+        self.transcripts = transcripts
         self.shifts = shifts
         self.presence = presence
         self.unread = unread
@@ -92,6 +95,9 @@ public struct SidebarColumn: View {
             case .recordings:
                 RecordingsBrowser(model: recordings)
                     .transition(.opacity)
+            case .transcripts:
+                TranscriptsBrowser(model: transcripts)
+                    .transition(.opacity)
             case .shifts:
                 ShiftsBrowser(model: shifts)
                     .transition(.opacity)
@@ -110,5 +116,6 @@ public enum SidebarSection: String, CaseIterable {
     case reminders = "Reminders"
     case planner = "Planner"
     case recordings = "Recordings"
+    case transcripts = "Transcripts"
     case shifts = "Shifts"
 }

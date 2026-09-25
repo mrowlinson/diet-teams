@@ -36,6 +36,8 @@
 // --show-planner opens the sidebar on the Planner browser (shot hook).
 // --show-recordings opens the sidebar on the Recordings browser (shot hook).
 // --show-recordings-playing also auto-plays the first row (shot hook).
+// --show-transcripts opens the sidebar on the Transcripts browser (shot hook).
+// --show-transcripts-showing also loads the first row's turns (shot hook).
 // --show-notes opens the conversation on the Notes tab (shot hook).
 // --show-jump opens the Cmd+K jump palette at launch (shot hook).
 // --show-forward opens the forward sheet (jump palette re-targeted at a
@@ -251,6 +253,7 @@ final class AppState: ObservableObject {
     let reminders: RemindersViewModel
     let planner: PlannerViewModel
     let recordings: RecordingsViewModel
+    let transcripts: TranscriptsViewModel
     let meetings: MeetingsViewModel
     /// Calendar week grid backing the Meetings window (B1 merge).
     let calWeek: CalendarWeekStore
@@ -465,6 +468,15 @@ final class AppState: ObservableObject {
                 listFetcher: { RecordingsDemo.response() },
                 searchFetcher: { RecordingsDemo.searchResponse(for: $0) },
                 downloadFetcher: { _, _, _ in try DemoClip.url().path })
+            transcripts = TranscriptsViewModel(
+                listFetcher: { TranscriptsDemo.response() },
+                searchFetcher: { TranscriptsDemo.searchResponse(for: $0) },
+                downloadFetcher: { _, _, dest in
+                    try TranscriptsDemo.sampleVTT.write(
+                        toFile: dest, atomically: true, encoding: .utf8)
+                    return dest
+                },
+                recordingLookup: Self.demoRecordingLookup())
             // Parse stays real (pure core, no network); the join runner
             // echoes an accepted signaling leg so the lobby flow runs.
             meetings = MeetingsViewModel(
@@ -485,7 +497,11 @@ final class AppState: ObservableObject {
             teams = TeamsViewModel()
             reminders = RemindersViewModel()
             planner = PlannerViewModel()
-            recordings = RecordingsViewModel()
+            let liveRecordings = RecordingsViewModel()
+            recordings = liveRecordings
+            transcripts = TranscriptsViewModel(recordingLookup: { [weak liveRecordings] stem in
+                liveRecordings?.items.first { TranscriptItem.stem(of: $0.name) == stem }
+            })
             meetings = MeetingsViewModel()
             calWeek = CalendarWeekStore()
             shifts = ShiftsStore()
@@ -581,6 +597,10 @@ final class AppState: ObservableObject {
         await recordings.load()
         if CommandLine.arguments.contains("--show-recordings-playing") {
             recordings.selectAndPlayFirst()
+        }
+        await transcripts.load()
+        if CommandLine.arguments.contains("--show-transcripts-showing") {
+            transcripts.selectAndShowFirst()
         }
         await meetings.load()
         seedShifts() // team picker + first-week grid (demo + live)
@@ -1372,6 +1392,16 @@ final class AppState: ObservableObject {
             ])
     }
 
+    /// Demo sibling-recording lookup: demo transcript stems match the
+    /// demo recording stems (`Title with Name` ↔ `Title with Name.mp4`).
+    private static func demoRecordingLookup() -> TranscriptsViewModel.RecordingLookup {
+        let byStem = Dictionary(
+            uniqueKeysWithValues: RecordingsDemo.response().recordings.map {
+                (TranscriptItem.stem(of: $0.name), $0)
+            })
+        return { byStem[$0] }
+    }
+
     /// Gate transition (fired from the $state sink for every auth
     /// change, whichever surface drove it): signed in → open deferred
     /// content (or reload the list + restart the feed when already
@@ -1387,6 +1417,7 @@ final class AppState: ObservableObject {
                 reminders.refresh()
                 planner.refresh()
                 recordings.refresh()
+                transcripts.refresh()
                 meetings.refresh()
                 calWeek.refresh()
                 if shifts.selectedTeamID == nil {
@@ -1431,6 +1462,8 @@ struct RootView: View {
         let args = CommandLine.arguments
         if args.contains("--show-recordings") { return .recordings }
         if args.contains("--show-recordings-playing") { return .recordings }
+        if args.contains("--show-transcripts") { return .transcripts }
+        if args.contains("--show-transcripts-showing") { return .transcripts }
         if args.contains("--show-planner") { return .planner }
         if args.contains("--show-reminders") { return .reminders }
         if args.contains("--show-teams") { return .teams }
@@ -1449,7 +1482,8 @@ struct RootView: View {
                     SidebarColumn(
                         chats: state.chats, teams: state.teams,
                         reminders: state.reminders, planner: state.planner,
-                        recordings: state.recordings, shifts: state.shifts,
+                        recordings: state.recordings,
+                        transcripts: state.transcripts, shifts: state.shifts,
                         presence: state.presence,
                         unread: state.unread,
                         mentions: state.mentions,
