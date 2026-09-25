@@ -76,7 +76,7 @@ public struct ActionItemsView: View {
                     .buttonStyle(.bordered)
                     .keyboardShortcut(.cancelAction)
             }
-            Text(CatchUp.onDevicePrivacyNote)
+            Text(ActionItems.privacyNote)
                 .font(DietType.caption1)
                 .foregroundStyle(DietColor.textSecondaryColor)
             DietSeamH()

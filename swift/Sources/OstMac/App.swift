@@ -56,6 +56,10 @@
 // --show-action-items stretches the demo thread past 20 messages and
 // auto-opens the action-items popover with canned bullets (f1-actions
 // shot hook, offline).
+// --show-action-items-window renders the same popover content
+// standalone in the main window (f1-actions shot hook, offline):
+// NSPopover auto-open is environment-flaky (blank orphans; pre-existing
+// hooks fail the same way), so pixel proof goes through this path.
 // --show-notes opens the conversation on the Notes tab (shot hook).
 // --show-jump opens the Cmd+K jump palette at launch (shot hook).
 // --show-forward opens the forward sheet (jump palette re-targeted at a
@@ -537,7 +541,9 @@ final class AppState: ObservableObject {
         call = CallStore(demo: isDemo)
         showCatchUp = args.contains("--show-catchup") || args.contains("--show-catchup-ondevice")
         showActionItems = args.contains("--show-action-items")
-        if showActionItems || args.contains("--show-transcripts-actions") {
+        if showActionItems || args.contains("--show-transcripts-actions")
+            || args.contains("--show-action-items-window")
+        {
             // Shot hooks only: canned on-device extraction, no model.
             let stub = args.contains("--show-transcripts-actions")
                 ? Self.actionItemsTranscriptStub : Self.actionItemsThreadStub
@@ -2278,6 +2284,19 @@ struct RootView: View {
     }
 
     var body: some View {
+        // Shot hook (f1-actions): the real popover content standalone
+        // (same view, same canned store; see the flag comment).
+        if CommandLine.arguments.contains("--show-action-items-window") {
+            ActionItemsView(
+                actions: state.actionItems,
+                messages: DemoData.messages(for: DemoData.demoID),
+                chatID: DemoData.demoID, autoRun: true)
+        } else {
+            mainBody
+        }
+    }
+
+    private var mainBody: some View {
         VStack(spacing: 0) {
             CallBanner(store: state.call) {
                 openWindow(id: AppIdentity.callWindowID)
@@ -2333,7 +2352,6 @@ struct RootView: View {
                             initialTab: CommandLine.arguments.contains("--show-shared") ? 1
                                 : (state.showNotes ? 2 : 0),
                             catchUpOpen: state.showCatchUp,
-                            actionItemsOpen: state.showActionItems,
                             onForward: { state.beginForward($0) },
                             editOpen: CommandLine.arguments.contains("--show-edit"),
                             deleteOpen: CommandLine.arguments.contains("--show-delete"),

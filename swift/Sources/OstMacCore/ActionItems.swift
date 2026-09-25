@@ -56,6 +56,8 @@ public struct CappedTranscript: Sendable, Equatable {
 // MARK: - Pure builders
 
 public enum ActionItems {
+    public static let privacyNote =
+        "On-device action items extract on this Mac with Apple Intelligence. Your thread never leaves this device."
     public static let unassignedOwner = "Unassigned"
     /// Empty input: no cues / empty thread (no model call).
     public static let emptySourceCopy = "Nothing to extract from."

@@ -86,8 +86,6 @@ public struct ConversationView: View {
 
     /// - catchUpOpen: open the catch-up sheet at launch (the
     ///   --show-catchup shot hook only).
-    /// - actionItemsOpen: open the action-items popover at launch (the
-    ///   --show-action-items shot hook only).
     /// - onForward: bubble Forward tap → host sheets the jump palette.
     /// - editOpen/deleteOpen: open the edit sheet / delete confirm for the
     ///   first own bubble at launch (--show-edit / --show-delete shot hooks).
@@ -108,7 +106,6 @@ public struct ConversationView: View {
         scheduled: ScheduledSendStore = ScheduledSendStore(),
         canned: CannedResponsesStore = CannedResponsesStore(),
         isGroup: Bool = true, initialTab: Int = 0, catchUpOpen: Bool = false,
-        actionItemsOpen: Bool = false,
         onForward: @escaping (ChatMessage) -> Void = { _ in },
         editOpen: Bool = false, deleteOpen: Bool = false,
         scheduleOpen: Bool = false, scheduledListOpen: Bool = false,
@@ -137,7 +134,7 @@ public struct ConversationView: View {
         self.onForward = onForward
         _tab = State(initialValue: initialTab)
         _showCatchUp = State(initialValue: catchUpOpen)
-        _showActionItems = State(initialValue: actionItemsOpen)
+        _showActionItems = State(initialValue: false)
         self.editOpen = editOpen
         self.deleteOpen = deleteOpen
         _showSchedule = State(initialValue: scheduleOpen)
@@ -239,6 +236,18 @@ public struct ConversationView: View {
         }
         .onChange(of: showActionItems) { _, isOpen in
             if !isOpen { ActionItemsSheet.dismissViaClickOutside(presented: $showActionItems, store: actionItems) }
+        }
+        .task {
+            // --show-action-items: open after the thread settles (an
+            // at-appear flip races view recreation and orphans a blank
+            // popover window; real taps always come from the header
+            // button).
+            if CommandLine.arguments.contains("--show-action-items") {
+                try? await Task.sleep(nanoseconds: 4_000_000_000)
+                if !showActionItems, !store.messages.isEmpty {
+                    ActionItemsSheet.open(presented: $showActionItems, store: actionItems)
+                }
+            }
         }
         .sheet(item: $editingMessage) { msg in
             editSheet(for: msg)
