@@ -787,22 +787,56 @@ Notes:
   force-pushed; the vendored source is clean on that line). The
   REDACTED note above still covers the PATCH/DELETE/GET lines.
 
-## Upstream PRs, wave 7 (2026-09-25, base 0892144; UNFILED — ledgered at
-B1 merge, no PRs cut this wave)
+## Upstream PRs, wave 7 (2026-09-25, base 0892144; origin/main still 0892144)
 
-B1 wave (planner + calendar-week + shifts). Ledger §§46–48 above carry
-the entry text (tags preserved); file upstream once a signed-in live
-run confirms each wire shape, or per owner override as in wave 6.
+R5 wave: B1 entries (§§46–48, ledgered at the B1 merge) + R2 entries
+(§§49–51). Every PR body states its per-entry verification (no blanket
+override this wave); ledger entries above carry the entry text (tags
+preserved).
 
-Held (docs shapes only, no live run — confirm on a signed-in box before
-upstreaming; auth still dead per PARTIAL-flex-15, no signed-in runs
-possible):
-- ledger 46 [major] Planner boards (om-planner: plans/buckets/tasks +
-  If-Match complete/reopen; live use needs a working teams-cli
-  session; no CLI subcommand this wave).
-- ledger 47 [minor] calendar week + schedule/cancel (om-calendar:
-  calendarView GET + event POST/DELETE; Calendars.ReadWrite consent
-  on the first-party client id unconfirmed).
-- ledger 48 [minor] Shifts schedule week, read-only (om-shifts:
-  schedule/shifts/timesOff/timeOffReasons GETs; no writes v1;
-  balances proxy pending owner confirm).
+Minor (stacked: merge after the noted base; only each PR's top commit
+is new):
+- (am) testcall echo SSRC (ledger 51, standalone on 0892144;
+  LIVE-VERIFIED TESTCALL-PROOF: declared SSRC 1251 sent/409 rcvd,
+  echo=true, 965.8ms, corr 0.995):
+  https://github.com/eisbaw/ost/pull/44
+- (an) calendar week + schedule/cancel (ledger 47, after #21 — reads
+  reuse its parse_calendar_view/MeetingInfo; bundles graph_delete in
+  client.rs, identical to the file-manage stack's, keep either):
+  https://github.com/eisbaw/ost/pull/45
+- (ao) Shifts schedule week (ledger 48, after #45):
+  https://github.com/eisbaw/ost/pull/46
+Major (need maintainer buy-in; sequential, only each top commit new):
+- (ap) [major] Planner boards (ledger 46, standalone on 0892144;
+  reshaped for standalone compile: If-Match PATCH via new
+  client::graph_patch_etag instead of vendored-only
+  load_cached/shared_http; live re-probe of the exact new path
+  pending, stated in body):
+  https://github.com/eisbaw/ost/pull/47
+- (aq) [major] meeting recordings (ledger 49, after #47; PARTIAL live:
+  B2 P2/P3 paths 200-empty, E2E synthetic round-trip via the §50
+  twin, zero real .mp4 on tenant):
+  https://github.com/eisbaw/ost/pull/48
+- (ar) [major] meeting transcripts (ledger 50, after #48;
+  LIVE-VERIFIED E2E self-only: PUT 201 → search FOUND → GET 409B
+  identical → shipped parser 4 cues → DELETE 204 + re-GET 404):
+  https://github.com/eisbaw/ost/pull/49
+
+Merge order: #44 anytime; #21 → #45 → #46; #47 → #48 → #49.
+Minor stacks separate from major stacks per ledger rule.
+
+Held: none.
+
+Notes:
+- Test counts quoted per-PR in the PR bodies (sdp dance throughout:
+  temp fix for local `cargo test`, reverted, tree clean): #44 91/91,
+  #45 112/112 (7 new calweek), #46 115/115 (3 new schedule), #47
+  100/100 (9 new planner), #48 110/110 (10 new recordings), #49
+  120/120 (10 new transcripts).
+- §46 live caveat: set_task_complete_data's 204-empty re-fetch of the
+  task fixes the live-observed bare-PATCH wart in-PR; live re-probe
+  of the exact new path pending (stated in the #47 body).
+- §49 doc parenthetical updated at filing (paths now live-probed
+  200-empty; was "no live probe backs this lane").
+- §51 is the exact lane hunk (+6/-5) applied clean to base; §48, §50
+  verbatim copies + mod.rs lines.
