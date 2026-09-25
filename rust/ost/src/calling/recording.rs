@@ -11,8 +11,7 @@ use std::time::Duration;
 
 use super::call_test::extract_call_payload;
 use super::signaling::{
-    self, trouter_callback, ConversationCallParams, SKYPE_CLIENT_HEADER, TEAMS_PARTITION,
-    TEAMS_REGION, TEAMS_RING,
+    self, trouter_callback, ConversationCallParams, TeamsHeaders, TeamsRegion, SKYPE_CLIENT_HEADER,
 };
 use crate::trouter::websocket::TrouterSocket;
 
@@ -68,10 +67,11 @@ pub struct RecordingParams<'a> {
     pub conversation_id: &'a str,
     /// The addParticipantAndModality URL (derived from conversationController).
     pub add_participant_url: &'a str,
-    /// Region slug for the recorder-base fallback (e.g. "amer", "euwe").
-    /// Only used when the payload lacks a callrecorder hostname; the
-    /// extracted hostname stays the primary path.
-    pub region: &'a str,
+    /// Teams cloud region for the `ms-teams-*` headers on every request.
+    /// Its `region` slug also feeds the recorder-base fallback (e.g. "amer",
+    /// "euwe"); only used when the payload lacks a callrecorder hostname —
+    /// the extracted hostname stays the primary path.
+    pub region: &'a TeamsRegion,
 }
 
 /// Base recorder feature flags (shared between bot invitation and recording start).
@@ -168,9 +168,7 @@ pub async fn add_recorder_bot(
         .header("x-microsoft-skype-chain-id", params.chain_id)
         .header("x-microsoft-skype-message-id", &recorder_message_id)
         .header("x-microsoft-skype-client", SKYPE_CLIENT_HEADER)
-        .header("ms-teams-partition", TEAMS_PARTITION)
-        .header("ms-teams-region", TEAMS_REGION)
-        .header("ms-teams-ring", TEAMS_RING)
+        .teams_headers(params.region)
         .header("x-ms-migration", "True")
         .json(&payload)
         .send()
@@ -348,7 +346,6 @@ pub async fn start_call_recording(
     recorder_token: &str,
     skype_token: &str,
     add_participant_url_override: Option<&str>,
-    region: &str,
 ) -> Result<RecordingSession> {
     // Use the exact addParticipant URL from the epconv response if available,
     // otherwise derive it from conversationController as a fallback.
@@ -370,6 +367,7 @@ pub async fn start_call_recording(
     let placeholder_conv_id =
         extract_conversation_id(conversation_controller).unwrap_or_else(|| "unknown".to_string());
 
+    let region = TeamsRegion::from_env_or_default();
     let params = RecordingParams {
         caller_mri,
         participant_id,
@@ -384,7 +382,7 @@ pub async fn start_call_recording(
         skype_token,
         conversation_id: &placeholder_conv_id,
         add_participant_url: &add_url,
-        region,
+        region: &region,
     };
 
     tracing::info!("Starting recording flow (add URL: {})", add_url);
@@ -398,7 +396,7 @@ pub async fn start_call_recording(
     // is the recorder bot with a conversationController URL pointing at the recorder service.
     let recorder_info = serde_json::from_str::<serde_json::Value>(&add_response)
         .ok()
-        .and_then(|v| extract_recorder_from_payload(&v, params.region));
+        .and_then(|v| extract_recorder_from_payload(&v, &params.region.region));
 
     // Fallback: try Trouter callback if the HTTP response didn't contain recorder info
     let recorder_info = match recorder_info {
@@ -418,13 +416,14 @@ pub async fn start_call_recording(
                 message_id,
                 caller_oid: "", // not needed for acknowledgement
                 tenant_id: "",  // not needed for acknowledgement
+                region: &region,
             };
             wait_for_recorder_info(
                 ws,
                 Duration::from_secs(30),
                 http,
                 &conv_params,
-                params.region,
+                &params.region.region,
             )
             .await
         }
@@ -859,6 +858,17 @@ mod tests {
 
         let url2 = "https://amer03-1.conv.skype.com/conv/abc123/something";
         assert_eq!(extract_conversation_id(url2), Some("abc123".to_string()));
+    }
+
+    #[test]
+    fn test_default_teams_region_matches_recorder_default() {
+        // Ties the two merged behaviors: the TeamsRegion default slug feeds
+        // the recorder-base fallback, which resolves it to the USEA base.
+        assert_eq!(TeamsRegion::default().region, DEFAULT_RECORDER_REGION);
+        assert_eq!(
+            recorder_service_base_for_region(&TeamsRegion::default().region),
+            RECORDER_SERVICE_BASE
+        );
     }
 
     #[test]
