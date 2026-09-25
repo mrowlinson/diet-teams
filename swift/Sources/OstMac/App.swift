@@ -215,6 +215,9 @@ struct OstMacAppMain: App {
         WindowGroup(Text("Chat"), id: AppIdentity.chatPopoutID, for: String.self) { value in
             if let chatID = value.wrappedValue {
                 PopOutRootView(state: state, chatID: chatID)
+            } else {
+                // Stale restored window (value lost): close itself.
+                PopOutEmptyView()
             }
         }
         .defaultSize(width: 560, height: 640)
@@ -1923,6 +1926,18 @@ struct PopOutRootView: View {
     }
 }
 
+/// Stale restored pop-out (its value decoded nil): closes itself so no
+/// empty "Chat" window lingers.
+private struct PopOutEmptyView: View {
+    @Environment(\.dismissWindow) private var dismissWindow
+
+    var body: some View {
+        Color.clear
+            .frame(width: 1, height: 1)
+            .task { dismissWindow() }
+    }
+}
+
 /// Per-window title for value-driven pop-outs (the scene title is static,
 /// so each window stamps its own chat name through its own view).
 private struct PopoutTitleProbe: NSViewRepresentable {
@@ -1930,10 +1945,23 @@ private struct PopoutTitleProbe: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView { NSView() }
     func updateNSView(_ view: NSView, context: Context) {
         // SwiftUI stamps the static scene title at creation; the async
-        // hop lands after it so the chat name wins and sticks.
-        let name = name
-        DispatchQueue.main.async {
-            if view.window?.title != name { view.window?.title = name }
+        // hop lands after it so the chat name wins and sticks. The view
+        // is sometimes not yet attached on the first pass — retry until
+        // the window exists (bounded, ~6s).
+        stamp(view, name: name, tries: 0)
+    }
+
+    private func stamp(_ view: NSView, name: String, tries: Int) {
+        let hop: DispatchTimeInterval = tries == 0 ? .nanoseconds(0) : .milliseconds(50)
+        DispatchQueue.main.asyncAfter(deadline: .now() + hop) { [weak view] in
+            guard let view else { return }
+            guard let window = view.window else {
+                if tries < 120 {
+                    self.stamp(view, name: name, tries: tries + 1)
+                }
+                return
+            }
+            if window.title != name { window.title = name }
         }
     }
 }
