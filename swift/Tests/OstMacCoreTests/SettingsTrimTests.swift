@@ -64,7 +64,5 @@ final class SettingsTrimTests: XCTestCase {
     func testBaseURLUsedForDirectProviders() {
         XCTAssertTrue(CatchUp.usesBaseURL(provider: .openAICompatible, apiKey: ""))
         XCTAssertTrue(CatchUp.usesBaseURL(provider: .openAICompatible, apiKey: "k"))
-        XCTAssertTrue(CatchUp.usesBaseURL(provider: .openCode, apiKey: ""))
-        XCTAssertTrue(CatchUp.usesBaseURL(provider: .openCode, apiKey: "k"))
     }
 }

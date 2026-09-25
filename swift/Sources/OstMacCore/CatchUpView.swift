@@ -234,7 +234,9 @@ public struct CatchUpSettingsSection: View {
                     Text(provider.title).tag(provider)
                 }
             }
-            .pickerStyle(.segmented)
+            // Native popup (om-settings-org): the segmented style
+            // overflowed the 460pt form — the first segment clipped.
+            .pickerStyle(.menu)
             .onChange(of: catchUp.config.provider) { _, provider in
                 catchUp.selectProvider(provider)
             }

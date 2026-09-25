@@ -25,6 +25,9 @@
 // --show-about / --show-settings / --show-av open those windows at launch (shot hooks).
 // --show-settings-keywords opens the sanitized fixed Settings view
 // scrolled to the Keyword alerts section (R6 shot hook, offline).
+// --show-settings-calls opens it preselected on Calls (test-call
+// section shot hook, offline). --show-settings-summaries preselects
+// Summaries (provider picker shot hook, offline).
 // --show-catchup-ondevice is --show-catchup with the on-device provider (canned, shot hook).
 // --show-meeting seeds the Meeting window offline + opens it (shot hook).
 // --show-diagnostics opens the Diagnostics window at launch (shot hook).
@@ -222,12 +225,14 @@ struct OstMacAppMain: App {
         }
         .defaultSize(width: 560, height: 640)
         Settings {
-            if CommandLine.arguments.contains("--show-settings-keywords") {
-                // Shot hook (R6): fixed sanitized view (no live account
-                // rows), scrolled to Keyword alerts; rules load from the
-                // seeded rules.json like the live store.
-                SettingsView(account: AccountInfo(
-                    signedIn: false, detail: "Signed out (demo shot)"))
+            if SettingsRouting.useIsolatedDemo(
+                isDemo: state.isDemo, args: CommandLine.arguments)
+            {
+                // Isolated fixed view (om-settings-org): demo launches
+                // and the keywords shot never embed the LIVE auth model
+                // (demo isolation); rules load from the seeded
+                // rules.json like the live store.
+                SettingsView(account: SettingsRouting.isolatedDemoAccount)
             } else {
                 SettingsView(
                     auth: state.auth, catchUp: state.catchUp, notifs: state.notifs,
@@ -2209,7 +2214,9 @@ struct RootView: View {
                 openWindow(id: AppIdentity.meetWindowID)
             }
             if CommandLine.arguments.contains("--show-settings")
-                || CommandLine.arguments.contains("--show-settings-keywords") {
+                || CommandLine.arguments.contains("--show-settings-keywords")
+                || CommandLine.arguments.contains("--show-settings-calls")
+                || CommandLine.arguments.contains("--show-settings-summaries") {
                 openSettings()
             }
             if OstMacAppMain.authStateName(args: CommandLine.arguments) != nil {

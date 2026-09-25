@@ -6,8 +6,10 @@
 // Contract:
 //   - OFF by default; nothing leaves the machine until the user enables
 //     it and taps Summarize.
-//   - Provider picker (OpenCode CLI | OpenAI-compatible | OpenCode |
-//     On-device) + configurable base URL + model. OpenCode CLI is
+//   - Provider picker (OpenCode CLI | OpenAI-compatible | On-device)
+//     + configurable base URL + model (om-settings-org retired the
+//     Zen-HTTPS "OpenCode" row; the CLI covers that account via
+//     `opencode auth login`). OpenCode CLI is
 //     the default and is CLI-ONLY: it always shells out to `opencode
 //     run` (CLI auth covers the free-tier Spark model) and never
 //     attempts HTTPS, even when a key is configured. Direct
@@ -42,11 +44,10 @@
 //     exact name match) > Zen "muse-spark-1.3" (paid $1.25/$4.25) >
 //     OpenRouter "meta/muse-spark-1.3:free" (wrong provider for the
 //     Zen base URL) > "muse-spark-1.2-contributor-free" (free, older).
-//     Preloaded id: muse-spark-1.3-contributor-free (bare, Zen HTTPS).
-//     The CLI provider instead preloads the PROVIDER-QUALIFIED id
-//     "opencode/muse-spark-1.3-contributor-free": `opencode run`
-//     rejects the bare id (exit 1 + {"type":"error",...} on stdout,
-//     probed 2026-09-24) and only the qualified id succeeds.
+//     Preloaded CLI id: "opencode/muse-spark-1.3-contributor-free"
+//     (PROVIDER-QUALIFIED): `opencode run` rejects the bare id
+//     (exit 1 + {"type":"error",...} on stdout, probed 2026-09-24)
+//     and only the qualified id succeeds.
 import Foundation
 import Security
 
@@ -154,7 +155,6 @@ public enum CatchUp {
 /// + model (see `CatchUpStore.selectProvider`).
 public enum CatchUpProvider: String, Sendable, Equatable, CaseIterable, Identifiable {
     case openAICompatible = "openai-compatible"
-    case openCode = "opencode"
     case openCodeCLI = "opencode-cli"
     case onDevice = "on-device"
 
@@ -163,7 +163,6 @@ public enum CatchUpProvider: String, Sendable, Equatable, CaseIterable, Identifi
     public var title: String {
         switch self {
         case .openAICompatible: "OpenAI-compatible"
-        case .openCode: "OpenCode"
         case .openCodeCLI: "OpenCode CLI"
         case .onDevice: "On-device (Apple Intelligence)"
         }
@@ -172,7 +171,6 @@ public enum CatchUpProvider: String, Sendable, Equatable, CaseIterable, Identifi
     public var defaultBaseURL: String {
         switch self {
         case .openAICompatible: "https://api.openai.com/v1"
-        case .openCode: "https://opencode.ai/zen/v1"
         case .openCodeCLI: "https://opencode.ai/zen/v1"
         // No endpoint (unused; the row hides via usesBaseURL).
         case .onDevice: ""
@@ -182,14 +180,22 @@ public enum CatchUpProvider: String, Sendable, Equatable, CaseIterable, Identifi
     public var defaultModel: String {
         switch self {
         case .openAICompatible: "gpt-4o-mini"
-        case .openCode: "muse-spark-1.3-contributor-free"
-        // Qualified: `opencode run` rejects the bare id (exit 1 +
-        // {"type":"error",...} on stdout); the Zen HTTPS path keeps
-        // the bare id (see header).
+        // Qualified: `opencode run` rejects the bare Zen id (exit 1 +
+        // {"type":"error",...} on stdout); only the qualified id
+        // succeeds (see header).
         case .openCodeCLI: "opencode/muse-spark-1.3-contributor-free"
         // System model (fixed; the row hides via usesModel).
         case .onDevice: ""
         }
+    }
+
+    /// Stored-value migration (om-settings-org): the retired
+    /// Zen-HTTPS "opencode" row maps onto the CLI provider (same
+    /// account via `opencode auth login`); unknown values stay nil
+    /// (the store keeps its default).
+    public static func stored(rawValue: String) -> CatchUpProvider? {
+        CatchUpProvider(rawValue: rawValue)
+            ?? (rawValue == "opencode" ? .openCodeCLI : nil)
     }
 }
 
@@ -811,7 +817,7 @@ public final class CatchUpStore: ObservableObject {
         self.keys = keys
         var cfg = CatchUpConfig()
         if let p = defaults.string(forKey: Keys.provider),
-           let provider = CatchUpProvider(rawValue: p)
+           let provider = CatchUpProvider.stored(rawValue: p)
         {
             cfg.provider = provider
         }
