@@ -38,6 +38,9 @@ public struct SidebarColumn: View {
     private let folderManageOpen: Bool
     /// d1-folders shot hook: rule id with its editor expanded.
     private let initialEditingRuleID: String?
+    /// e1-activity shot hooks: feed / center sheets open at launch.
+    private let activityOpen: Bool
+    private let mentionsCenterOpen: Bool
     private let onOpenChannel: (String, String) -> Void
     @State private var section: SidebarSection
     /// Reduce Motion (om-a1-motion): section flips cut, never crossfade.
@@ -64,6 +67,8 @@ public struct SidebarColumn: View {
         initialFolderID: String? = nil,
         folderManageOpen: Bool = false,
         initialEditingRuleID: String? = nil,
+        activityOpen: Bool = false,
+        mentionsCenterOpen: Bool = false,
         onOpenChannel: @escaping (String, String) -> Void
     ) {
         self.chats = chats
@@ -88,6 +93,8 @@ public struct SidebarColumn: View {
         self.initialFolderID = initialFolderID
         self.folderManageOpen = folderManageOpen
         self.initialEditingRuleID = initialEditingRuleID
+        self.activityOpen = activityOpen
+        self.mentionsCenterOpen = mentionsCenterOpen
         _section = State(initialValue: initialSection)
         self.onOpenChannel = onOpenChannel
     }
@@ -100,7 +107,7 @@ public struct SidebarColumn: View {
             DietSeamH()
             switch section {
             case .chats:
-                ChatListSidebar(model: chats, presence: presence, unread: unread, mentions: mentions, rules: rules, snooze: snooze, activity: activity, notifs: notifs, onJumpActivity: onJumpActivity, initialFilter: initialFilter, initialFolderID: initialFolderID, folderManageOpen: folderManageOpen, initialEditingRuleID: initialEditingRuleID)
+                ChatListSidebar(model: chats, presence: presence, unread: unread, mentions: mentions, rules: rules, snooze: snooze, activity: activity, notifs: notifs, onJumpActivity: onJumpActivity, initialFilter: initialFilter, initialFolderID: initialFolderID, folderManageOpen: folderManageOpen, initialEditingRuleID: initialEditingRuleID, activityOpen: activityOpen, mentionsCenterOpen: mentionsCenterOpen)
                     .transition(.opacity)
             case .teams:
                 TeamsBrowser(

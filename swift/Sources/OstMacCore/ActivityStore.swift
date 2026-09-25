@@ -533,6 +533,39 @@ public final class ActivityStore: ObservableObject {
         save()
     }
 
+    /// Offline demo feed (mention + reply + reaction + threadless
+    /// missed call; demo message ids so row taps land). In-memory
+    /// only — demo never touches the persisted list.
+    public func seedDemo() {
+        let now = UInt64(Date().timeIntervalSince1970)
+        items = [
+            ActivityItem(
+                kind: .mention, chatID: "demo-showcase",
+                messageID: "sc-1", actor: "Megan Harper",
+                chatName: "Showcase",
+                snippet: "Showcase thread is open — kick us off with the hero shot?",
+                at: now - 300),
+            ActivityItem(
+                kind: .reply, chatID: "demo-2",
+                messageID: "ava-1", actor: "Ava Lindqvist",
+                chatName: "Ava Lindqvist",
+                snippet: "Morning! Can you review the empty-states mock?",
+                at: now - 900),
+            ActivityItem(
+                kind: .reaction, chatID: "demo-showcase",
+                messageID: "sc-3", chatName: "Showcase",
+                snippet: Self.reactionSnippet(
+                    reactions: [ReactionCount(emoji: "👍", count: 3)],
+                    total: 3, chatName: "Showcase"),
+                at: now - 1800),
+            ActivityItem(
+                kind: .missedCall, chatID: "",
+                messageID: nil, actor: "Tom Becker",
+                chatName: "Tom Becker", snippet: "Missed call",
+                at: now - 3600, id: "missedCall:-:demo-missed"),
+        ]
+    }
+
     // MARK: - Persistence
 
     private func save() {

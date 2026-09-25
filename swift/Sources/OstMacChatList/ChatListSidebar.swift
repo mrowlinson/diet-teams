@@ -49,7 +49,9 @@ public struct ChatListSidebar: View {
         initialFilter: String = "",
         initialFolderID: String? = nil,
         folderManageOpen: Bool = false,
-        initialEditingRuleID: String? = nil
+        initialEditingRuleID: String? = nil,
+        activityOpen: Bool = false,
+        mentionsCenterOpen: Bool = false
     ) {
         self.model = model
         self.presence = presence
@@ -64,6 +66,8 @@ public struct ChatListSidebar: View {
         _selectedFolderID = State(initialValue: initialFolderID)
         _showFolderManager = State(initialValue: folderManageOpen)
         self.initialEditingRuleID = initialEditingRuleID
+        _showActivity = State(initialValue: activityOpen)
+        _showMentionsCenter = State(initialValue: mentionsCenterOpen)
     }
 
     public var body: some View {

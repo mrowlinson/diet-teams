@@ -579,6 +579,7 @@ final class AppState: ObservableObject {
                 presence.adoptChatPeer(chatID: chatID, response: peer)
             }
             mentions.adopt(DemoData.mentionedChatIDs)
+            activity.seedDemo() // canned feed (in-memory, offline)
             seedHistoryDemo = true // applied after init (two-phase)
         } else {
             chats = ChatListViewModel(blocked: initialBlocked)
@@ -1897,6 +1898,8 @@ struct RootView: View {
                         initialFolderID: state.folderShotSelection,
                         folderManageOpen: CommandLine.arguments.contains("--show-folders-manage"),
                         initialEditingRuleID: state.folderShotEditingRuleID,
+                        activityOpen: CommandLine.arguments.contains("--show-activity"),
+                        mentionsCenterOpen: CommandLine.arguments.contains("--show-mentions"),
                         onOpenChannel: { id, name in state.openChannel(channelID: id, channelName: name) }
                     )
                     .navigationSplitViewColumnWidth(min: 240, ideal: 300, max: 420)
