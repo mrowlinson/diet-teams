@@ -887,3 +887,21 @@ Notes:
   `profile_set`/`profile_active`) consume the `_for` surface.
 - Verification limit stated in the body: no live 2-account sign-in
   (second sign-in is interactive, owner-driven).
+
+## Upstream PRs, wave 9 (2026-09-25 R10 audit; base 0892144; origin/main still 0892144)
+
+No-file wave. `git diff 307d221..db62ed7 -- rust/ost` is empty (wave-8
+ledger commit → main tip); no unmerged `lanes/*` branch carries an
+ost diff vs main. Ledger §§1–52 map 1:1 onto open PRs #5–#50
+(#38 CLOSED same-team duplicate of #39, wave-6 note; all others
+OPEN, verified via `gh pr list` this wave).
+
+Filed: none. Held: none.
+
+Standing out-of-scope (no action):
+- §13 [LOCAL-ONLY, do not upstream] (TUI drop).
+- `SharedFile.attachment_id` (unledgered om-inline-docs eTag mining;
+  wave-6 note; stays out of PRs until ledgered).
+
+Gate: `cargo test` in vendored `rust/ost` green (lib 257/0, bin
+257/0, imgfix probe 1 pass + 2 ignored live, doc 0).
