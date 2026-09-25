@@ -436,10 +436,21 @@ final class AppState: ObservableObject {
             || args.contains("--demo-botposts") || args.contains("--show-pins")
             || args.contains("--demo-showcase")
             || args.contains("--show-folders") || args.contains("--show-folders-manage")
+            || args.contains("--show-saved")
         showNotes = args.contains("--show-notes")
         showJump = args.contains("--show-jump") // shot hook: palette open at launch
-        showSaved = args.contains("--show-saved") // shot hook: saved sheet open at launch
-        savedMessages = SavedMessageStore()
+        let showSavedShot = args.contains("--show-saved") // shot hook: saved sheet open at launch
+        showSaved = showSavedShot
+        if showSavedShot {
+            // Shot hook only: throwaway defaults (never the real saves),
+            // three seeded saves across a 1:1, a group, and a channel.
+            let seeded = SavedMessageStore(
+                defaults: UserDefaults(suiteName: "shot-saved") ?? .standard)
+            seeded.adopt(Self.savedShotSeeds)
+            savedMessages = seeded
+        } else {
+            savedMessages = SavedMessageStore()
+        }
         call = CallStore(demo: isDemo)
         showCatchUp = args.contains("--show-catchup") || args.contains("--show-catchup-ondevice")
         showForward = args.contains("--show-forward")
@@ -500,6 +511,8 @@ final class AppState: ObservableObject {
         } else if args.contains("--show-reply") {
             preselectID = DemoData.repliesID
         } else if args.contains("--show-pins") {
+            preselectID = DemoData.avaID
+        } else if args.contains("--show-saved") {
             preselectID = DemoData.avaID
         } else if args.contains("--demo-showcase") {
             preselectID = DemoData.showcaseID
@@ -1392,6 +1405,31 @@ final class AppState: ObservableObject {
         }
         return out
     }
+
+    /// Seeded saves for the --show-saved shot (offline, throwaway
+    /// defaults): a 1:1, a group, and a channel save, newest-last here
+    /// (adopt sorts newest-first).
+    static let savedShotSeeds: [SavedMessage] = [
+        SavedMessage(
+            chatID: DemoData.avaID, messageID: "ava-1",
+            sender: "Ava Lindqvist",
+            preview: "Morning! Can you review the empty-states mock?",
+            content: "Morning! Can you review the empty-states mock?",
+            timestamp: "2026-09-22T08:41:02Z", savedAt: 1_781_234_500),
+        SavedMessage(
+            chatID: DemoData.standupID, messageID: "standup-2",
+            sender: "Liam Hartley",
+            preview: "Standup moved to ten, heads-up for the team.",
+            content: "Standup moved to ten, heads-up for the team.",
+            timestamp: "2026-09-23T09:02:11Z", savedAt: 1_781_234_560),
+        SavedMessage(
+            chatID: DemoData.longChannelID, teamID: "demo-team",
+            channelID: DemoData.longChannelID, messageID: "chan-7",
+            sender: "Sofia Marchetti",
+            preview: "Release notes draft is ready for review.",
+            content: "Release notes draft is ready for review.",
+            timestamp: "2026-09-24T15:20:44Z", savedAt: 1_781_234_620),
+    ]
 
     /// Canned summary for the --show-catchup shot (offline, no model).
     static let catchUpDemoSummary = """
