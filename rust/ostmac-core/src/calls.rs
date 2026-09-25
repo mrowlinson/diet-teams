@@ -849,6 +849,7 @@ pub fn call_record_inject_json() -> String {
         let rt = rt()?;
         rt.block_on(async {
             let http = http();
+            let region = signaling::TeamsRegion::from_env_or_default();
             let params = recording::RecordingParams {
                 caller_mri: &caller_mri,
                 participant_id: &participant_id,
@@ -863,7 +864,7 @@ pub fn call_record_inject_json() -> String {
                 skype_token: &skype,
                 conversation_id: &conv_id,
                 add_participant_url: &add_url,
-                region: recording::DEFAULT_RECORDER_REGION,
+                region: &region,
             };
             recording::add_recorder_bot(&http, &params)
                 .await
@@ -1205,6 +1206,7 @@ fn place_inner(
             let participant_id = gen_id();
             let chain_id = gen_id();
             let message_id = gen_id();
+            let region = signaling::TeamsRegion::from_env_or_default();
             let params = signaling::ConversationCallParams {
                 ic3_token: &ic3,
                 trouter_surl: &surl,
@@ -1217,6 +1219,7 @@ fn place_inner(
                 message_id: &message_id,
                 caller_oid: &caller_oid,
                 tenant_id: &tenant_id,
+                region: &region,
             };
             let controller = if is_1to1 {
                 let (created, _) =
