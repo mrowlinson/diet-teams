@@ -49,11 +49,8 @@ public struct ConversationView: View {
     @State private var showCatchUp: Bool
     @State private var showActionItems: Bool
     @FocusState private var boxFocused: Bool
-    @State private var gifHovering = false
-    @State private var mentionHovering = false
-    @State private var attachHovering = false
-    @State private var scheduleHovering = false
-    @State private var templateHovering = false
+    // (om-chat-convert): tool buttons are native .borderless (hover +
+    // focus ring from AppKit) — no hand-rolled hover states.
     /// Schedule popover + pending sheet (d2-send). Shot hooks
     /// (--show-schedule / --show-scheduled) open them at launch.
     @State private var showSchedule: Bool
@@ -501,12 +498,12 @@ public struct ConversationView: View {
                         } label: {
                             Image(systemName: "paperclip")
                                 .font(.system(size: DietSize.iconMD))
-                                .composerToolButton(hovering: attachHovering)
+                                .frame(
+                                    minWidth: ComposerMetrics.toolButtonWidth,
+                                    minHeight: ComposerMetrics.toolButtonHeight)
                         }
-                        .buttonStyle(.plain)
-                        .onHover { attachHovering = $0 }
+                        .buttonStyle(.borderless)
                         .accessibilityLabel("Attach a file")
-                        .plainFocusRing()
                         .help("Attach a file (<4 MB)")
                         .disabled(attachments.uploading)
                         Button {
@@ -514,12 +511,12 @@ public struct ConversationView: View {
                         } label: {
                             Image(systemName: "at")
                                 .font(.system(size: DietSize.iconMD))
-                                .composerToolButton(hovering: mentionHovering)
+                                .frame(
+                                    minWidth: ComposerMetrics.toolButtonWidth,
+                                    minHeight: ComposerMetrics.toolButtonHeight)
                         }
-                        .buttonStyle(.plain)
-                        .onHover { mentionHovering = $0 }
+                        .buttonStyle(.borderless)
                         .accessibilityLabel("Mention someone")
-                        .plainFocusRing()
                         .help("Mention someone (@)")
                         .popover(isPresented: $showMentions, arrowEdge: .top) {
                             MentionPickerView(
@@ -536,12 +533,12 @@ public struct ConversationView: View {
                         } label: {
                             Text("GIF")
                                 .font(DietType.caption1).bold()
-                                .composerToolButton(hovering: gifHovering)
+                                .frame(
+                                    minWidth: ComposerMetrics.toolButtonWidth,
+                                    minHeight: ComposerMetrics.toolButtonHeight)
                         }
-                        .buttonStyle(.plain)
-                        .onHover { gifHovering = $0 }
+                        .buttonStyle(.borderless)
                         .accessibilityLabel("Insert a GIF")
-                        .plainFocusRing()
                         .help("Insert a GIF (KLIPY)")
                         .popover(isPresented: $showGIFs, arrowEdge: .top) {
                             KlipyPickerView(apiKey: gifAPIKey) { url in
@@ -560,29 +557,29 @@ public struct ConversationView: View {
                         } label: {
                             Image(systemName: "clock")
                                 .font(.system(size: DietSize.iconMD))
-                                .composerToolButton(hovering: scheduleHovering)
+                                .frame(
+                                    minWidth: ComposerMetrics.toolButtonWidth,
+                                    minHeight: ComposerMetrics.toolButtonHeight)
                         }
-                        .buttonStyle(.plain)
-                        .onHover { scheduleHovering = $0 }
+                        .buttonStyle(.borderless)
                         .accessibilityLabel("Schedule send")
-                        .plainFocusRing()
                         .help("Schedule send (sends while the app is running)")
                         .popover(isPresented: $showSchedule, arrowEdge: .top) {
                             schedulePopover
                         }
-                        // Templates button (e2-canned): same bordered-icon recipe
+                        // Templates button (e2-canned): same borderless-icon recipe
                         // as the tool stack; picking appends to the draft, never sends.
                         Button {
                             showTemplates = true
                         } label: {
                             Image(systemName: "doc.text")
                                 .font(.system(size: DietSize.iconMD))
-                                .composerToolButton(hovering: templateHovering)
+                                .frame(
+                                    minWidth: ComposerMetrics.toolButtonWidth,
+                                    minHeight: ComposerMetrics.toolButtonHeight)
                         }
-                        .buttonStyle(.plain)
-                        .onHover { templateHovering = $0 }
+                        .buttonStyle(.borderless)
                         .accessibilityLabel("Insert a template")
-                        .plainFocusRing()
                         .help("Insert a template (Settings → Templates)")
                         .popover(isPresented: $showTemplates, arrowEdge: .top) {
                             CannedResponsesPickerView(templates: canned.templates) { template in

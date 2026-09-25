@@ -146,7 +146,7 @@ public struct JumpPaletteView: View {
                 TextField(
                     inMessages ? "Search all messages" : "Jump to chat, channel, or team",
                     text: $query)
-                    .textFieldStyle(.plain)
+                    .textFieldStyle(.roundedBorder)
                     .font(DietType.title3)
                     .foregroundStyle(DietColor.textPrimaryColor)
                     .focused($fieldFocused)

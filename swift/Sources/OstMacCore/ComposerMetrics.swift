@@ -28,38 +28,6 @@ public enum ComposerMetrics {
         (inputMinHeight - DietSpace.xs) / 2
 }
 
-/// Uniform bordered-icon chrome for composer tool buttons. Every tool
-/// button (attach, @, GIF, clock, templates) renders exactly the
-/// ComposerMetrics cell, so the GIF text label matches the icon
-/// buttons pixel-for-pixel on frame.
-public struct ComposerToolButtonChrome: ViewModifier {
-    public var hovering: Bool
-
-    public init(hovering: Bool) {
-        self.hovering = hovering
-    }
-
-    public func body(content: Content) -> some View {
-        content
-            .foregroundStyle(DietColor.textSecondaryColor)
-            .frame(
-                minWidth: ComposerMetrics.toolButtonWidth,
-                minHeight: ComposerMetrics.toolButtonHeight
-            )
-            .background(
-                hovering ? DietColor.wellColor : .clear,
-                in: RoundedRectangle(cornerRadius: DietRadius.control)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: DietRadius.control)
-                    .stroke(DietColor.dividerColor, lineWidth: 1)
-            )
-    }
-}
-
-public extension View {
-    /// Apply the uniform composer tool-button cell + hover chrome.
-    func composerToolButton(hovering: Bool) -> some View {
-        modifier(ComposerToolButtonChrome(hovering: hovering))
-    }
-}
+// (om-chat-convert): ComposerToolButtonChrome deleted — tool buttons
+// are native .borderless (hover + ring from AppKit). The metrics
+// above still size the uniform cell via plain .frame at each site.
