@@ -25,6 +25,9 @@
 // --show-about / --show-settings / --show-av open those windows at launch (shot hooks).
 // --show-settings-keywords opens the sanitized fixed Settings view
 // scrolled to the Keyword alerts section (R6 shot hook, offline).
+// --show-settings-attention is the same, scrolled to the Attention
+// surface with seeded windows + schedules (e2-attention shot hook,
+// offline; combine with --show-diagnostics for the rows).
 // --show-catchup-ondevice is --show-catchup with the on-device provider (canned, shot hook).
 // --show-meeting seeds the Meeting window offline + opens it (shot hook).
 // --show-diagnostics opens the Diagnostics window at launch (shot hook).
@@ -228,6 +231,11 @@ struct OstMacAppMain: App {
                 // seeded rules.json like the live store.
                 SettingsView(account: AccountInfo(
                     signedIn: false, detail: "Signed out (demo shot)"))
+            } else if CommandLine.arguments.contains("--show-settings-attention") {
+                // Shot hook (e2-attention): fixed seeded view, scrolled
+                // to the Attention surface (offline, throwaway suite).
+                SettingsView(account: AccountInfo(
+                    signedIn: false, detail: "Signed out (demo shot)"))
             } else {
                 SettingsView(
                     auth: state.auth, catchUp: state.catchUp, notifs: state.notifs,
@@ -315,12 +323,13 @@ final class AppState: ObservableObject {
     let feed = RealtimeFeed()
     let typing = TypingStore()
     let notifs = MessageNotifications()
-    let quietHours = QuietHoursStore()
     /// e2-attention: system Focus sync (quiet source) + presence
     /// schedules (timetable-driven own status). The schedule adopts
     /// set-echoes into `presence` (weak) and pauses on manual picker
-    /// sets via `presence.manualSetHook`.
-    let focusSync = FocusSyncStore()
+    /// sets via `presence.manualSetHook`. Init-assigned (shot hook may
+    /// point them at the throwaway suite).
+    let quietHours: QuietHoursStore
+    let focusSync: FocusSyncStore
     let presenceSchedule: PresenceScheduleStore
     /// d2-send: per-chat snooze expiries + the scheduled-send queue.
     let snooze = SnoozeStore()
@@ -427,9 +436,43 @@ final class AppState: ObservableObject {
     private var ownerMRI: String?
 
     init(args: [String]) {
-        // e2-attention: schedule adopts set-echoes into presence (weak).
-        // First: `let` without a default must land before any self use.
-        presenceSchedule = PresenceScheduleStore(presence: presence)
+        // e2-attention: attention stores (shot hook may point them at
+        // the throwaway suite + seed them; seeded values also feed the
+        // Diagnostics rows). First: `let`s without defaults must land
+        // before any self use.
+        if args.contains("--show-settings-attention") {
+            let suite = UserDefaults(suiteName: "shot-attention") ?? .standard
+            suite.removePersistentDomain(forName: "shot-attention")
+            let quiet = QuietHoursStore(defaults: suite)
+            quiet.windows = [
+                QuietHoursWindow(enabled: true, startMinutes: 22 * 60, endMinutes: 7 * 60),
+                QuietHoursWindow(
+                    enabled: true, startMinutes: 12 * 60, endMinutes: 13 * 60,
+                    days: [2, 3, 4, 5, 6]),
+            ]
+            quietHours = quiet
+            let focus = FocusSyncStore(defaults: suite, reader: { false })
+            focus.syncEnabled = true
+            focusSync = focus
+            let sched = PresenceScheduleStore(defaults: suite, presence: presence)
+            sched.enabled = true
+            sched.entries = [
+                PresenceScheduleEntry(
+                    window: QuietHoursWindow(
+                        enabled: true, startMinutes: 9 * 60, endMinutes: 17 * 60,
+                        days: [2, 3, 4, 5, 6]),
+                    status: .busy),
+                PresenceScheduleEntry(
+                    window: QuietHoursWindow(enabled: true, startMinutes: 22 * 60, endMinutes: 7 * 60),
+                    status: .offline),
+            ]
+            presenceSchedule = sched
+        } else {
+            quietHours = QuietHoursStore()
+            focusSync = FocusSyncStore()
+            // Schedule adopts set-echoes into presence (weak).
+            presenceSchedule = PresenceScheduleStore(presence: presence)
+        }
         isDemo = args.contains("--demo") || args.contains("--demo-rich")
             || args.contains("--demo-reactions") || args.contains("--show-sidebarchurn")
             || args.contains("--demo-botposts") || args.contains("--show-pins")
@@ -2156,7 +2199,8 @@ struct RootView: View {
                 openWindow(id: AppIdentity.meetWindowID)
             }
             if CommandLine.arguments.contains("--show-settings")
-                || CommandLine.arguments.contains("--show-settings-keywords") {
+                || CommandLine.arguments.contains("--show-settings-keywords")
+                || CommandLine.arguments.contains("--show-settings-attention") {
                 openSettings()
             }
             if OstMacAppMain.authStateName(args: CommandLine.arguments) != nil {

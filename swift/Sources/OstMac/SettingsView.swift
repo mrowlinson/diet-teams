@@ -94,9 +94,18 @@ struct SettingsView: View {
         _notifs = ObservedObject(wrappedValue: MessageNotifications())
         _rules = ObservedObject(wrappedValue: RulesStore())
         _chats = ObservedObject(wrappedValue: ChatListViewModel())
-        _quiet = ObservedObject(wrappedValue: QuietHoursStore())
-        _focus = ObservedObject(wrappedValue: FocusSyncStore())
-        _sched = ObservedObject(wrappedValue: PresenceScheduleStore())
+        if Self.isAttentionShot {
+            // e2-attention shot: read the throwaway suite AppState
+            // seeded (never the real defaults), offline reader.
+            let suite = UserDefaults(suiteName: "shot-attention") ?? .standard
+            _quiet = ObservedObject(wrappedValue: QuietHoursStore(defaults: suite))
+            _focus = ObservedObject(wrappedValue: FocusSyncStore(defaults: suite, reader: { false }))
+            _sched = ObservedObject(wrappedValue: PresenceScheduleStore(defaults: suite))
+        } else {
+            _quiet = ObservedObject(wrappedValue: QuietHoursStore())
+            _focus = ObservedObject(wrappedValue: FocusSyncStore())
+            _sched = ObservedObject(wrappedValue: PresenceScheduleStore())
+        }
         _blocked = ObservedObject(wrappedValue: BlockedStore(defaults: nil))
         _accounts = ObservedObject(wrappedValue: AccountStore())
         // Demo slot: taps flip local state only, never touch core.
@@ -277,6 +286,7 @@ struct SettingsView: View {
                             .foregroundStyle(DietColor.textSecondaryColor)
                     }
                     Section("Quiet hours") {
+                    EmptyView().id("shot-attention")
                         ForEach(quiet.windows.indices, id: \.self) { index in
                             QuietWindowFields(
                                 title: "Window \(index + 1)",
@@ -396,7 +406,7 @@ struct SettingsView: View {
             }
             // Live embeds the full AuthView (min 420 tall); fixed stays compact.
             // The keywords shot pins the live height so the section scroll lands visibly.
-            .frame(width: 460, height: (fixedAccount == nil || Self.isKeywordsShot) ? 760 : nil)
+            .frame(width: 460, height: (fixedAccount == nil || Self.isKeywordsShot || Self.isAttentionShot) ? 760 : nil)
             .task {
                 // Fixed (preview/shot) view must not touch the real keychain.
                 // --shot-no-klipy also skips it (a prompting klipy item
@@ -414,6 +424,11 @@ struct SettingsView: View {
                 // Keyword alerts section at the top (no input path).
                 if Self.isKeywordsShot {
                     proxy.scrollTo("shot-keywords", anchor: .top)
+                }
+                // e2-attention: --show-settings-attention lands the
+                // Quiet hours section (Attention surface) at the top.
+                if Self.isAttentionShot {
+                    proxy.scrollTo("shot-attention", anchor: .top)
                 }
             }
         }
@@ -507,6 +522,12 @@ struct SettingsView: View {
     /// Shot hook flag (R6): fixed sanitized view, scrolled to keywords.
     fileprivate static var isKeywordsShot: Bool {
         CommandLine.arguments.contains("--show-settings-keywords")
+    }
+
+    /// Shot hook flag (e2-attention): fixed seeded view, scrolled to
+    /// the Attention surface (Quiet hours + Focus + schedules).
+    fileprivate static var isAttentionShot: Bool {
+        CommandLine.arguments.contains("--show-settings-attention")
     }
 
     private var account: AccountInfo {
