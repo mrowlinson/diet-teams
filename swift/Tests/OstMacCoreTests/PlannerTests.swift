@@ -57,7 +57,7 @@ final class PlannerTests: XCTestCase {
         return try! decodeOrThrow(PlannerTaskResult.self, from: Data(json.utf8))
     }
 
-    nonisolated static func model(
+    static func model(
         teams: TeamsResponse? = nil,
         plans: PlannerPlansResponse? = nil,
         buckets: PlannerBucketsResponse? = nil,

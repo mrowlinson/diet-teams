@@ -2,6 +2,8 @@
 //
 // Separate from RustCore.swift (merge hygiene: this lane's calls live
 // in this file). Uses the shared internal `RustCore.call` decoder.
+import COstMac
+import Foundation
 
 /// Planner core calls. Blocking FFI + network; callers run these off
 /// the main thread (see `PlannerViewModel`).
