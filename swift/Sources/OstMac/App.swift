@@ -23,6 +23,8 @@
 // --say auto-sends once into the open chat. In live mode that is a REAL
 // send via core — never use it on shared chats for testing.
 // --show-about / --show-settings / --show-av open those windows at launch (shot hooks).
+// --show-settings-keywords opens the sanitized fixed Settings view
+// scrolled to the Keyword alerts section (R6 shot hook, offline).
 // --show-catchup-ondevice is --show-catchup with the on-device provider (canned, shot hook).
 // --show-meeting seeds the Meeting window offline + opens it (shot hook).
 // --show-diagnostics opens the Diagnostics window at launch (shot hook).
@@ -205,13 +207,21 @@ struct OstMacAppMain: App {
         }
         .defaultSize(width: 720, height: 480)
         Settings {
-            SettingsView(
-                auth: state.auth, catchUp: state.catchUp, notifs: state.notifs,
-                rules: state.rules, chats: state.chats,
-                quiet: state.quietHours, blocked: state.blocked,
-                accounts: state.accounts,
-                onAccountAdded: { state.completePendingAdd($0) },
-                onRemoveAccount: { state.removeAccount($0) })
+            if CommandLine.arguments.contains("--show-settings-keywords") {
+                // Shot hook (R6): fixed sanitized view (no live account
+                // rows), scrolled to Keyword alerts; rules load from the
+                // seeded rules.json like the live store.
+                SettingsView(account: AccountInfo(
+                    signedIn: false, detail: "Signed out (demo shot)"))
+            } else {
+                SettingsView(
+                    auth: state.auth, catchUp: state.catchUp, notifs: state.notifs,
+                    rules: state.rules, chats: state.chats,
+                    quiet: state.quietHours, blocked: state.blocked,
+                    accounts: state.accounts,
+                    onAccountAdded: { state.completePendingAdd($0) },
+                    onRemoveAccount: { state.removeAccount($0) })
+            }
         }
         .commands { OstMacCommands() }
     }
@@ -1909,7 +1919,8 @@ struct RootView: View {
             if CommandLine.arguments.contains("--show-meetings") {
                 openWindow(id: AppIdentity.meetWindowID)
             }
-            if CommandLine.arguments.contains("--show-settings") {
+            if CommandLine.arguments.contains("--show-settings")
+                || CommandLine.arguments.contains("--show-settings-keywords") {
                 openSettings()
             }
             if OstMacAppMain.authStateName(args: CommandLine.arguments) != nil {

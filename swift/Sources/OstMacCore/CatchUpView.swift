@@ -294,7 +294,13 @@ public struct CatchUpSettingsSection: View {
         .onAppear {
             // Lazy key read lands here for Settings (init never
             // touches the keychain; launch stays prompt-free).
-            catchUp.ensureKeyLoaded()
+            // Shot hooks skip it: a prompting item parks the main
+            // thread on SecurityAgent and freezes shot automation
+            // (--shot-no-klipy precedent).
+            if !CommandLine.arguments.contains("--shot-no-klipy")
+                && !CommandLine.arguments.contains("--show-settings-keywords") {
+                catchUp.ensureKeyLoaded()
+            }
         }
     }
 
