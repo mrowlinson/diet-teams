@@ -10,6 +10,7 @@ mod me;
 pub mod media;
 mod notes;
 mod presence;
+mod schedule;
 mod search;
 mod tabs;
 mod teams;
@@ -26,6 +27,10 @@ pub use files::{FileVersion, SharedFile};
 pub use me::UserInfo;
 pub use notes::{NotePage, NotebookInfo, PageInfo, SectionInfo};
 pub use presence::PresenceInfo;
+pub use schedule::{
+    list_schedule_data, list_shifts_data, list_timeoff_reasons_data, list_timesoffs_data,
+    ScheduleInfo, ShiftInfo, TimeOffInfo, TimeOffReason,
+};
 pub use search::{clamp_size, next_from, parse_search_response, search_body, search_messages_data, SearchHitInfo, SearchPage, SEARCH_MAX_SIZE};
 pub use tabs::TabInfo;
 pub use teams::TeamInfo;
@@ -175,6 +180,11 @@ pub async fn list_files(chat_id: &str, limit: usize) -> Result<()> {
 /// List a channel's pinned tabs (read-only)
 pub async fn list_tabs(channel_id: &str) -> Result<()> {
     tabs::list_tabs(channel_id).await
+}
+
+/// Print one team's schedule week grid (shifts + time-off, read-only)
+pub async fn list_shifts(team_id: &str) -> Result<()> {
+    schedule::list_shifts(team_id).await
 }
 
 /// List upcoming meetings (Graph calendarView, next 7 days)
