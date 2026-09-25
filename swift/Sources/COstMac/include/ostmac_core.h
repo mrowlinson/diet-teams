@@ -171,6 +171,16 @@ char *ostmac_recordings_list(int limit);
 // Returns {ok,query,recordings:[...]} (same row shape). Caller frees.
 char *ostmac_recordings_search(const char *query, int limit);
 
+// Meeting transcripts, newest first (OneDrive + channel Recordings
+// folders, requires sign-in). limit<=0 means 50. Returns
+// {ok,transcripts:[{id,name,size,mime?,web_url?,drive_id?,created?,
+// modified?,source}]}. Caller frees.
+char *ostmac_transcripts_list(int limit);
+
+// One transcripts search window (requires sign-in). limit<=0 means 50.
+// Returns {ok,query,transcripts:[...]} (same row shape). Caller frees.
+char *ostmac_transcripts_search(const char *query, int limit);
+
 // Create a view-only sharing link for one driveItem (Graph createLink).
 // scope NULL/empty = organization (org-only); "anonymous" = anyone link.
 // Returns {ok, link, scope}. Caller frees.

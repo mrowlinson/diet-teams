@@ -38,6 +38,7 @@ pub mod planner;
 pub mod realtime;
 pub mod recordings;
 pub mod schedule;
+pub mod transcripts;
 
 // ---------------------------------------------------------------------------
 // Small helpers
