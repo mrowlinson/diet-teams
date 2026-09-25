@@ -173,11 +173,19 @@ public final class ScheduledSendStore: ObservableObject {
         items.filter { $0.chatID == chatID }.sorted { $0.fireAt < $1.fireAt }
     }
 
-    /// Claim every item due at `now`, oldest fire time first: removes
-    /// them from the queue AND persists BEFORE returning, so each item
-    /// fires at most once no matter how the ticks overlap.
-    public func claimDue(now: Date = Date()) -> [ScheduledItem] {
-        let due = items.filter { $0.fireAt <= now }.sorted { $0.fireAt < $1.fireAt }
+    /// Claim every item due at `now` (and matching `matching`),
+    /// oldest fire time first: removes them from the queue AND persists
+    /// BEFORE returning, so each item fires at most once no matter how
+    /// the ticks overlap. The app's demo mode matches the open chat
+    /// only (non-open demo items wait for their chat to open instead
+    /// of being claimed into the void — there is no server to hold
+    /// them); live mode claims everything (non-open items post via
+    /// core directly).
+    public func claimDue(
+        now: Date = Date(), matching: (ScheduledItem) -> Bool = { _ in true }
+    ) -> [ScheduledItem] {
+        let due = items.filter { $0.fireAt <= now && matching($0) }
+            .sorted { $0.fireAt < $1.fireAt }
         guard !due.isEmpty else { return [] }
         let ids = Set(due.map(\.id))
         items.removeAll { ids.contains($0.id) }

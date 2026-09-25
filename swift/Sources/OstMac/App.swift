@@ -67,6 +67,9 @@
 // (scroll-state shots; consumed by ConversationView).
 // --show-edit / --show-delete open the edit sheet / delete confirm for
 // the first own bubble at launch (om-editdel shot hooks, demo offline).
+// --show-schedule opens the schedule-send popover at launch and
+// --show-scheduled opens the pending queue sheet (d2-send shot hooks,
+// demo offline; seed ~/.config/ostmac/scheduled.json for queue rows).
 // --show-notif-live injects one canned trouter event through the real
 // live path (rules → banner) and logs the decision + delivered
 // readback (om-notif-live proof hook, demo offline; ignored live).
@@ -277,6 +280,9 @@ final class AppState: ObservableObject {
     let typing = TypingStore()
     let notifs = MessageNotifications()
     let quietHours = QuietHoursStore()
+    /// d2-send: per-chat snooze expiries + the scheduled-send queue.
+    let snooze = SnoozeStore()
+    let scheduled = ScheduledSendStore()
     // om-mention-alerts: the Mentions row count owns the Dock tile, so
     // unread counts stay sidebar-only here (per-chat badges + Diagnostics).
     let unread = UnreadStore(dock: NullDockBadge())
@@ -693,10 +699,6 @@ final class AppState: ObservableObject {
             notifs.attach()
             await notifs.requestAuthorization()
             feed.start()
-            refreshFeedStatus()
-            stateTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
-                Task { @MainActor [weak self] in self?.tick() }
-            }
         }
         if let say = autoSay {
             if openChatID == nil, isDemo, let first = chats.chats.first {
@@ -709,6 +711,15 @@ final class AppState: ObservableObject {
         }
         if showNotifLive, isDemo {
             Task { await runNotifLiveProof() }
+        }
+        // The 2s tick runs in demo too (d2-send: the scheduled queue and
+        // the snooze sweep are client-side in both modes; the tick
+        // publishes nothing while idle, so demo stays still). Starts
+        // after the open above so launch catch-up delivers into the
+        // open chat (own-bubble) instead of racing it.
+        refreshFeedStatus()
+        stateTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.tick() }
         }
     }
 
@@ -1005,6 +1016,10 @@ final class AppState: ObservableObject {
             // om-receipts: peer positions for Seen state (no list refresh).
             receipts.refresh(threadID: id)
         }
+        // d2-send: opening a chat delivers its past-due queue items into
+        // it (own-bubbles); claim-then-send keeps this idempotent with
+        // the tick.
+        fireScheduled()
     }
 
     /// Team id owning a channel id, or nil for plain chats/unknown ids.
@@ -1168,7 +1183,8 @@ final class AppState: ObservableObject {
             message: msg, chatDisplayName: chatName, ownerMRI: resolvedOwnerMRI,
             rules: cfg, meetingDedup: &meetingDedup, now: Date(),
             dndActive: MentionAlert.isDND(ownAvailability: presence.own?.availability),
-            quietActive: quietHours.isQuietNow)
+            quietActive: quietHours.isQuietNow,
+            snoozedChatIDs: snooze.activeIDs())
     }
 
     /// Mention-alert counters (Diagnostics only): breakthroughs through
@@ -1216,7 +1232,8 @@ final class AppState: ObservableObject {
     /// Notifier (thread-grouped, inline Reply). Respects the Settings
     /// banner toggle (om-settings-trim) so OFF is really off, the per-chat
     /// mute set (defense in depth — the rules engine already skips muted
-    /// chats), and the preview/sound toggles via the one banner home.
+    /// chats), the snooze set (same), and the preview/sound toggles via
+    /// the one banner home.
     /// Quiet hours/DND gate the call (never reach here while quiet).
     /// Breakthrough mentions post elevated (OM_MENTION style + subtitle).
     private func maybeNotify(
@@ -1225,6 +1242,7 @@ final class AppState: ObservableObject {
     ) {
         guard notifs.enabled else { return }
         guard !mutedChatIDs.contains(msg.chatID) else { return }
+        guard !snooze.isSnoozed(chatID: msg.chatID) else { return }
         guard case .notify(let reason) = decision else { return }
         let breakthrough = reason == MentionAlert.breakthroughReason
         var subtitle: String?
@@ -1339,7 +1357,41 @@ final class AppState: ObservableObject {
         if feed.pollCount != feedPolls { feedPolls = feed.pollCount }
         if feed.lastError != feedError { feedError = feed.lastError }
         quietHours.refresh() // om-quiet-hours: sweep expired DND (2s tick)
+        snooze.refresh() // d2-send: sweep expired snoozes (2s tick)
+        fireScheduled() // d2-send: post due queue items (idle = no-op)
         if !isDemo { call.refresh() } // re-read slot (place/accept landed?)
+    }
+
+    /// Post every due scheduled item, oldest first. Claim-then-send lives
+    /// in the store (each item fires at most once); delivery reuses the
+    /// open chat's send path when it matches (optimistic own-bubble) and
+    /// posts directly via core otherwise. Demo mode claims the open
+    /// chat's items only (non-open items wait for their chat — offline,
+    /// never touches core). Neither path touches the chat list
+    /// (zero-refresh).
+    private func fireScheduled(now: Date = Date()) {
+        let open = openChatID
+        let due: [ScheduledItem]
+        if isDemo {
+            due = scheduled.claimDue(now: now) { $0.chatID == open }
+        } else {
+            due = scheduled.claimDue(now: now)
+        }
+        for item in due {
+            deliverScheduled(item)
+        }
+    }
+
+    private func deliverScheduled(_ item: ScheduledItem) {
+        if item.chatID == openChatID {
+            conv.send(text: item.text)
+            return
+        }
+        if isDemo { return }
+        let id = item.chatID, body = item.text
+        Task.detached {
+            try? RustCore.send(chatID: id, text: body)
+        }
     }
 
     /// Seed the Shifts team picker from the loaded teams and open the
@@ -1526,6 +1578,7 @@ struct RootView: View {
                         unread: state.unread,
                         mentions: state.mentions,
                         rules: state.rules,
+                        snooze: state.snooze,
                         openChatID: state.openChatID,
                         initialSection: RootView.initialSection,
                         initialFilter: OstMacAppMain.filterQuery(args: CommandLine.arguments),
@@ -1547,13 +1600,16 @@ struct RootView: View {
                             catchUp: state.catchUp, typing: state.typing,
                             receipts: state.receipts,
                             pins: state.pinnedMessages,
+                            scheduled: state.scheduled,
                             isGroup: state.chats.selectedChat?.is_group ?? true,
                             initialTab: CommandLine.arguments.contains("--show-shared") ? 1
                                 : (state.showNotes ? 2 : 0),
                             catchUpOpen: state.showCatchUp,
                             onForward: { state.beginForward($0) },
                             editOpen: CommandLine.arguments.contains("--show-edit"),
-                            deleteOpen: CommandLine.arguments.contains("--show-delete"))
+                            deleteOpen: CommandLine.arguments.contains("--show-delete"),
+                            scheduleOpen: CommandLine.arguments.contains("--show-schedule"),
+                            scheduledListOpen: CommandLine.arguments.contains("--show-scheduled"))
                     }
                 }
             } else {

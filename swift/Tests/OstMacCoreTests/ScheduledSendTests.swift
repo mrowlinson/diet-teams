@@ -235,6 +235,25 @@ final class ScheduledSendTests: XCTestCase {
         XCTAssertEqual(rec.items.map(\.text), ["first", "second", "third"])
     }
 
+    func testClaimDueMatchingLeavesOthersQueued() async {
+        // Demo mode claims the open chat's items only; the rest wait.
+        let cal = fixedCalendar()
+        let path = tempQueuePath()
+        defer { cleanup(path) }
+        let store = ScheduledSendStore(path: path)
+        let now = dt(24, 8, 0, cal)
+        await MainActor.run {
+            store.enqueue(chatID: "19:open@thread.v2", chatName: "O", text: "mine", fireAt: dt(24, 9, 0, cal), now: now)
+            store.enqueue(chatID: "19:other@thread.v2", chatName: "X", text: "wait", fireAt: dt(24, 9, 0, cal), now: now)
+        }
+        let claimed = await MainActor.run {
+            store.claimDue(now: dt(24, 10, 0, cal)) { $0.chatID == "19:open@thread.v2" }
+        }
+        XCTAssertEqual(claimed.map(\.text), ["mine"])
+        let waiting = await MainActor.run { store.pending(for: "19:other@thread.v2") }
+        XCTAssertEqual(waiting.map(\.text), ["wait"])
+    }
+
     func testClaimDueIsOldestFirst() async {
         let cal = fixedCalendar()
         let path = tempQueuePath()
