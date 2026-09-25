@@ -18,6 +18,8 @@ public struct ChatListSidebar: View {
     @State private var selectedFolderID: String?
     /// Folder manager sheet (folders CRUD + auto-rules editor).
     @State private var showFolderManager = false
+    /// Shot hook: rule id with its editor expanded at launch.
+    private let initialEditingRuleID: String?
     /// Leave/block confirm targets (om-leave-block, native alerts below).
     @State private var pendingLeave: ChatItem?
     @State private var pendingBlock: ChatItem?
@@ -31,7 +33,10 @@ public struct ChatListSidebar: View {
         unread: UnreadStore = UnreadStore(),
         mentions: MentionStore = MentionStore(),
         rules: RulesStore = RulesStore(),
-        initialFilter: String = ""
+        initialFilter: String = "",
+        initialFolderID: String? = nil,
+        folderManageOpen: Bool = false,
+        initialEditingRuleID: String? = nil
     ) {
         self.model = model
         self.presence = presence
@@ -39,6 +44,9 @@ public struct ChatListSidebar: View {
         self.mentions = mentions
         self.rules = rules
         _searchText = State(initialValue: initialFilter)
+        _selectedFolderID = State(initialValue: initialFolderID)
+        _showFolderManager = State(initialValue: folderManageOpen)
+        self.initialEditingRuleID = initialEditingRuleID
     }
 
     public var body: some View {
@@ -293,7 +301,9 @@ public struct ChatListSidebar: View {
             }
         }
         .sheet(isPresented: $showFolderManager) {
-            FolderManagerSheet(folders: model.folders)
+            FolderManagerSheet(
+                folders: model.folders,
+                initialEditingRuleID: initialEditingRuleID)
         }
     }
 
@@ -492,6 +502,11 @@ struct FolderManagerSheet: View {
     @State private var editingRuleID: String?
     @State private var showNewRule = false
 
+    init(folders: FolderStore, initialEditingRuleID: String? = nil) {
+        self.folders = folders
+        _editingRuleID = State(initialValue: initialEditingRuleID)
+    }
+
     var body: some View {
         Form {
             Section("Folders") {
@@ -503,8 +518,12 @@ struct FolderManagerSheet: View {
                     FolderNameRow(folders: folders, folder: folder)
                 }
                 HStack {
-                    TextField("New folder name", text: $newFolderName)
-                        .onSubmit(addFolder)
+                    TextField(
+                        "New folder name", text: $newFolderName,
+                        prompt: Text("New folder name")
+                    )
+                    .labelsHidden()
+                    .onSubmit(addFolder)
                     Button("Add") { addFolder() }
                         .disabled(
                             newFolderName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -575,6 +594,7 @@ private struct FolderNameRow: View {
             Image(systemName: "folder")
                 .foregroundStyle(DietColor.textSecondaryColor)
             TextField("Folder name", text: $draft)
+                .labelsHidden()
                 .onSubmit(commit)
                 .onAppear { draft = folder.name }
                 .onChange(of: folder.name) { draft = $0 }

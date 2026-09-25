@@ -54,6 +54,10 @@
 // --show-sidebarchurn swaps the demo list for the churn dataset
 // (meeting + bot + system rows) and folds a beacon burst after load,
 // so the sidebar shows the stable result (shot hook, offline).
+// --show-folders seeds throwaway Work/Family folders + auto-rules and
+// preselects the Work folder (d1-folders shot hook, offline).
+// --show-folders-manage is --show-folders with the manager sheet open
+// (d1-folders rules-editor shot hook, offline).
 // --show-history preselects the 3-day history thread (with --demo;
 // shot hook, offline). --show-history-error opens it empty with a
 // canned fetch failure + Try Again (shot hook, offline).
@@ -307,6 +311,12 @@ final class AppState: ObservableObject {
     let showPins: Bool
     /// --demo-showcase: showcase thread + two seeded pins (hero shot).
     let showShowcase: Bool
+    /// --show-folders: preselected Work folder id (shot hook; nil for
+    /// every other launch — the sidebar opens on All chats).
+    let folderShotSelection: String?
+    /// --show-folders-manage: first seeded rule id, expanded in the
+    /// manager sheet (shot hook; nil otherwise).
+    let folderShotEditingRuleID: String?
     @Published var openChatID: String?
     @Published var signedIn: Bool?
     @Published var coreVersion = "?"
@@ -350,6 +360,7 @@ final class AppState: ObservableObject {
             || args.contains("--demo-reactions") || args.contains("--show-sidebarchurn")
             || args.contains("--demo-botposts") || args.contains("--show-pins")
             || args.contains("--demo-showcase")
+            || args.contains("--show-folders") || args.contains("--show-folders-manage")
         showNotes = args.contains("--show-notes")
         showJump = args.contains("--show-jump") // shot hook: palette open at launch
         call = CallStore(demo: isDemo)
@@ -434,6 +445,32 @@ final class AppState: ObservableObject {
                 fileSearcher: { query, _ in DemoData.fileSearchResponse(for: query) },
                 peopleSearcher: { query, _ in DemoData.peopleSearchResponse(for: query) })
             : FilePeopleSearchStore()
+        // d1-folders shot hooks: throwaway folders + rules (never the
+        // real ones), preselecting Work unless the manager sheet owns
+        // the shot.
+        let folderStore: FolderStore
+        if args.contains("--show-folders") || args.contains("--show-folders-manage") {
+            let suite = UserDefaults(suiteName: "shot-folders") ?? .standard
+            suite.removePersistentDomain(forName: "shot-folders")
+            let seeded = FolderStore(defaults: suite)
+            let work = seeded.createFolder(name: "Work")
+            let family = seeded.createFolder(name: "Family")
+            if let work {
+                seeded.addRule(FolderRule(folderID: work.id, namePattern: "standup"))
+            }
+            if let family {
+                seeded.addRule(FolderRule(folderID: family.id, kind: .direct))
+                seeded.assign(chatID: DemoData.avaID, folderID: family.id)
+            }
+            folderStore = seeded
+            folderShotSelection = args.contains("--show-folders-manage") ? nil : work?.id
+            folderShotEditingRuleID = args.contains("--show-folders-manage")
+                ? seeded.rules.first?.id : nil
+        } else {
+            folderStore = FolderStore()
+            folderShotSelection = nil
+            folderShotEditingRuleID = nil
+        }
         if isDemo {
             // Shot hook: the churn dataset swaps the whole list (the
             // standard demo rows + count assertions stay untouched).
@@ -442,7 +479,8 @@ final class AppState: ObservableObject {
             chats = ChatListViewModel(
                 fetcher: { _ in seed },
                 leaver: { LeaveResponse(ok: true, chat_id: $0) },
-                blocked: blocked)
+                blocked: blocked,
+                folders: folderStore)
             teams = TeamsViewModel(
                 fetcher: { DemoData.teamsResponse() },
                 creator: { _, name, _ in
@@ -1459,6 +1497,9 @@ struct RootView: View {
                         initialFilter: OstMacAppMain.filterQuery(args: CommandLine.arguments),
                         channelCreateOpen: CommandLine.arguments.contains("--show-channel-create"),
                         teamCreateOpen: CommandLine.arguments.contains("--show-team-create"),
+                        initialFolderID: state.folderShotSelection,
+                        folderManageOpen: CommandLine.arguments.contains("--show-folders-manage"),
+                        initialEditingRuleID: state.folderShotEditingRuleID,
                         onOpenChannel: { id, name in state.openChannel(channelID: id, channelName: name) }
                     )
                     .navigationSplitViewColumnWidth(min: 240, ideal: 300, max: 420)

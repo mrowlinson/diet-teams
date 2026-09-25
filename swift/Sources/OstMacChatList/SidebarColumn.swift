@@ -27,6 +27,12 @@ public struct SidebarColumn: View {
     private let initialFilter: String
     private let channelCreateOpen: Bool
     private let teamCreateOpen: Bool
+    /// d1-folders shot hook: preselected folder (nil = All chats).
+    private let initialFolderID: String?
+    /// d1-folders shot hook: manager sheet open at launch.
+    private let folderManageOpen: Bool
+    /// d1-folders shot hook: rule id with its editor expanded.
+    private let initialEditingRuleID: String?
     private let onOpenChannel: (String, String) -> Void
     @State private var section: SidebarSection
     /// Reduce Motion (om-a1-motion): section flips cut, never crossfade.
@@ -45,6 +51,9 @@ public struct SidebarColumn: View {
         initialFilter: String = "",
         channelCreateOpen: Bool = false,
         teamCreateOpen: Bool = false,
+        initialFolderID: String? = nil,
+        folderManageOpen: Bool = false,
+        initialEditingRuleID: String? = nil,
         onOpenChannel: @escaping (String, String) -> Void
     ) {
         self.chats = chats
@@ -61,6 +70,9 @@ public struct SidebarColumn: View {
         self.initialFilter = initialFilter
         self.channelCreateOpen = channelCreateOpen
         self.teamCreateOpen = teamCreateOpen
+        self.initialFolderID = initialFolderID
+        self.folderManageOpen = folderManageOpen
+        self.initialEditingRuleID = initialEditingRuleID
         _section = State(initialValue: initialSection)
         self.onOpenChannel = onOpenChannel
     }
@@ -73,7 +85,7 @@ public struct SidebarColumn: View {
             DietSeamH()
             switch section {
             case .chats:
-                ChatListSidebar(model: chats, presence: presence, unread: unread, mentions: mentions, rules: rules, initialFilter: initialFilter)
+                ChatListSidebar(model: chats, presence: presence, unread: unread, mentions: mentions, rules: rules, initialFilter: initialFilter, initialFolderID: initialFolderID, folderManageOpen: folderManageOpen, initialEditingRuleID: initialEditingRuleID)
                     .transition(.opacity)
             case .teams:
                 TeamsBrowser(
