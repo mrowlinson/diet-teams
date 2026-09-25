@@ -51,6 +51,11 @@
 // --show-recordings-playing also auto-plays the first row (shot hook).
 // --show-transcripts opens the sidebar on the Transcripts browser (shot hook).
 // --show-transcripts-showing also loads the first row's turns (shot hook).
+// --show-transcripts-actions is --show-transcripts-showing plus canned
+// on-device action items extracted over the turns (f1-actions shot hook).
+// --show-action-items stretches the demo thread past 20 messages and
+// auto-opens the action-items popover with canned bullets (f1-actions
+// shot hook, offline).
 // --show-notes opens the conversation on the Notes tab (shot hook).
 // --show-jump opens the Cmd+K jump palette at launch (shot hook).
 // --show-forward opens the forward sheet (jump palette re-targeted at a
@@ -388,6 +393,11 @@ final class AppState: ObservableObject {
     let catchUp: CatchUpStore
     /// --show-catchup: long demo thread + canned summary, sheet auto-opens.
     let showCatchUp: Bool
+    /// On-device action-items extraction (f1-actions): live by
+    /// default, canned under --show-action-items / --show-transcripts-actions.
+    let actionItems: ActionItemsStore
+    /// --show-action-items: long demo thread + canned bullets, popover auto-opens.
+    let showActionItems: Bool
     /// --show-forward: forward sheet opens for a demo bubble at launch.
     let showForward: Bool
     /// Bubble being forwarded (om-msgactions): set sheets the palette.
@@ -526,6 +536,17 @@ final class AppState: ObservableObject {
         }
         call = CallStore(demo: isDemo)
         showCatchUp = args.contains("--show-catchup") || args.contains("--show-catchup-ondevice")
+        showActionItems = args.contains("--show-action-items")
+        if showActionItems || args.contains("--show-transcripts-actions") {
+            // Shot hooks only: canned on-device extraction, no model.
+            let stub = args.contains("--show-transcripts-actions")
+                ? Self.actionItemsTranscriptStub : Self.actionItemsThreadStub
+            actionItems = ActionItemsStore(transport: OnDeviceCatchUpTransport(
+                runner: OnDeviceMockRunner(stub: stub),
+                availability: { .available }))
+        } else {
+            actionItems = ActionItemsStore()
+        }
         showForward = args.contains("--show-forward")
         showReply = args.contains("--show-reply")
         showSidebarChurn = args.contains("--show-sidebarchurn")
@@ -695,7 +716,12 @@ final class AppState: ObservableObject {
                         toFile: dest, atomically: true, encoding: .utf8)
                     return dest
                 },
-                recordingLookup: Self.demoRecordingLookup())
+                recordingLookup: Self.demoRecordingLookup(),
+                actionItemsTransport: args.contains("--show-transcripts-actions")
+                    ? OnDeviceCatchUpTransport(
+                        runner: OnDeviceMockRunner(stub: Self.actionItemsTranscriptStub),
+                        availability: { .available })
+                    : nil)
             // Parse stays real (pure core, no network); the join runner
             // echoes an accepted signaling leg so the lobby flow runs.
             meetings = MeetingsViewModel(
@@ -1033,7 +1059,11 @@ final class AppState: ObservableObject {
             recordings.selectAndPlayFirst()
         }
         await transcripts.load()
-        if CommandLine.arguments.contains("--show-transcripts-showing") {
+        if CommandLine.arguments.contains("--show-transcripts-showing")
+            || CommandLine.arguments.contains("--show-transcripts-actions")
+        {
+            transcripts.autoExtractActionItems =
+                CommandLine.arguments.contains("--show-transcripts-actions")
             transcripts.selectAndShowFirst()
         }
         await meetings.load()
@@ -1451,7 +1481,7 @@ final class AppState: ObservableObject {
             }
             let name = chatName ?? DemoData.name(for: id) ?? "Conversation"
             var msgs = DemoData.messages(for: id)
-            if showCatchUp { msgs = Self.longThread(from: msgs) }
+            if showCatchUp || showActionItems { msgs = Self.longThread(from: msgs) }
             // Shot hook: empty thread + canned fetch failure (offline).
             if showHistoryError {
                 msgs = []
@@ -1552,6 +1582,22 @@ final class AppState: ObservableObject {
             content: "Release notes draft is ready for review.",
             timestamp: "2026-09-24T15:20:44Z", savedAt: 1_781_234_620),
     ]
+
+    /// Canned bullets for the --show-action-items shot (thread
+    /// extraction: owners, no cue timestamps).
+    static let actionItemsThreadStub = """
+    - Own code blocks for the richness pass — Tom Becker
+    - Double-check the edited marker on the demo bubble — Megan Harper
+    - Take screenshots for the review deck — Unassigned
+    """
+
+    /// Canned bullets for the --show-transcripts-actions shot (turns
+    /// extraction: owners + source cue timestamps).
+    static let actionItemsTranscriptStub = """
+    - Ship the chat window picker — Megan Harper [0:43]
+    - Update the empty-states mock — Ava Lindqvist [0:49]
+    - Take screenshots for the review deck — Unassigned [1:02:03]
+    """
 
     /// Canned summary for the --show-catchup shot (offline, no model).
     static let catchUpDemoSummary = """
@@ -2222,6 +2268,7 @@ struct RootView: View {
         if args.contains("--show-recordings-playing") { return .recordings }
         if args.contains("--show-transcripts") { return .transcripts }
         if args.contains("--show-transcripts-showing") { return .transcripts }
+        if args.contains("--show-transcripts-actions") { return .transcripts }
         if args.contains("--show-planner") { return .planner }
         if args.contains("--show-reminders") { return .reminders }
         if args.contains("--show-teams") { return .teams }
@@ -2275,7 +2322,8 @@ struct RootView: View {
                         ConversationView(
                             store: state.conv, presence: state.presence,
                             call: state.call, shared: state.shared, notes: state.notes,
-                            catchUp: state.catchUp, typing: state.typing,
+                            catchUp: state.catchUp, actionItems: state.actionItems,
+                            typing: state.typing,
                             receipts: state.receipts,
                             pins: state.pinnedMessages,
                             saved: state.savedMessages,
@@ -2285,6 +2333,7 @@ struct RootView: View {
                             initialTab: CommandLine.arguments.contains("--show-shared") ? 1
                                 : (state.showNotes ? 2 : 0),
                             catchUpOpen: state.showCatchUp,
+                            actionItemsOpen: state.showActionItems,
                             onForward: { state.beginForward($0) },
                             editOpen: CommandLine.arguments.contains("--show-edit"),
                             deleteOpen: CommandLine.arguments.contains("--show-delete"),
