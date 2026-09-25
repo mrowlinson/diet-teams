@@ -1760,8 +1760,13 @@ final class AppState: ObservableObject {
         quietHours.refresh() // om-quiet-hours: sweep expired DND (2s tick)
         focusSync.refresh() // e2-attention: re-poll Focus (assign-on-change)
         // e2-attention: scheduled presence sets (transitions only;
-        // signed-in live only — demo never touches core).
-        if signedIn == true, !isDemo { presenceSchedule.tick() }
+        // signed-in live only — demo and the offline attention shot
+        // never touch core).
+        if signedIn == true, !isDemo,
+           !CommandLine.arguments.contains("--show-settings-attention")
+        {
+            presenceSchedule.tick()
+        }
         snooze.refresh() // d2-send: sweep expired snoozes (2s tick)
         fireScheduled() // d2-send: post due queue items (idle = no-op)
         if !isDemo { call.refresh() } // re-read slot (place/accept landed?)

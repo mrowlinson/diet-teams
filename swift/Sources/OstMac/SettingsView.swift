@@ -169,124 +169,13 @@ struct SettingsView: View {
                             AuthView(model: auth, embedded: true)
                         }
                     }
-                    Section("Calls") {
-                        let tc = TestCallSettings.describe(
-                            signedIn: account.signedIn,
-                            busy: call.busy,
-                            call: call.call)
-                        HStack {
-                            Button(tc.placeLabel) { call.echoLive() }
-                                .disabled(!tc.placeEnabled)
-                                .help("Place an echo-bot test call with live audio (mic + speaker check)")
-                            if tc.showEnd {
-                                Button("End test call") { call.end() }
-                                    .disabled(!tc.endEnabled)
-                            }
-                        }
-                        LabeledContent("Status", value: tc.status)
-                        if let err = call.error {
-                            Text(err)
-                                .font(DietType.caption1)
-                                .foregroundStyle(Color(nsColor: DietColor.danger))
-                                .textSelection(.enabled)
-                        }
-                        Text("The test call dials the Teams echo bot only — speak and you hear your own audio back. Never dials a person.")
-                            .font(DietType.caption1)
-                            .foregroundStyle(DietColor.textSecondaryColor)
-                    }
-                    Section("Notifications") {
-                        Toggle("Message banners", isOn: $notifs.enabled)
-                            .help("When off, no chat banners are posted")
-                        Toggle("Show message preview", isOn: $notifs.showPreview)
-                            .help("When off, banners show who wrote, never the text")
-                        Toggle("Play banner sound", isOn: $notifs.sound)
-                            .help("When off, banners post silent")
-                        LabeledContent("System permission", value: permissionText)
-                    }
-                    Section("Keyword alerts") {
-                    EmptyView().id("shot-keywords")
-                        keywordGroup(
-                            title: "Always notify",
-                            words: rules.config.allowKeywords,
-                            draft: $allowDraft,
-                            error: allowError,
-                            placeholder: "Add word, e.g. outage",
-                            emptyText: "No always-notify words yet.",
-                            remove: rules.removeAllowKeyword,
-                            add: submitAllow)
-                        keywordGroup(
-                            title: "Never notify",
-                            words: rules.config.blockKeywords,
-                            draft: $blockDraft,
-                            error: blockError,
-                            placeholder: "Add word, e.g. lunch",
-                            emptyText: "No never-notify words yet.",
-                            remove: rules.removeBlockKeyword,
-                            add: submitBlock)
-                        Text("Always words banner even in noisy or mentions-only chats (subtitle “Keyword alert”); never words silence. Case-insensitive whole words; re: prefix is a regex. Never wins over always; muted chats, DND, and quiet hours still hold everything.")
-                            .font(DietType.caption1)
-                            .foregroundStyle(DietColor.textSecondaryColor)
-                    }
-                    Section("Per-chat overrides") {
-                        if chats.chats.isEmpty, rules.config.mutedChatIDs.isEmpty, rules.config.mentionOnlyChatIDs.isEmpty {
-                            Text("No chats loaded yet. Overridden chats appear here once the chat list loads.")
-                                .font(DietType.caption1)
-                                .foregroundStyle(DietColor.textSecondaryColor)
-                        } else {
-                            ForEach(chats.chats) { chat in
-                                Picker(chat.name, selection: levelBinding(chat.id)) {
-                                    ForEach(ChatNotifyLevel.allCases, id: \.self) { level in
-                                        Text(level.displayName).tag(level)
-                                    }
-                                }
-                                .pickerStyle(.menu)
-                                .help(levelHelp(chatID: chat.id))
-                            }
-                            ForEach(orphanedOverrideIDs, id: \.self) { chatID in
-                                HStack {
-                                    Text(chatID)
-                                        .font(DietType.caption1)
-                                        .foregroundStyle(DietColor.textSecondaryColor)
-                                        .textSelection(.enabled)
-                                        .lineLimit(1)
-                                        .truncationMode(.middle)
-                                    Spacer()
-                                    Button("Reset") {
-                                        rules.setLevel(chatID: chatID, level: .all)
-                                    }
-                                }
-                                .help("Overridden, but no longer in the chat list")
-                            }
-                        }
-                        Text("Muted chats never banner and never accrue unread (rules reason “chat-muted”); mentions-only chats banner on mention alone.")
-                            .font(DietType.caption1)
-                            .foregroundStyle(DietColor.textSecondaryColor)
-                    }
-                    Section("Blocked users") {
-                        if blocked.users.isEmpty {
-                            Text("No blocked users. Block someone from a 1:1 chat in the sidebar (right-click).")
-                                .font(DietType.caption1)
-                                .foregroundStyle(DietColor.textSecondaryColor)
-                        } else {
-                            ForEach(blocked.sortedUsers) { user in
-                                HStack {
-                                    Text(user.displayName)
-                                        .lineLimit(1)
-                                        .truncationMode(.middle)
-                                    Spacer()
-                                    Button("Unblock") {
-                                        blocked.unblock(chatID: user.chatID)
-                                    }
-                                }
-                                .help("Unblock \(user.displayName)")
-                            }
-                        }
-                        Text("Blocked users never banner and never accrue unread. Unblocked chats reappear when the list next loads.")
-                            .font(DietType.caption1)
-                            .foregroundStyle(DietColor.textSecondaryColor)
+                    // e2-attention shot: Account + Attention surface only
+                    // (Form owns its scroller — no scroll API lands the
+                    // sections, proven by shot 2026-09-25).
+                    if !Self.isAttentionShot {
+                        preAttentionSections
                     }
                     Section("Quiet hours") {
-                    EmptyView().id("shot-attention")
                         ForEach(quiet.windows.indices, id: \.self) { index in
                             QuietWindowFields(
                                 title: "Window \(index + 1)",
@@ -374,39 +263,16 @@ struct SettingsView: View {
                             .font(DietType.caption1)
                             .foregroundStyle(DietColor.textSecondaryColor)
                     }
-                    Section("GIFs (KLIPY)") {
-                        SecureField("KLIPY API key", text: $klipyAPIKey)
-                            .onChange(of: klipyAPIKey) { _, next in
-                                KlipyClient.saveKey(next)
-                            }
-                        Text("Bring your own free key (klipy.com → Developers; stored in your keychain). Empty = GIF picker stays off; nothing is sent anywhere.")
-                            .font(DietType.caption1)
-                            .foregroundStyle(DietColor.textSecondaryColor)
+                    if !Self.isAttentionShot {
+                        postAttentionSections
                     }
-                    Section("Translation") {
-                        if MessageTranslation.isAvailable {
-                            Picker("Translate to", selection: $translationTarget) {
-                                ForEach(translationOptions, id: \.self) { code in
-                                    Text(MessageTranslation.displayName(for: code)).tag(code)
-                                }
-                            }
-                            Text("Per-bubble Translate renders below the original. On-device only — nothing is sent anywhere; works offline once models download.")
-                                .font(DietType.caption1)
-                                .foregroundStyle(DietColor.textSecondaryColor)
-                        } else {
-                            Text(MessageTranslation.unavailableReason)
-                                .font(DietType.caption1)
-                                .foregroundStyle(DietColor.textSecondaryColor)
-                        }
-                    }
-                    CatchUpSettingsSection(catchUp: catchUp)
                 }
                 .formStyle(.grouped)
                 .padding()
             }
             // Live embeds the full AuthView (min 420 tall); fixed stays compact.
             // The keywords shot pins the live height so the section scroll lands visibly.
-            .frame(width: 460, height: (fixedAccount == nil || Self.isKeywordsShot || Self.isAttentionShot) ? 760 : nil)
+            .frame(width: 460, height: Self.attentionShotHeight(fixedAccount == nil))
             .task {
                 // Fixed (preview/shot) view must not touch the real keychain.
                 // --shot-no-klipy also skips it (a prompting klipy item
@@ -425,13 +291,162 @@ struct SettingsView: View {
                 if Self.isKeywordsShot {
                     proxy.scrollTo("shot-keywords", anchor: .top)
                 }
-                // e2-attention: --show-settings-attention lands the
-                // Quiet hours section (Attention surface) at the top.
-                if Self.isAttentionShot {
-                    proxy.scrollTo("shot-attention", anchor: .top)
-                }
             }
         }
+    }
+
+    /// Sections above the Attention surface (Calls through
+    /// Blocked users). Hidden in the attention shot only.
+    @ViewBuilder
+    private var preAttentionSections: some View {
+                Section("Calls") {
+                    let tc = TestCallSettings.describe(
+                        signedIn: account.signedIn,
+                        busy: call.busy,
+                        call: call.call)
+                    HStack {
+                        Button(tc.placeLabel) { call.echoLive() }
+                            .disabled(!tc.placeEnabled)
+                            .help("Place an echo-bot test call with live audio (mic + speaker check)")
+                        if tc.showEnd {
+                            Button("End test call") { call.end() }
+                                .disabled(!tc.endEnabled)
+                        }
+                    }
+                    LabeledContent("Status", value: tc.status)
+                    if let err = call.error {
+                        Text(err)
+                            .font(DietType.caption1)
+                            .foregroundStyle(Color(nsColor: DietColor.danger))
+                            .textSelection(.enabled)
+                    }
+                    Text("The test call dials the Teams echo bot only — speak and you hear your own audio back. Never dials a person.")
+                        .font(DietType.caption1)
+                        .foregroundStyle(DietColor.textSecondaryColor)
+                }
+                Section("Notifications") {
+                    Toggle("Message banners", isOn: $notifs.enabled)
+                        .help("When off, no chat banners are posted")
+                    Toggle("Show message preview", isOn: $notifs.showPreview)
+                        .help("When off, banners show who wrote, never the text")
+                    Toggle("Play banner sound", isOn: $notifs.sound)
+                        .help("When off, banners post silent")
+                    LabeledContent("System permission", value: permissionText)
+                }
+                Section("Keyword alerts") {
+                EmptyView().id("shot-keywords")
+                    keywordGroup(
+                        title: "Always notify",
+                        words: rules.config.allowKeywords,
+                        draft: $allowDraft,
+                        error: allowError,
+                        placeholder: "Add word, e.g. outage",
+                        emptyText: "No always-notify words yet.",
+                        remove: rules.removeAllowKeyword,
+                        add: submitAllow)
+                    keywordGroup(
+                        title: "Never notify",
+                        words: rules.config.blockKeywords,
+                        draft: $blockDraft,
+                        error: blockError,
+                        placeholder: "Add word, e.g. lunch",
+                        emptyText: "No never-notify words yet.",
+                        remove: rules.removeBlockKeyword,
+                        add: submitBlock)
+                    Text("Always words banner even in noisy or mentions-only chats (subtitle “Keyword alert”); never words silence. Case-insensitive whole words; re: prefix is a regex. Never wins over always; muted chats, DND, and quiet hours still hold everything.")
+                        .font(DietType.caption1)
+                        .foregroundStyle(DietColor.textSecondaryColor)
+                }
+                Section("Per-chat overrides") {
+                    if chats.chats.isEmpty, rules.config.mutedChatIDs.isEmpty, rules.config.mentionOnlyChatIDs.isEmpty {
+                        Text("No chats loaded yet. Overridden chats appear here once the chat list loads.")
+                            .font(DietType.caption1)
+                            .foregroundStyle(DietColor.textSecondaryColor)
+                    } else {
+                        ForEach(chats.chats) { chat in
+                            Picker(chat.name, selection: levelBinding(chat.id)) {
+                                ForEach(ChatNotifyLevel.allCases, id: \.self) { level in
+                                    Text(level.displayName).tag(level)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            .help(levelHelp(chatID: chat.id))
+                        }
+                        ForEach(orphanedOverrideIDs, id: \.self) { chatID in
+                            HStack {
+                                Text(chatID)
+                                    .font(DietType.caption1)
+                                    .foregroundStyle(DietColor.textSecondaryColor)
+                                    .textSelection(.enabled)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                Spacer()
+                                Button("Reset") {
+                                    rules.setLevel(chatID: chatID, level: .all)
+                                }
+                            }
+                            .help("Overridden, but no longer in the chat list")
+                        }
+                    }
+                    Text("Muted chats never banner and never accrue unread (rules reason “chat-muted”); mentions-only chats banner on mention alone.")
+                        .font(DietType.caption1)
+                        .foregroundStyle(DietColor.textSecondaryColor)
+                }
+                Section("Blocked users") {
+                    if blocked.users.isEmpty {
+                        Text("No blocked users. Block someone from a 1:1 chat in the sidebar (right-click).")
+                            .font(DietType.caption1)
+                            .foregroundStyle(DietColor.textSecondaryColor)
+                    } else {
+                        ForEach(blocked.sortedUsers) { user in
+                            HStack {
+                                Text(user.displayName)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                Spacer()
+                                Button("Unblock") {
+                                    blocked.unblock(chatID: user.chatID)
+                                }
+                            }
+                            .help("Unblock \(user.displayName)")
+                        }
+                    }
+                    Text("Blocked users never banner and never accrue unread. Unblocked chats reappear when the list next loads.")
+                        .font(DietType.caption1)
+                        .foregroundStyle(DietColor.textSecondaryColor)
+                }
+    }
+
+    /// Sections below the Attention surface (GIFs through
+    /// catch-up). Hidden in the attention shot only.
+    @ViewBuilder
+    private var postAttentionSections: some View {
+                Section("GIFs (KLIPY)") {
+                    SecureField("KLIPY API key", text: $klipyAPIKey)
+                        .onChange(of: klipyAPIKey) { _, next in
+                            KlipyClient.saveKey(next)
+                        }
+                    Text("Bring your own free key (klipy.com → Developers; stored in your keychain). Empty = GIF picker stays off; nothing is sent anywhere.")
+                        .font(DietType.caption1)
+                        .foregroundStyle(DietColor.textSecondaryColor)
+                }
+                Section("Translation") {
+                    if MessageTranslation.isAvailable {
+                        Picker("Translate to", selection: $translationTarget) {
+                            ForEach(translationOptions, id: \.self) { code in
+                                Text(MessageTranslation.displayName(for: code)).tag(code)
+                            }
+                        }
+                        Text("Per-bubble Translate renders below the original. On-device only — nothing is sent anywhere; works offline once models download.")
+                            .font(DietType.caption1)
+                            .foregroundStyle(DietColor.textSecondaryColor)
+                    } else {
+                        Text(MessageTranslation.unavailableReason)
+                            .font(DietType.caption1)
+                            .foregroundStyle(DietColor.textSecondaryColor)
+                    }
+                }
+                CatchUpSettingsSection(catchUp: catchUp)
     }
 
     /// Translation picker options: curated list, current choice kept
@@ -524,10 +539,18 @@ struct SettingsView: View {
         CommandLine.arguments.contains("--show-settings-keywords")
     }
 
-    /// Shot hook flag (e2-attention): fixed seeded view, scrolled to
-    /// the Attention surface (Quiet hours + Focus + schedules).
+    /// Shot hook flag (e2-attention): fixed seeded view showing the
+    /// Attention surface (Quiet hours + Focus + schedules, tall frame).
     fileprivate static var isAttentionShot: Bool {
         CommandLine.arguments.contains("--show-settings-attention")
+    }
+
+    /// Shot frame heights: attention gets a tall window (the whole
+    /// surface fits — no scroll needed, Form owns its scroller).
+    private static func attentionShotHeight(_ live: Bool) -> CGFloat? {
+        if isAttentionShot { return 1570 }
+        if live || isKeywordsShot { return 760 }
+        return nil
     }
 
     private var account: AccountInfo {
