@@ -613,3 +613,71 @@ Still held from wave 4 — OWNER-BLOCKED 2026-09-24: refresh token dead
 (AADSTS70043 token_expired, max lifetime 86400s; only fix is human
 `teams-cli login`). Post-login harness ready (`tmp/om-live-api-verify.sh`
 + RUNBOOK, PARTIAL-flex-15). Items: ledger 17, 27, 29, 30, 32, 37.
+
+## Upstream PRs, wave 6 (2026-09-25, base 0892144; origin/main still 0892144)
+
+Filed WITHOUT live verification per OWNER OVERRIDE 2026-09-24 (auth
+still dead, no signed-in runs possible). Every PR body states its
+verification status honestly (NOT live-verified + what to confirm on a
+signed-in box). Clears all wave-4 + wave-5 holds; Held list is empty.
+
+Minor (stacked: merge after the noted base; only each PR's top commit
+is new, except the two merge-base PRs noted):
+- (ab) join team (ledger 29, after #23):
+  https://github.com/eisbaw/ost/pull/32
+- (ac) channel create (ledger 30, after #32 — `channel_info` mapper
+  keeps the #23 detail fields):
+  https://github.com/eisbaw/ost/pull/33
+- (ad) team members (ledger 32, after #33; new `graph_delete`;
+  `id_guard` test merged with #33's):
+  https://github.com/eisbaw/ost/pull/34
+- (ae) message reactions (ledger 17, after #19 — needs `chat_delete`;
+  #19 after #6): https://github.com/eisbaw/ost/pull/35
+- (af) leave chat (ledger 27, after #35):
+  https://github.com/eisbaw/ost/pull/36
+- (ag) 1:1 chat create (ledger 45, after #36):
+  https://github.com/eisbaw/ost/pull/37
+- (ah) channel reactions (ledger 42): merge of #34 (teams chain) +
+  #35 (REACTION_EMOJI validation) plus the JE top commit (same
+  merge-base pattern as #16); merge after #34 and #35:
+  https://github.com/eisbaw/ost/pull/39
+  (https://github.com/eisbaw/ost/pull/38 was the same content on the
+  chat chain — same-team duplicate, all 7 JE fns byte-identical,
+  CLOSED in favor of #39 which carries no duplicated `check_id` and
+  shares the teams tests module.)
+- (ai) team create (ledger 43, after #39; new `graph_get_url`):
+  https://github.com/eisbaw/ost/pull/42
+Major (need maintainer buy-in):
+- (aj) [major] resumable uploads (ledger 37, after #28 — extends
+  `api::files`): https://github.com/eisbaw/ost/pull/40
+- (ak) [major] message search (ledger 40, after #23 — standalone
+  module, no teams.rs dependency):
+  https://github.com/eisbaw/ost/pull/41
+- (al) [major] file + people search (ledger 41): merge of #28
+  (files chain, `SharedFile` with `is_folder` + `share_url`) + #34
+  (teams chain, `TeamMemberInfo`) plus the filesearch top commit
+  (new `graph_get_consistent`); merge after #28 and #34:
+  https://github.com/eisbaw/ost/pull/43
+  (`SharedFile` gains no new fields here: the vendored
+  `attachment_id` is unledgered om-inline-docs eTag mining — no
+  ledger entry, no PR — and stays out of scope.)
+
+Held: none.
+
+Notes:
+- Test counts quoted per-PR in the PR bodies (sdp dance throughout:
+  temp fix for local `cargo test`, reverted, tree clean).
+- Cosmetic, pre-existing: several `client.rs` doc lines (added by
+  lanes and carried into PRs, e.g. PATCH/DELETE/GET helpers) read
+  `(Bearer [REDACTED] with Graph token)` where eisbaw's original
+  lines read `(bearer auth with Graph token)`. Doc comments only,
+  no behavior impact; tool-output scrubbing artifact propagated by
+  copy-paste. Deliberately left as-is in this wave for
+  lane-fidelity; a one-pass cleanup can normalize all copies later.
+- Merge guidance: #34's `graph_delete` duplicates #28's helper
+  (identical signature + body; keep one copy at merge — same
+  situation as #28's `graph_patch` vs #12's).
+- #40 follow-up (f1): the `drive_session_put` doc line was restored
+  to the vendored lane's exact bytes after filing (amended +
+  force-pushed; the vendored source is clean on that line). The
+  REDACTED note above still covers the PATCH/DELETE/GET lines.
