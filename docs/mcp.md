@@ -1,7 +1,7 @@
-# ostmac-mcp — Diet Teams over MCP
+# ostmac-mcp — Better Teams over MCP
 
 `ostmac-mcp` is a stdio JSON-RPC (Model Context Protocol) server exposing
-Diet Teams chats to MCP clients such as Claude Desktop. It reuses
+Better Teams chats to MCP clients such as Claude Desktop. It reuses
 `OstMacCore` (same core, same session as the app) and has no GUI.
 
 ## Build
@@ -22,7 +22,7 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json`
 ```json
 {
   "mcpServers": {
-    "diet-teams": {
+    "better-teams": {
       "command": "/path/to/OstMac/swift/.build/release/ostmac-mcp"
     }
   }
@@ -50,7 +50,7 @@ requests get JSON-RPC errors (`-32700`/`-32600`/`-32601`/`-32602`).
 ## Sign-in boundary
 
 Same rule as the app: device-code sign-in needs the owner in a browser.
-Sign in once in the Diet Teams app — the server reuses that on-disk
+Sign in once in the Better Teams app — the server reuses that on-disk
 session (same user, same config dir). Until then every tool reports
 unsigned and the assistant should say so instead of retrying.
 

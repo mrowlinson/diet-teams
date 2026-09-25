@@ -192,7 +192,7 @@ public enum ScreenShareSummary {
 
     /// Denied-permission hint (mirrors AvSummary.micDenied).
     public static let denied =
-        "Screen Recording denied — allow Diet Teams in System Settings › Privacy & Security › Screen Recording"
+        "Screen Recording denied — allow Better Teams in System Settings › Privacy & Security › Screen Recording"
 }
 
 // MARK: - Model + engine
@@ -653,7 +653,7 @@ public struct ScreenShareTile: View {
                     Text("Screen Recording is off — sharing needs it.")
                         .font(DietType.callout).bold()
                         .foregroundStyle(DietColor.textPrimaryColor)
-                    Text("Allow Diet Teams in System Settings › Privacy & Security › Screen Recording.")
+                    Text("Allow Better Teams in System Settings › Privacy & Security › Screen Recording.")
                         .font(DietType.caption1)
                         .foregroundStyle(DietColor.textSecondaryColor)
                     Button("Open Privacy Settings", systemImage: "arrow.up.forward.app") {

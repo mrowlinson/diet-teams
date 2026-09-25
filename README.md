@@ -1,11 +1,11 @@
-# Diet Teams
+# Better Teams
 
 Native macOS client for Microsoft Teams: chat list, conversation, live
 updates, calls. A SwiftUI app over a Rust core (`ostmac-core` FFI staticlib)
 built on vendored [`ost`](https://github.com/eisbaw/ost). Runs fully offline
 in `--demo` with canned data; sign in via device code or browser to go live.
 
-![Diet Teams main window (demo mode)](docs/shots/om-reskin-chrome-demo.png)
+![Better Teams main window (demo mode)](docs/shots/om-reskin-chrome-demo.png)
 ![Teams channel (demo mode)](docs/shots/om-reskin-teams-channel.png)
 <img src="docs/shots/om-reskin-chrome-auth-code.png" alt="Device-code sign-in (demo placeholder)" width="440">
 
@@ -57,10 +57,10 @@ Extras
 ```sh
 ./scripts/test.sh        # rust tests + swift tests (builds rust first)
 ./scripts/build-rust.sh  # vendored ost + ostmac-core staticlib (release)
-./scripts/build-app.sh   # Diet Teams.app in swift/.build/release
-open "swift/.build/release/Diet Teams.app"
-open "swift/.build/release/Diet Teams.app" --args --demo  # offline canned data
-./scripts/package.sh [--install]  # signed release tmp/Diet Teams.app (+ /Applications)
+./scripts/build-app.sh   # Better Teams.app in swift/.build/release
+open "swift/.build/release/Better Teams.app"
+open "swift/.build/release/Better Teams.app" --args --demo  # offline canned data
+./scripts/package.sh [--install]  # signed release tmp/Better Teams.app (+ /Applications)
 ./scripts/make-dmg.sh    # versioned installer in tmp/
 ./scripts/install.sh     # copy the release app to /Applications
 ```

@@ -1,11 +1,11 @@
 #!/bin/sh
-# Assemble Diet Teams.app from the SPM release binary. Rust first.
+# Assemble Better Teams.app from the SPM release binary. Rust first.
 set -eu
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 "$ROOT/scripts/build-rust.sh"
 cd "$ROOT/swift"
 swift build -c release --product OstMac
-APP="$ROOT/swift/.build/release/Diet Teams.app"
+APP="$ROOT/swift/.build/release/Better Teams.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp .build/release/OstMac "$APP/Contents/MacOS/OstMac"

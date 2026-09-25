@@ -53,7 +53,7 @@ final class MCPTests: XCTestCase {
         XCTAssertEqual(r["protocolVersion"] as? String, "2025-03-26")
         XCTAssertEqual(json(resp)["id"] as? String, "init-1")
         let info = r["serverInfo"] as! [String: Any]
-        XCTAssertEqual(info["name"] as? String, "diet-teams")
+        XCTAssertEqual(info["name"] as? String, "better-teams")
         XCTAssertEqual(info["version"] as? String, AppIdentity.version)
         XCTAssertNotNil((r["capabilities"] as! [String: Any])["tools"])
     }

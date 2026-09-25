@@ -122,7 +122,7 @@ public struct InCallView: View {
                         Text("Camera access is off.")
                             .font(DietType.callout).bold()
                             .foregroundStyle(DietColor.textPrimaryColor)
-                        Text("Allow Diet Teams in System Settings › Privacy & Security › Camera.")
+                        Text("Allow Better Teams in System Settings › Privacy & Security › Camera.")
                             .font(DietType.caption1)
                             .foregroundStyle(DietColor.textSecondaryColor)
                         Button("Open Privacy Settings", systemImage: "arrow.up.forward.app") {
