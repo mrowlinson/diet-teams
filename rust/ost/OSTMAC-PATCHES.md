@@ -568,6 +568,59 @@ needing maintainer buy-in. Minor PRs stand alone; majors are separate PRs.
     Time-off "balances" are approved-instance counts per reason
     (Graph has no balances endpoint) — proxy pending owner confirm.
 
+49. [major] `src/api/recordings.rs` (new) + re-exports in `src/api/mod.rs` —
+    **meeting recordings browser, drive-backed (om-recordings lane)**.
+    OneDrive `Recordings` folder + per-channel SharePoint `Recordings`
+    folders: `recordings_children_path`, `recordings_search_path`
+    (drive search), `channel_files_folder_path`, `folder_children_path`,
+    `clamp_limit` (50, `RECORDINGS_MAX_LIMIT`, `MAX_CHANNEL_DRIVES` 50);
+    `RecordingSource` (OneDrive / Channel team+channel + `label`) +
+    `RecordingInfo` (id, name, size, mime, web/download urls,
+    drive_id, created/modified, `duration_ms` from the driveItem
+    `video` facet, source); `is_video` (video/ mime or mp4/mov/m4v
+    ext), `parse_recordings_response` (folders/non-video/id-less
+    skipped), `sort_newest`, `is_not_found` (404→empty);
+    `list_recordings_data` (OneDrive + channel fan-out, only a total
+    failure errors) + `search_recordings_data`. 10 fixture tests. No
+    CLI subcommand (FFI lane). Live status: paths return 200 on the
+    tenant (B2 P2/P3: Recordings children + search 200-empty); E2E
+    synthetic round-trip proven via the transcripts twin (§50, same
+    wire shape: PUT→search→GET→parse→DELETE); zero real .mp4 on the
+    tenant, so no real-data E2E. Consumer: `ostmac-core`
+    `recordings.rs` FFI list/search + Swift RecordingsBrowser/VM
+    (27 tests); merged R2 `48e0ded`.
+
+50. [major] `src/api/transcripts.rs` (new) + re-exports in `src/api/mod.rs` —
+    **meeting transcripts browser, drive-backed (om-transcripts-build
+    lane)**. Mirrors §49 for `.vtt` files: `transcripts_children_path`,
+    `transcripts_search_path`, `channel_files_folder_path`,
+    `folder_children_path`, `clamp_limit` (50), `TranscriptSource`,
+    `TranscriptInfo`, `is_transcript` (`.vtt`-only — a `.docx` twin was
+    REJECTED by live probe: 7 drive `.docx` hits, all unrelated, none
+    in `Recordings`, none transcript-named), `parse_transcripts_response`
+    (folders/non-vtt/id-less skipped), `sort_newest`, `is_not_found`,
+    `list_transcripts_data` + `search_transcripts_data`. 10 fixture
+    tests. No CLI subcommand (FFI lane). Live-verified E2E self-only
+    (TEST-labeled, deleted back): PUT 201 → search FOUND (attempt 2,
+    index lag) → GET 409 bytes identical → shipped Swift parser 4
+    cues → DELETE 204 + re-GET 404, prod footprint zero. Zero real
+    transcripts on the tenant (owner transcribes 1 meeting for
+    real-data E2E — non-blocking). Consumer: `ostmac-core`
+    `transcripts.rs` FFI (3 tests) + Swift browser/parser/VM (33
+    tests); merged `d13a8d5`. No new auth/scopes.
+
+51. [minor] `src/calling/call_test.rs` (+6/-5) — **send audio RTP with
+    the SDP-advertised SSRC (om-testcall lane)**. `spawn_media_leg`
+    minted a random-uuid audio SSRC while the offer declared
+    `x-ssrc-range audio_ssrc`; the echo bot filters undeclared SSRCs
+    → 0 return RTP. `audio_ssrc` is now threaded via
+    `MediaLeg`/`setup_media_leg` (video_ssrc parity); the random SSRC
+    is deleted. Genuine signaling bugfix, not OstMac-specific.
+    Live-verified end to end: random-SSRC call 0 audio return
+    (`echo_detected=false`); declared-SSRC call 1251 sent / 409 rcvd,
+    `echo_detected=true`, delay 965.8ms, corr 0.995. Merged R2
+    `f22161f` (rust 234/0 on the merge tree).
+
 ## Upstream PRs (2026-09-22, base 0892144; main red on sdp E0308 until #5)
 
 Minor (standalone modulo #5-first; merge in any order after):
