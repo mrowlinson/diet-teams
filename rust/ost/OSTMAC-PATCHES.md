@@ -642,6 +642,15 @@ needing maintainer buy-in. Minor PRs stand alone; majors are separate PRs.
     whoami cache, session→profile binding; no ledger item — own crate).
    Upstream: https://github.com/eisbaw/ost/pull/50 (wave 8, after
    #30).
+53. [minor] `src/calling/signaling.rs` — **parameterized region headers
+    (om-region-headers lane)**. New `TeamsRegion { partition, region,
+    ring }` (`Default` = AMER `amer03`/`amer`/`general`) + `TeamsHeaders`
+    `RequestBuilder` extension applying the three `ms-teams-*` headers;
+    all 8 signaling call sites go through it (byte-identical default).
+    Consts kept (`recording.rs` still uses them). 2 tests (amer default
+    vs non-amer override, offline `Request::build` inspection). Next:
+    thread region through `ConversationCallParams`/recording params
+    from config so non-AMER tenants stop using the default.
 
 ## Upstream PRs (2026-09-22, base 0892144; main red on sdp E0308 until #5)
 
