@@ -11,6 +11,7 @@ public struct ChatListSidebar: View {
     @ObservedObject private var unread: UnreadStore
     @ObservedObject private var mentions: MentionStore
     @ObservedObject private var rules: RulesStore
+    @ObservedObject private var snooze: SnoozeStore
     @State private var searchText = ""
     @State private var mentionsOnly = false
     @State private var showHidden = false
@@ -23,6 +24,8 @@ public struct ChatListSidebar: View {
     /// Leave/block confirm targets (om-leave-block, native alerts below).
     @State private var pendingLeave: ChatItem?
     @State private var pendingBlock: ChatItem?
+    /// Snooze picker target (d2-send, native sheet below).
+    @State private var pendingSnooze: ChatItem?
     /// Last leave attempt (error-alert Retry re-runs it).
     @State private var lastLeaveID: String?
     /// Reduce Motion (om-a1-motion): state + row changes land instantly.
@@ -33,6 +36,7 @@ public struct ChatListSidebar: View {
         unread: UnreadStore = UnreadStore(),
         mentions: MentionStore = MentionStore(),
         rules: RulesStore = RulesStore(),
+        snooze: SnoozeStore = SnoozeStore(),
         initialFilter: String = "",
         initialFolderID: String? = nil,
         folderManageOpen: Bool = false,
@@ -43,6 +47,7 @@ public struct ChatListSidebar: View {
         self.unread = unread
         self.mentions = mentions
         self.rules = rules
+        self.snooze = snooze
         _searchText = State(initialValue: initialFilter)
         _selectedFolderID = State(initialValue: initialFolderID)
         _showFolderManager = State(initialValue: folderManageOpen)
@@ -110,6 +115,14 @@ public struct ChatListSidebar: View {
             Button("Cancel", role: .cancel) { dismissLeaveError() }
         } message: {
             Text(model.leaveError ?? "Unknown error")
+        }
+        // Snooze picker (d2-send): one top-level row-menu item arms it
+        // (never a submenu); the sheet holds the native duration picker.
+        .sheet(item: $pendingSnooze) { chat in
+            SnoozePickerSheet(chat: chat) { duration in
+                snooze.snooze(chatID: chat.id, duration: duration)
+                pendingSnooze = nil
+            }
         }
     }
 
@@ -223,7 +236,8 @@ public struct ChatListSidebar: View {
                             chat: chat,
                             isPinned: model.isPinned(chat.id),
                             peerAvailability: chat.is_group ? nil : .some(presence.availabilityForChat(chat.id)),
-                            leaving: model.leavingIDs.contains(chat.id)
+                            leaving: model.leavingIDs.contains(chat.id),
+                            snoozeLabel: snooze.snoozeLabel(for: chat.id)
                         )
                         .tag(chat.id)
                         .unreadBadge(unread.count(for: chat.id))
@@ -265,6 +279,19 @@ public struct ChatListSidebar: View {
                                             Text(level.displayName)
                                         }
                                     }
+                                }
+                            }
+                            // Snooze (d2-send): time-boxed absolute quiet.
+                            // One top-level item (never a submenu): arming
+                            // opens the picker sheet; active snoozes show
+                            // Unsnooze instead.
+                            if snooze.isSnoozed(chatID: chat.id) {
+                                Button("Unsnooze") {
+                                    snooze.unsnooze(chatID: chat.id)
+                                }
+                            } else {
+                                Button("Snooze…") {
+                                    pendingSnooze = chat
                                 }
                             }
                             Button(rules.isHidden(chatID: chat.id) ? "Unhide" : "Hide") {
@@ -429,6 +456,9 @@ struct ChatRow: View {
     var peerAvailability: String?? = nil
     /// Leave call in flight: a spinner replaces the preview time.
     var leaving: Bool = false
+    /// Active snooze label ("Snoozed until X", d2-send): replaces the
+    /// preview line with a bell-slash glyph while set.
+    var snoozeLabel: String? = nil
 
     private var dietPresence: DietPresence? {
         guard let outer = peerAvailability else { return nil }
@@ -453,6 +483,12 @@ struct ChatRow: View {
                             .foregroundStyle(DietColor.textTertiaryColor)
                             .accessibilityLabel("Pinned")
                     }
+                    if snoozeLabel != nil {
+                        Image(systemName: "bell.slash")
+                            .font(.system(size: DietSize.iconSM))
+                            .foregroundStyle(DietColor.textTertiaryColor)
+                            .accessibilityLabel("Snoozed")
+                    }
                     if leaving {
                         ProgressView()
                             .controlSize(.small)
@@ -463,7 +499,7 @@ struct ChatRow: View {
                             .foregroundStyle(DietColor.textSecondaryColor)
                     }
                 }
-                Text(previewText)
+                Text(snoozeLabel ?? previewText)
                     .font(DietType.subheadline)
                     .foregroundStyle(DietColor.textSecondaryColor)
                     .lineLimit(1)
@@ -494,6 +530,45 @@ extension View {
         }
     }
 
+}
+
+/// Snooze duration picker (d2-send). Native Form in a Sheet: one
+/// duration picker (every option expires — snooze is never
+/// indefinite) plus Snooze/Cancel. Snoozing quiets banners + unread
+/// (mentions included); the timeline is untouched.
+struct SnoozePickerSheet: View {
+    let chat: ChatItem
+    /// Fires on Snooze (the host snoozes + dismisses).
+    let onSnooze: (SnoozeDuration) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var duration = SnoozeDuration.oneHour
+
+    var body: some View {
+        Form {
+            Section {
+                Picker("Snooze for", selection: $duration) {
+                    ForEach(SnoozeDuration.allCases, id: \.self) { option in
+                        Text(option.label).tag(option)
+                    }
+                }
+                .pickerStyle(.radioGroup)
+                Text("Banners and unread pause until the snooze ends — mentions included.")
+                    .font(DietType.caption1)
+                    .foregroundStyle(DietColor.textSecondaryColor)
+            } header: {
+                Text("Snooze “\(chat.name)”")
+            }
+            HStack {
+                Spacer()
+                Button("Cancel", role: .cancel) { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Button("Snooze") { onSnooze(duration) }
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .formStyle(.grouped)
+        .frame(minWidth: 320, minHeight: 240)
+    }
 }
 
 // MARK: - d1-folders manager sheet

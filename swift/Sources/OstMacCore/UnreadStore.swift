@@ -162,14 +162,16 @@ public final class UnreadStore: ObservableObject {
         ownerMRI: String?, rules: RulesConfig,
         meetingDedup: inout MeetingStartDedup, now: Date,
         openChatID: String?, teamsMutedChatIDs: Set<String> = [],
-        dndActive: Bool = false, quietActive: Bool = false
+        dndActive: Bool = false, quietActive: Bool = false,
+        snoozedChatIDs: Set<String> = []
     ) -> ChatFilter.Decision {
         let decision = ChatFilter.decide(
             message: message, chatDisplayName: chatDisplayName,
             ownerMRI: ownerMRI, rules: rules,
             meetingDedup: &meetingDedup, now: now,
             teamsMutedChatIDs: teamsMutedChatIDs,
-            dndActive: dndActive, quietActive: quietActive)
+            dndActive: dndActive, quietActive: quietActive,
+            snoozedChatIDs: snoozedChatIDs)
         ingest(decision: decision, chatID: message.chatID, openChatID: openChatID)
         return decision
     }

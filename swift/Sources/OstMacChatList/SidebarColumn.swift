@@ -24,6 +24,7 @@ public struct SidebarColumn: View {
     @ObservedObject private var unread: UnreadStore
     @ObservedObject private var mentions: MentionStore
     @ObservedObject private var rules: RulesStore
+    @ObservedObject private var snooze: SnoozeStore
     private let openChatID: String?
     private let initialFilter: String
     private let channelCreateOpen: Bool
@@ -48,6 +49,7 @@ public struct SidebarColumn: View {
         unread: UnreadStore = UnreadStore(),
         mentions: MentionStore = MentionStore(),
         rules: RulesStore = RulesStore(),
+        snooze: SnoozeStore = SnoozeStore(),
         openChatID: String? = nil,
         initialSection: SidebarSection = .chats,
         initialFilter: String = "",
@@ -69,6 +71,7 @@ public struct SidebarColumn: View {
         self.unread = unread
         self.mentions = mentions
         self.rules = rules
+        self.snooze = snooze
         self.openChatID = openChatID
         self.initialFilter = initialFilter
         self.channelCreateOpen = channelCreateOpen
@@ -88,7 +91,7 @@ public struct SidebarColumn: View {
             DietSeamH()
             switch section {
             case .chats:
-                ChatListSidebar(model: chats, presence: presence, unread: unread, mentions: mentions, rules: rules, initialFilter: initialFilter, initialFolderID: initialFolderID, folderManageOpen: folderManageOpen, initialEditingRuleID: initialEditingRuleID)
+                ChatListSidebar(model: chats, presence: presence, unread: unread, mentions: mentions, rules: rules, snooze: snooze, initialFilter: initialFilter, initialFolderID: initialFolderID, folderManageOpen: folderManageOpen, initialEditingRuleID: initialEditingRuleID)
                     .transition(.opacity)
             case .teams:
                 TeamsBrowser(

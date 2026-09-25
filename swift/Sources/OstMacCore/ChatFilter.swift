@@ -40,6 +40,12 @@ import Foundation
 ///   is absolute: never banners, never unread). A muted skip claims
 ///   no meeting window, so unmuting later still fires
 ///   meeting-starting for that meeting.
+/// - Snoozed chats (d2-send): skip with reason "snoozed", one gate
+///   below the Settings mute (a chat both muted and snoozed reports
+///   "chat-muted"). Same absolute semantics: beats keywords, meeting
+///   signals and mentions — mentions do NOT break through, never
+///   banners, never unread. Claims no meeting window, so expiry (or
+///   unsnooze) restores normal notify with no retroactive burst.
 /// - Breakthrough limits: blocked words, structural bodies, meeting
 ///   signals, unlisted types, and skipped edits never break through
 ///   (the unmuted path would skip them too); own messages never break
@@ -100,6 +106,11 @@ public enum ChatFilter {
     /// sides reports "teams-muted").
     public static let chatMutedReason = "chat-muted"
 
+    /// Skip reason for snoozed chats (d2-send). Same level as the
+    /// Settings mute (checked just after it, so a chat both muted and
+    /// snoozed reports "chat-muted").
+    public static let snoozedReason = "snoozed"
+
     /// Notify reason for the meeting-start gate. The caller posts the
     /// synthesized "Meeting starting: <chat>" body for this reason,
     /// never the triggering message's raw text.
@@ -116,13 +127,15 @@ public enum ChatFilter {
         rules: RulesConfig,
         teamsMutedChatIDs: Set<String> = [],
         dndActive: Bool = false,
-        quietActive: Bool = false
+        quietActive: Bool = false,
+        snoozedChatIDs: Set<String> = []
     ) -> Decision {
         decideCore(
             message: message, chatDisplayName: chatDisplayName,
             ownerMRI: ownerMRI, eff: rules.effective(forChat: chatDisplayName),
             teamsMutedChatIDs: teamsMutedChatIDs,
             dndActive: dndActive, quietActive: quietActive,
+            snoozedChatIDs: snoozedChatIDs,
             claimMeetingStart: { _ in true },
             noteMeetingActivity: { _ in }
         )
@@ -142,13 +155,15 @@ public enum ChatFilter {
         now: Date,
         teamsMutedChatIDs: Set<String> = [],
         dndActive: Bool = false,
-        quietActive: Bool = false
+        quietActive: Bool = false,
+        snoozedChatIDs: Set<String> = []
     ) -> Decision {
         decideCore(
             message: message, chatDisplayName: chatDisplayName,
             ownerMRI: ownerMRI, eff: rules.effective(forChat: chatDisplayName),
             teamsMutedChatIDs: teamsMutedChatIDs,
             dndActive: dndActive, quietActive: quietActive,
+            snoozedChatIDs: snoozedChatIDs,
             claimMeetingStart: { chatID in meetingDedup.shouldNotify(chatID: chatID, date: now) },
             noteMeetingActivity: { chatID in meetingDedup.observe(chatID: chatID, date: now) }
         )
@@ -162,6 +177,7 @@ public enum ChatFilter {
         teamsMutedChatIDs: Set<String>,
         dndActive: Bool,
         quietActive: Bool,
+        snoozedChatIDs: Set<String>,
         claimMeetingStart: (String) -> Bool,
         noteMeetingActivity: (String) -> Void
     ) -> Decision {
@@ -212,6 +228,11 @@ public enum ChatFilter {
         // no meeting window.
         if eff.mutedChatIDs.contains(message.chatID) {
             return .skip(reason: chatMutedReason)
+        }
+        // Snoozed chat (d2-send): same absolute level — beats keywords,
+        // meeting signals and mentions, claims no meeting window.
+        if snoozedChatIDs.contains(message.chatID) {
+            return .skip(reason: snoozedReason)
         }
         // Keyword block beats everything below (keeps its reason even
         // on structural/meeting bodies).

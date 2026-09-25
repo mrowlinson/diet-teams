@@ -25,6 +25,9 @@ public struct ConversationView: View {
     @ObservedObject public var attachments: ComposeAttachmentsStore
     /// Pinned messages per thread (om-pinmessages): passed to the timeline.
     @ObservedObject public var pins: PinnedMessageStore
+    /// Scheduled-send queue (d2-send): the clock button enqueues, the
+    /// strip + sheet list this chat's pending items.
+    @ObservedObject public var scheduled: ScheduledSendStore
     /// False for 1:1 chats (header shows the chatmate dot).
     private let isGroup: Bool
     @State private var draft = ""
@@ -39,6 +42,14 @@ public struct ConversationView: View {
     @State private var gifHovering = false
     @State private var mentionHovering = false
     @State private var attachHovering = false
+    @State private var scheduleHovering = false
+    /// Schedule popover + pending sheet (d2-send). Shot hooks
+    /// (--show-schedule / --show-scheduled) open them at launch.
+    @State private var showSchedule: Bool
+    @State private var showScheduledList: Bool
+    /// Custom fire time (schedule popover) + inline error.
+    @State private var customFireDate = Date().addingTimeInterval(3600)
+    @State private var scheduleError: String?
     /// File-drop hover (om-iu-dropquick): accent outline on sendBox.
     @State private var dropTargeted = false
     /// Forward tap (om-msgactions): the host opens its jump-palette sheet
@@ -61,6 +72,9 @@ public struct ConversationView: View {
     /// - onForward: bubble Forward tap → host sheets the jump palette.
     /// - editOpen/deleteOpen: open the edit sheet / delete confirm for the
     ///   first own bubble at launch (--show-edit / --show-delete shot hooks).
+    /// - scheduleOpen/scheduledListOpen: open the schedule popover /
+    ///   pending sheet at launch (--show-schedule / --show-scheduled
+    ///   shot hooks).
     public init(
         store: ConversationStore, presence: PresenceStore = PresenceStore(),
         call: CallStore = CallStore(), shared: SharedFilesStore = SharedFilesStore(),
@@ -70,9 +84,11 @@ public struct ConversationView: View {
         receipts: ReceiptStore = ReceiptStore(),
         attachments: ComposeAttachmentsStore = ComposeAttachmentsStore(),
         pins: PinnedMessageStore = PinnedMessageStore(),
+        scheduled: ScheduledSendStore = ScheduledSendStore(),
         isGroup: Bool = true, initialTab: Int = 0, catchUpOpen: Bool = false,
         onForward: @escaping (ChatMessage) -> Void = { _ in },
         editOpen: Bool = false, deleteOpen: Bool = false,
+        scheduleOpen: Bool = false, scheduledListOpen: Bool = false,
         onOpenLink: @escaping (URL) -> Void = { LinkPreviewOpen.default($0) }
     ) {
         self.store = store
@@ -86,12 +102,20 @@ public struct ConversationView: View {
         self.receipts = receipts
         self.attachments = attachments
         self.pins = pins
+        self.scheduled = scheduled
         self.isGroup = isGroup
         self.onForward = onForward
         _tab = State(initialValue: initialTab)
         _showCatchUp = State(initialValue: catchUpOpen)
         self.editOpen = editOpen
         self.deleteOpen = deleteOpen
+        _showSchedule = State(initialValue: scheduleOpen)
+        _showScheduledList = State(initialValue: scheduledListOpen)
+        // Shot hook: --show-schedule seeds a draft so the popover shows
+        // its enabled presets (real launches start blank).
+        if scheduleOpen {
+            _draft = State(initialValue: "Standup moved to 10 — heads-up for the team.")
+        }
         self.onOpenLink = onOpenLink
     }
 
@@ -401,6 +425,7 @@ public struct ConversationView: View {
         VStack(spacing: 0) {
             replyChip
             attachmentStrip
+            scheduledStrip
             HStack(spacing: DietSpace.sm) {
                 Button {
                     pickAttachments()
@@ -453,7 +478,7 @@ public struct ConversationView: View {
                     }
                 }
                 Button {
-                    gifAPIKey = KlipyClient.storedKey()
+                    refreshGIFKey()
                     showGIFs = true
                 } label: {
                 Text("GIF")
@@ -479,6 +504,33 @@ public struct ConversationView: View {
                     showGIFs = false
                 }
             }
+            // Schedule-send clock (d2-send, additive): opens the preset +
+            // custom-time popover. Queued sends fire while the app runs.
+            Button {
+                customFireDate = Date().addingTimeInterval(3600)
+                scheduleError = nil
+                showSchedule = true
+            } label: {
+                Image(systemName: "clock")
+                    .font(.system(size: DietSize.iconMD))
+                    .foregroundStyle(DietColor.textSecondaryColor)
+                    .padding(.horizontal, DietSpace.xs)
+                    .padding(.vertical, DietSpace.xxs)
+                    .background(
+                        scheduleHovering ? DietColor.wellColor : .clear,
+                        in: RoundedRectangle(cornerRadius: DietRadius.control))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: DietRadius.control)
+                            .stroke(DietColor.dividerColor, lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+            .onHover { scheduleHovering = $0 }
+            .accessibilityLabel("Schedule send")
+            .plainFocusRing()
+            .help("Schedule send (sends while the app is running)")
+            .popover(isPresented: $showSchedule, arrowEdge: .top) {
+                schedulePopover
+            }
             TextField("Message", text: $draft)
                 .textFieldStyle(.roundedBorder)
                 .font(DietType.body)
@@ -499,8 +551,11 @@ public struct ConversationView: View {
             // Shot hook: --shot-no-klipy skips the keychain read (a
             // prompting klipy item parks the main thread on
             // SecurityAgent mid-render and freezes shot automation).
-            gifAPIKey = CommandLine.arguments.contains("--shot-no-klipy")
-                ? "" : KlipyClient.storedKey()
+            if CommandLine.arguments.contains("--shot-no-klipy") {
+                gifAPIKey = ""
+            } else {
+                refreshGIFKey()
+            }
             // Shot hook: --show-gif opens the picker at launch.
             if CommandLine.arguments.contains("--show-gif") { showGIFs = true }
             // Shot hook (om-a3-keyboard): --show-mention opens the @
@@ -514,6 +569,18 @@ public struct ConversationView: View {
             return true
         }
         .dropHighlight(active: dropTargeted)
+        // Pending queue sheet (d2-send): this chat's queued sends with
+        // Cancel + Edit (edit returns the text to the draft).
+        .sheet(isPresented: $showScheduledList) {
+            ScheduledPendingSheet(
+                scheduled: scheduled,
+                chatID: store.chatID ?? "",
+                chatName: store.headerTitle
+            ) { text in
+                draft = text
+                boxFocused = true
+            }
+        }
     }
 
     private func submit() {
@@ -534,6 +601,120 @@ public struct ConversationView: View {
             }
         } else if !body.isEmpty {
             store.send(text: body)
+        }
+    }
+
+    /// This chat's pending queue (d2-send), oldest first. Empty when no
+    /// chat is open.
+    private var pendingScheduled: [ScheduledItem] {
+        guard let id = store.chatID else { return [] }
+        return scheduled.pending(for: id)
+    }
+
+    /// Enqueue the draft for `fireAt`: clears the draft + closes the
+    /// popover on success, else shows the inline error (blank draft,
+    /// staged attachments — text-only v1 — or a past custom time).
+    private func scheduleDraft(fireAt: Date) {
+        guard let id = store.chatID else {
+            scheduleError = "Open a chat first."
+            return
+        }
+        let body = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !body.isEmpty else {
+            scheduleError = "Write a message first."
+            return
+        }
+        guard !attachments.hasStaged else {
+            scheduleError = "Scheduled sends are text-only — remove attachments first."
+            return
+        }
+        guard scheduled.enqueue(
+            chatID: id, chatName: store.chatName ?? "",
+            text: body, fireAt: fireAt) != nil
+        else {
+            scheduleError = "Pick a future time."
+            return
+        }
+        draft = ""
+        scheduleError = nil
+        showSchedule = false
+    }
+
+    /// Schedule popover: presets + custom date/time, native controls.
+    /// Honest copy (client-side only: the app must be running).
+    private var schedulePopover: some View {
+        let draftBlank = draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return VStack(alignment: .leading, spacing: DietSpace.sm) {
+            Text("Send later")
+                .font(DietType.headline)
+                .foregroundStyle(DietColor.textPrimaryColor)
+            Button("In 1 hour") {
+                scheduleDraft(fireAt: ScheduledPresets.inOneHour())
+            }
+            .disabled(draftBlank)
+            Button("Tonight 8 PM") {
+                scheduleDraft(fireAt: ScheduledPresets.tonight8PM())
+            }
+            .disabled(draftBlank)
+            Button("Tomorrow 9 AM") {
+                scheduleDraft(fireAt: ScheduledPresets.tomorrow9AM())
+            }
+            .disabled(draftBlank)
+            Divider()
+            DatePicker(
+                "Custom time", selection: $customFireDate,
+                in: Date()...,
+                displayedComponents: [.date, .hourAndMinute])
+            .disabled(draftBlank)
+            Button("Schedule for \(ScheduledPresets.fireLabel(for: customFireDate))") {
+                scheduleDraft(fireAt: customFireDate)
+            }
+            .disabled(draftBlank)
+            .buttonStyle(.borderedProminent)
+            if draftBlank {
+                Text("Write a message to schedule it.")
+                    .font(DietType.caption1)
+                    .foregroundStyle(DietColor.textSecondaryColor)
+            }
+            if let scheduleError {
+                Text(scheduleError)
+                    .font(DietType.caption1)
+                    .foregroundStyle(.red)
+            }
+            Text("Sends while the app is running.")
+                .font(DietType.caption1)
+                .foregroundStyle(DietColor.textSecondaryColor)
+        }
+        .padding(DietSpace.md)
+        .frame(minWidth: 280)
+    }
+
+    /// Pending strip (d2-send): one slim row above the send row while
+    /// this chat has queued sends; opens the pending sheet. Hidden at
+    /// zero (no layout shift otherwise).
+    private var scheduledStrip: some View {
+        Group {
+            let pending = pendingScheduled
+            if !pending.isEmpty {
+                HStack(spacing: DietSpace.xs) {
+                    Image(systemName: "clock")
+                        .font(.system(size: DietSize.iconSM))
+                        .foregroundStyle(DietColor.textSecondaryColor)
+                    Button("\(pending.count) scheduled") {
+                        showScheduledList = true
+                    }
+                    .buttonStyle(.link)
+                    .font(DietType.caption1)
+                    .accessibilityLabel("\(pending.count) scheduled sends")
+                    .plainFocusRing()
+                    Spacer(minLength: DietSpace.sm)
+                    Text(ScheduledPresets.fireLabel(for: pending[0].fireAt))
+                        .font(DietType.captionMono)
+                        .foregroundStyle(DietColor.textSecondaryColor)
+                }
+                .padding(.horizontal, DietSpace.md)
+                .padding(.top, DietSpace.sm)
+            }
         }
     }
 
@@ -626,6 +807,17 @@ public struct ConversationView: View {
         panel.allowsMultipleSelection = true
         if panel.runModal() == .OK {
             attachments.stage(urls: panel.urls)
+        }
+    }
+
+    /// Re-read the KLIPY key (d2-send: off the main thread — a
+    /// synchronous keychain read here wedged first render behind an
+    /// unanswerable securityd round-trip; the picker lands a frame
+    /// later when the read is slow).
+    private func refreshGIFKey() {
+        Task {
+            let key = await Task.detached { KlipyClient.storedKey() }.value
+            gifAPIKey = key
         }
     }
 
@@ -1010,6 +1202,72 @@ struct ReactionTapbacks: View {
                 .help(r.count > 1 ? "\(r.count) reactions" : "1 reaction")
             }
         }
+    }
+}
+
+/// Pending scheduled-send sheet (d2-send): this chat's queued texts +
+/// fire times, oldest first. Cancel drops without sending; Edit pulls
+/// the text back into the composer draft. Native List in a Sheet.
+struct ScheduledPendingSheet: View {
+    @ObservedObject var scheduled: ScheduledSendStore
+    let chatID: String
+    let chatName: String
+    /// Fires on Edit with the restored text (the host sets the draft).
+    let onEdit: (String) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Text("Scheduled for \(chatName)")
+                .font(DietType.headline)
+                .foregroundStyle(DietColor.textPrimaryColor)
+                .padding(.top, DietSpace.md)
+            let pending = scheduled.pending(for: chatID)
+            if pending.isEmpty {
+                Text("Nothing scheduled in this chat.")
+                    .font(DietType.callout)
+                    .foregroundStyle(DietColor.textSecondaryColor)
+                    .padding(DietSpace.lg)
+            } else {
+                List(pending) { item in
+                    HStack(alignment: .firstTextBaseline, spacing: DietSpace.sm) {
+                        VStack(alignment: .leading, spacing: DietSpace.xxs) {
+                            Text(item.text)
+                                .font(DietType.body)
+                                .foregroundStyle(DietColor.textPrimaryColor)
+                                .lineLimit(2)
+                            Text(ScheduledPresets.fireLabel(for: item.fireAt))
+                                .font(DietType.captionMono)
+                                .foregroundStyle(DietColor.textSecondaryColor)
+                        }
+                        Spacer(minLength: DietSpace.sm)
+                        Button("Edit") {
+                            if let taken = scheduled.takeForEdit(id: item.id) {
+                                onEdit(taken.text)
+                            }
+                            if scheduled.pending(for: chatID).isEmpty {
+                                dismiss()
+                            }
+                        }
+                        .buttonStyle(.link)
+                        Button("Cancel", role: .destructive) {
+                            scheduled.cancel(id: item.id)
+                            if scheduled.pending(for: chatID).isEmpty {
+                                dismiss()
+                            }
+                        }
+                        .buttonStyle(.link)
+                    }
+                    .padding(.vertical, DietSpace.xxs)
+                }
+                .listStyle(.plain)
+            }
+            Text("Queued sends fire while the app is running.")
+                .font(DietType.caption1)
+                .foregroundStyle(DietColor.textSecondaryColor)
+                .padding(.bottom, DietSpace.md)
+        }
+        .frame(minWidth: 420, minHeight: 280)
     }
 }
 
