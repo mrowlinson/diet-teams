@@ -32,6 +32,25 @@ const RECORDER_EUWE_POD: &str = "p08";
 /// Default region slug for the recorder-base fallback (captured traffic is AMER/USEA).
 pub const DEFAULT_RECORDER_REGION: &str = "amer";
 
+/// Whether opt-in protocol dumps are enabled (`TEAMS_DEBUG_DUMP=1`).
+///
+/// Embedders must not write outside their own scratch, so every `/tmp`
+/// protocol dump in this module goes through [`write_debug_dump`].
+fn debug_dump_enabled() -> bool {
+    std::env::var_os("TEAMS_DEBUG_DUMP").is_some()
+}
+
+/// Write a protocol dump file when `enabled`; no-op otherwise.
+///
+/// Split from [`debug_dump_enabled`] so tests stay hermetic (process env
+/// is global). Returns whether the file was written.
+fn write_debug_dump(enabled: bool, path: &std::path::Path, content: &str) -> bool {
+    if !enabled {
+        return false;
+    }
+    std::fs::write(path, content).is_ok()
+}
+
 /// Recorder service base URL for a region slug (case-insensitive).
 ///
 /// Unknown/empty regions fall back to the captured USEA base.
@@ -208,10 +227,12 @@ pub async fn add_recorder_bot(
     );
     // Dump full response for protocol analysis (opt-in: embedders
     // must not write outside their own scratch; CLI sets TEAMS_DEBUG_DUMP=1).
-    if std::env::var_os("TEAMS_DEBUG_DUMP").is_some() {
-        if let Ok(()) = std::fs::write("/tmp/add_recorder_response.json", &body) {
-            tracing::info!("Full add-recorder response saved to /tmp/add_recorder_response.json");
-        }
+    if write_debug_dump(
+        debug_dump_enabled(),
+        std::path::Path::new("/tmp/add_recorder_response.json"),
+        &body,
+    ) {
+        tracing::info!("Full add-recorder response saved to /tmp/add_recorder_response.json");
     }
     Ok(body)
 }
@@ -626,19 +647,25 @@ async fn wait_for_recorder_info(
                                 || payload_str.contains("addParticipantSuccess")
                             {
                                 tracing::info!("Found recorder-related Trouter frame");
-                                // Save full payload for analysis
-                                std::fs::write("/tmp/recorder_trouter_payload.json", &payload_str).ok();
+                                // Save full payload for analysis (opt-in TEAMS_DEBUG_DUMP).
+                                write_debug_dump(
+                                    debug_dump_enabled(),
+                                    std::path::Path::new("/tmp/recorder_trouter_payload.json"),
+                                    &payload_str,
+                                );
                                 if let Some(result) =
                                     extract_recorder_from_payload(&payload, fallback_region)
                                 {
                                     return Some(result);
                                 }
-                            } else {
-                                // Save every payload for offline analysis
+                            } else if debug_dump_enabled() {
+                                // Save every payload for offline analysis (opt-in TEAMS_DEBUG_DUMP).
                                 static FRAME_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
                                 let n = FRAME_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                                std::fs::write(format!("/tmp/recorder_frame_{}.json", n), &payload_str).ok();
-                                tracing::info!("Parsed frame {} - no recorder match, saved to /tmp/recorder_frame_{}.json", n, n);
+                                let path = format!("/tmp/recorder_frame_{}.json", n);
+                                if write_debug_dump(true, std::path::Path::new(&path), &payload_str) {
+                                    tracing::info!("Parsed frame {} - no recorder match, saved to {}", n, path);
+                                }
                             }
                         }
                     }
@@ -953,5 +980,26 @@ mod tests {
         let (base, _) = extract_recorder_from_payload(&payload, "euwe")
             .expect("primary path must yield base + conv id");
         assert!(base.contains("aks-prod-usea-p08-api.callrecorder.teams.cloud.microsoft:23444"));
+    }
+
+    fn dump_test_path(tag: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("ost-dump-{}-{}.json", tag, std::process::id()))
+    }
+
+    #[test]
+    fn test_write_debug_dump_disabled_writes_nothing() {
+        let path = dump_test_path("off");
+        let _ = std::fs::remove_file(&path);
+        assert!(!write_debug_dump(false, &path, "x"));
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn test_write_debug_dump_enabled_writes_content() {
+        let path = dump_test_path("on");
+        let _ = std::fs::remove_file(&path);
+        assert!(write_debug_dump(true, &path, "payload"));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "payload");
+        std::fs::remove_file(&path).unwrap();
     }
 }

@@ -695,6 +695,17 @@ needing maintainer buy-in. Minor PRs stand alone; majors are separate PRs.
     Upstream: UNFILED (no PR yet; stacks after §53 region-headers
     on `TeamsRegion`).
 
+55. [minor] `src/calling/recording.rs` — **gate recorder frame
+    dumps behind `TEAMS_DEBUG_DUMP` (om-recorder-region lane)**.
+    `wait_for_recorder_info` wrote `/tmp/recorder_trouter_payload.json`
+    + `/tmp/recorder_frame_N.json` unconditionally on every frame;
+    only the add-recorder response dump honored the opt-in gate.
+    New `debug_dump_enabled`/`write_debug_dump` helpers (pure
+    `enabled` param keeps tests hermetic, `with_overrides` pattern);
+    all 3 dump sites go through them. 2 tests (disabled writes
+    nothing, enabled round-trips content).
+    Upstream: UNFILED (stacks with §54).
+
 ## Upstream PRs (2026-09-22, base 0892144; main red on sdp E0308 until #5)
 
 Minor (standalone modulo #5-first; merge in any order after):
