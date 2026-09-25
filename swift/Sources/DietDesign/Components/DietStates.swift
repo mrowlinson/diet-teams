@@ -1,8 +1,8 @@
 // DietStates.swift — empty states + banners + sheet chrome.
 import SwiftUI
 
-/// Empty state: large SF Symbol, title, body, optional action.
-/// Real guidance, never a bare "No items".
+/// Empty state: native ContentUnavailableView (label/description/
+/// actions slots). Real guidance, never a bare "No items".
 public struct DietEmptyState: View {
     private let systemImage: String
     private let title: String
@@ -22,26 +22,16 @@ public struct DietEmptyState: View {
     }
 
     public var body: some View {
-        VStack(spacing: DietSpace.sm) {
-            Image(systemName: systemImage)
-                .font(.system(size: DietSize.stateIcon))
-                .foregroundStyle(DietColor.textTertiaryColor)
-                .padding(.bottom, DietSpace.xs)
-            Text(title)
-                .font(DietType.title3)
-                .foregroundStyle(DietColor.textPrimaryColor)
+        ContentUnavailableView {
+            Label(title, systemImage: systemImage)
+        } description: {
             Text(message)
-                .font(DietType.body)
-                .foregroundStyle(DietColor.textSecondaryColor)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 320)
+        } actions: {
             if let actionLabel, let action {
                 Button(actionLabel, action: action)
                     .buttonStyle(.bordered)
-                    .padding(.top, DietSpace.sm)
             }
         }
-        .padding(DietSpace.xl)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
