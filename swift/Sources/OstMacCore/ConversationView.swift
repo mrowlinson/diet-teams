@@ -496,7 +496,11 @@ public struct ConversationView: View {
         }
         .onAppear {
             boxFocused = true
-            gifAPIKey = KlipyClient.storedKey()
+            // Shot hook: --shot-no-klipy skips the keychain read (a
+            // prompting klipy item parks the main thread on
+            // SecurityAgent mid-render and freezes shot automation).
+            gifAPIKey = CommandLine.arguments.contains("--shot-no-klipy")
+                ? "" : KlipyClient.storedKey()
             // Shot hook: --show-gif opens the picker at launch.
             if CommandLine.arguments.contains("--show-gif") { showGIFs = true }
             // Shot hook (om-a3-keyboard): --show-mention opens the @
