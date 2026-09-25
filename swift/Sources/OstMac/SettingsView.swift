@@ -139,7 +139,7 @@ struct SettingsView: View {
             suite.removePersistentDomain(forName: "shot-chats")
             let seeded = CannedResponsesStore(defaults: suite)
             _ = seeded.add(title: "Standup", body: "Yesterday: <done>. Today: <plan>. Blockers: none.")
-            _ = seeded.add(title: "OOO", body: "Out today, back tomorrow — ping Priya for anything urgent.")
+            _ = seeded.add(title: "OOO", body: "Out today, back tomorrow — ping Megan for anything urgent.")
             _canned = ObservedObject(wrappedValue: seeded)
         } else {
             _canned = ObservedObject(wrappedValue: CannedResponsesStore())
