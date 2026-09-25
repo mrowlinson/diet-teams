@@ -1,4 +1,5 @@
 // TeamsTabsTests.swift — om-h4-tabs lane: wire decode, target mapping, store open.
+import Foundation
 import XCTest
 
 @testable import OstMacCore
@@ -65,6 +66,34 @@ final class TeamsTabsTests: XCTestCase {
         try await waitFor("loaded") { store.state == .loaded }
         XCTAssertEqual(store.tabs.count, 4)
         XCTAssertEqual(store.channelID, "19:abc@thread.tacv2")
+    }
+
+    /// om-nrecon-mopup: tab chips render on the native bezel
+    /// (SwiftUI styles are not runtime-introspectable, so the
+    /// conversion is pinned statically per NativeControlsTests).
+    func testChipUsesNativeBezel() throws {
+        // .../swift/Tests/OstMacCoreTests/TeamsTabsTests.swift.
+        var url = URL(fileURLWithPath: #filePath, isDirectory: false)
+        url.deleteLastPathComponent() // file
+        url.deleteLastPathComponent() // OstMacCoreTests
+        url.deleteLastPathComponent() // Tests
+        url.appendPathComponent("Sources/OstMacCore/TeamsTabsView.swift")
+        let text = try String(contentsOf: url, encoding: .utf8)
+        XCTAssertTrue(
+            text.contains(".buttonStyle(.borderedProminent)"),
+            "highlighted chip must use the native prominent bezel")
+        XCTAssertTrue(
+            text.contains(".buttonStyle(.bordered)"),
+            "chip must use the native bordered bezel")
+        XCTAssertTrue(
+            text.contains(".controlSize(.small)"),
+            "chip must keep small scale on the native bezel")
+        XCTAssertFalse(
+            text.contains(".clipShape(Capsule())"),
+            "custom capsule bezel must be gone")
+        XCTAssertFalse(
+            text.contains(".buttonStyle(.plain)"),
+            "plain custom-drawn chip style must be gone")
     }
 
     func testOpenErrorSurfaces() async throws {
