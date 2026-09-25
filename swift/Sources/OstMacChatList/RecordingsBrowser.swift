@@ -121,26 +121,16 @@ public struct RecordingsBrowser: View {
     private var searchField: some View {
         VStack(spacing: 0) {
             HStack(spacing: DietSpace.xs) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(DietColor.textSecondaryColor)
-                TextField("Search recordings", text: $query, onCommit: {
-                    Task { await model.search(query: query) }
-                })
-                .textFieldStyle(.plain)
-                .font(DietType.body)
+                DietSearchField("Search recordings", text: $query)
+                    .onSubmit { Task { await model.search(query: query) } }
+                    .onChange(of: query) { _, new in
+                        if new.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            model.clearSearch()
+                        }
+                    }
                 if model.isSearching {
                     ProgressView()
                         .controlSize(.small)
-                } else if !query.isEmpty {
-                    Button {
-                        query = ""
-                        model.clearSearch()
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(DietColor.textSecondaryColor)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Clear search")
                 }
             }
             .padding(.horizontal, DietSpace.sm)
