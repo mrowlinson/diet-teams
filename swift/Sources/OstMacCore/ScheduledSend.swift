@@ -129,7 +129,7 @@ public final class ScheduledSendStore: ObservableObject {
     }
 
     nonisolated public static var defaultPath: String {
-        NSString(string: "~/.config/ostmac/scheduled.json").expandingTildeInPath
+        UnixConfig.defaultPath(for: "scheduled.json")
     }
 
     /// Enqueue one text send. Nil (no-op) on blank text, blank chat, or

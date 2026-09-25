@@ -99,7 +99,7 @@
 // the first own bubble at launch (om-editdel shot hooks, demo offline).
 // --show-schedule opens the schedule-send popover at launch and
 // --show-scheduled opens the pending queue sheet (d2-send shot hooks,
-// demo offline; seed ~/.config/ostmac/scheduled.json for queue rows).
+// demo offline; seed ~/.config/Better\ Teams/scheduled.json for queue rows).
 // --show-notif-live injects one canned trouter event through the real
 // live path (rules → banner) and logs the decision + delivered
 // readback (om-notif-live proof hook, demo offline; ignored live).
