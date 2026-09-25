@@ -365,6 +365,10 @@ final class AppState: ObservableObject {
     let calWeek: CalendarWeekStore
     /// Shifts week grid backing the sidebar Shifts tab (B1 merge).
     let shifts: ShiftsStore
+    /// Contacts directory + speed dial (om-f2-contacts): the sidebar
+    /// Contacts section searches through this store. Demo runs the
+    /// offline people index; live hits Graph via core.
+    let contacts: ContactsStore
     let conv = ConversationStore()
     /// Pop-out registry (e1-popout): visible chat ids + per-chat stores +
     /// draft cache, bound to the main store for send mirroring.
@@ -723,6 +727,30 @@ final class AppState: ObservableObject {
                 fileSearcher: { query, _ in DemoData.fileSearchResponse(for: query) },
                 peopleSearcher: { query, _ in DemoData.peopleSearchResponse(for: query) })
             : FilePeopleSearchStore()
+        // Shot hook: --show-contacts adopts the demo directory + one
+        // speed-dial pin into a throwaway suite (never the real pins).
+        if isDemo, args.contains("--show-contacts") {
+            let suite = UserDefaults(suiteName: "shot-contacts") ?? .standard
+            suite.removePersistentDomain(forName: "shot-contacts")
+            let shot = ContactsStore(
+                peopleSearcher: { query, _ in
+                    DemoData.peopleSearchResponse(for: query)
+                },
+                defaults: suite)
+            let demo = DemoData.peopleSearchResponse(for: "").people
+            shot.adopt(demo)
+            if let tom = demo.first(where: { $0.userId == "demo-u-tom" }) {
+                shot.pin(tom)
+            }
+            contacts = shot
+        } else {
+            contacts = isDemo
+                ? ContactsStore(peopleSearcher: { query, _ in
+                    DemoData.peopleSearchResponse(for: query)
+                })
+                : ContactsStore()
+        }
+        contacts.presence = presence
         // d1-folders shot hooks: throwaway folders + rules (never the
         // real ones), preselecting Work unless the manager sheet owns
         // the shot.
@@ -808,6 +836,9 @@ final class AppState: ObservableObject {
             presence.adoptOwn(DemoData.ownPresence())
             for (chatID, peer) in DemoData.peerPresence() {
                 presence.adoptChatPeer(chatID: chatID, response: peer)
+            }
+            for peer in DemoData.contactPresence() {
+                presence.adoptPeer(peer)
             }
             mentions.adopt(DemoData.mentionedChatIDs)
             activity.seedDemo() // canned feed (in-memory, offline)
@@ -2415,6 +2446,7 @@ struct RootView: View {
     /// teams (the sheets hang there).
     static var initialSection: SidebarSection {
         let args = CommandLine.arguments
+        if args.contains("--show-contacts") { return .contacts }
         if args.contains("--show-recordings") { return .recordings }
         if args.contains("--show-recordings-playing") { return .recordings }
         if args.contains("--show-transcripts") { return .transcripts }
@@ -2458,6 +2490,7 @@ struct RootView: View {
                         reminders: state.reminders, planner: state.planner,
                         recordings: state.recordings,
                         transcripts: state.transcripts, shifts: state.shifts,
+                        contacts: state.contacts,
                         presence: state.presence,
                         unread: state.unread,
                         mentions: state.mentions,
@@ -2474,6 +2507,7 @@ struct RootView: View {
                         folderManageOpen: CommandLine.arguments.contains("--show-folders-manage"),
                         initialEditingRuleID: state.folderShotEditingRuleID,
                         onOpenChannel: { id, name in state.openChannel(channelID: id, channelName: name) },
+                        onPickContact: { state.openSearchPerson($0) },
                         onPopOut: { id in
                             if let target = state.popOut(chatID: id) {
                                 openWindow(value: target)

@@ -253,6 +253,22 @@ public enum DemoData {
             ok: true, id: "ava-demo", availability: "Busy", activity: "InACall")]
     }
 
+    /// Canned directory-hit dots for --demo (om-f2-contacts lane): one
+    /// response per `searchPeople` row (ids match `userId`).
+    public static func contactPresence() -> [UserPresenceResponse] {
+        [
+            UserPresenceResponse(
+                ok: true, id: "demo-u-ava", availability: "Available",
+                activity: "Available"),
+            UserPresenceResponse(
+                ok: true, id: "demo-u-tom", availability: "Busy",
+                activity: "InACall"),
+            UserPresenceResponse(
+                ok: true, id: "demo-u-megan", availability: "Away",
+                activity: "Away"),
+        ]
+    }
+
     public static func messages(for chatID: String) -> [ChatMessage] {
         switch chatID {
         case demoID: return ConversationStore.demoMessages
