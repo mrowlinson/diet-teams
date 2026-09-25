@@ -863,6 +863,7 @@ pub fn call_record_inject_json() -> String {
                 skype_token: &skype,
                 conversation_id: &conv_id,
                 add_participant_url: &add_url,
+                region: recording::DEFAULT_RECORDER_REGION,
             };
             recording::add_recorder_bot(&http, &params)
                 .await
