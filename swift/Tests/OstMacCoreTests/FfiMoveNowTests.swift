@@ -1,0 +1,288 @@
+// FfiMoveNowTests.swift — R12 ffi-move-now: ports of the Rust tests for
+// moved symbols (red→green against Swift impls, no FFI).
+import XCTest
+
+@testable import OstMacCore
+
+final class FfiMoveNowTests: XCTestCase {
+    // MARK: - B0 helpers
+
+    var tmpDir: URL!
+    var suite: UserDefaults!
+
+    override func setUp() {
+        super.setUp()
+        tmpDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ffi-now-\(UUID().uuidString)", isDirectory: true)
+        try! FileManager.default.createDirectory(at: tmpDir, withIntermediateDirectories: true)
+        suite = UserDefaults(suiteName: "ffi-now-\(UUID().uuidString)")!
+    }
+
+    override func tearDown() {
+        try? FileManager.default.removeItem(at: tmpDir)
+        for k in suite.dictionaryRepresentation().keys { suite.removeObject(forKey: k) }
+        super.tearDown()
+    }
+
+    func write(_ name: String, _ body: String) {
+        try! body.write(to: tmpDir.appendingPathComponent(name), atomically: true, encoding: .utf8)
+    }
+
+    // MARK: - B0: version / init
+
+    func testVersionIs100() {
+        XCTAssertEqual(RustCore.version(), "1.0.0")
+        XCTAssertEqual(CoreLocal.version(), "1.0.0")
+    }
+
+    func testInitializeIsZero() {
+        XCTAssertEqual(RustCore.initialize(), 0)
+    }
+
+    // MARK: - B0: profile path mapping (matches ost config)
+
+    func testNormalize() {
+        XCTAssertEqual(TomlConfig.normalize(""), "default")
+        XCTAssertEqual(TomlConfig.normalize("   "), "default")
+        XCTAssertEqual(TomlConfig.normalize("  acct-1 "), "acct-1")
+    }
+
+    func testSanitizeAsciiOnly() {
+        XCTAssertEqual(TomlConfig.sanitize("acct-1.x_y"), "acct-1.x_y")
+        XCTAssertEqual(TomlConfig.sanitize("a/b c@d"), "a_b_c_d")
+        XCTAssertEqual(TomlConfig.sanitize(String(repeating: "a", count: 100)).count, 64)
+        // Non-ASCII alphanumerics are NOT kept (Rust is_ascii_alphanumeric).
+        XCTAssertEqual(TomlConfig.sanitize("é"), "_")
+    }
+
+    func testFileName() {
+        XCTAssertEqual(TomlConfig.fileName(profile: ""), "config.toml")
+        XCTAssertEqual(TomlConfig.fileName(profile: "default"), "config.toml")
+        XCTAssertEqual(TomlConfig.fileName(profile: "DEFAULT"), "config.toml")
+        XCTAssertEqual(TomlConfig.fileName(profile: "acct-1"), "config-acct-1.toml")
+        XCTAssertEqual(TomlConfig.fileName(profile: "a/b"), "config-a_b.toml")
+    }
+
+    // MARK: - B0: status reads
+
+    func testStatusMissingFileIsUnsigned() throws {
+        let st = try CoreLocal.status(profile: "no-such-profile", configDir: tmpDir)
+        XCTAssertTrue(st.ok)
+        XCTAssertFalse(st.signed_in)
+        XCTAssertFalse(st.tokens.aad.present)
+        XCTAssertFalse(st.tokens.aad.expired)
+        XCTAssertFalse(st.tokens.refresh_present)
+        XCTAssertFalse(st.tokens.region_gtms_present)
+        XCTAssertFalse(st.tokens.graph.present)
+        XCTAssertFalse(st.tokens.ic3.present)
+        XCTAssertFalse(st.tokens.recorder.present)
+        XCTAssertFalse(st.tokens.skype.present)
+    }
+
+    func testStatusMachineShapedFile() throws {
+        let future = UInt64(Date().timeIntervalSince1970) + 3600
+        write("config.toml", """
+        refresh_token = "r"
+        tenant_id = "t"
+        region_gtms = '{"a":"b"}'
+
+        [access_token]
+        token = "aad"
+        expires_at = \(future)
+
+        [skype_token]
+        token = "s"
+        expires_at = \(future)
+
+        [graph_token]
+        token = "g"
+        expires_at = \(future)
+
+        [ic3_token]
+        token = "i"
+        expires_at = \(future)
+
+        [recorder_token]
+        token = "r"
+        expires_at = \(future)
+        """)
+        let st = try CoreLocal.status(profile: "default", configDir: tmpDir)
+        XCTAssertTrue(st.ok)
+        XCTAssertTrue(st.signed_in)
+        XCTAssertTrue(st.tokens.aad.present)
+        XCTAssertFalse(st.tokens.aad.expired)
+        XCTAssertTrue(st.tokens.refresh_present)
+        XCTAssertTrue(st.tokens.region_gtms_present)
+        XCTAssertTrue(st.tokens.skype.present)
+    }
+
+    func testStatusExpiredSkew() {
+        // now + 300 >= exp → expired (matches StoredToken::is_expired).
+        XCTAssertTrue(TomlConfig.expired(1000, now: 700))
+        XCTAssertTrue(TomlConfig.expired(1000, now: 701))
+        XCTAssertFalse(TomlConfig.expired(1000, now: 699))
+        XCTAssertFalse(TomlConfig.expired(nil, now: 9_999_999))
+    }
+
+    func testStatusExpiredFileSignsOut() throws {
+        let past = UInt64(Date().timeIntervalSince1970) - 3600
+        write("config.toml", "[access_token]\ntoken = \"a\"\nexpires_at = \(past)\n")
+        let st = try CoreLocal.status(profile: "", configDir: tmpDir)
+        XCTAssertTrue(st.ok)
+        XCTAssertFalse(st.signed_in)
+        XCTAssertTrue(st.tokens.aad.present)
+        XCTAssertTrue(st.tokens.aad.expired)
+    }
+
+    func testStatusTokenWithoutExpiryStaysFresh() throws {
+        write("config.toml", "[access_token]\ntoken = \"a\"\n")
+        let st = try CoreLocal.status(profile: "default", configDir: tmpDir)
+        XCTAssertTrue(st.signed_in)
+        XCTAssertTrue(st.tokens.aad.present)
+        XCTAssertFalse(st.tokens.aad.expired)
+    }
+
+    func testStatusPerProfileIsolation() throws {
+        let future = UInt64(Date().timeIntervalSince1970) + 3600
+        write("config-acct-a.toml", "[access_token]\ntoken = \"a\"\nexpires_at = \(future)\n")
+        let a = try CoreLocal.status(profile: "acct-a", configDir: tmpDir)
+        XCTAssertTrue(a.signed_in)
+        let b = try CoreLocal.status(profile: "acct-b", configDir: tmpDir)
+        XCTAssertFalse(b.signed_in)
+    }
+
+    func testStatusGarbageIsConfigLoad() {
+        write("config.toml", "{{{\n")
+        XCTAssertThrowsError(try CoreLocal.status(profile: "default", configDir: tmpDir)) { err in
+            guard case CoreCallError.failed(let msg) = err else { return XCTFail("wrong error \(err)") }
+            XCTAssertTrue(msg.hasPrefix("config_load"), msg)
+        }
+    }
+
+    func testStatusWrongTypesAreConfigLoad() {
+        for body in [
+            "refresh_token = 123\n",
+            "region_gtms = true\n",
+            "[access_token]\ntoken = 1\n",
+            "[access_token]\ntoken = \"a\"\nexpires_at = 1.5\n",
+            "[access_token]\nexpires_at = 5\n", // missing token field
+            "access_token = \"x\"\n", // token table shape
+            "a = 1\na = 2\n", // duplicate key
+            "[access_token]\n[access_token]\n", // duplicate table
+            "a = \"unterminated\n",
+            "a = \"bad \\q escape\"\n",
+            "no-equals-here\n",
+        ] {
+            write("config.toml", body)
+            XCTAssertThrowsError(
+                try CoreLocal.status(profile: "default", configDir: tmpDir), "body: \(body)"
+            ) { err in
+                guard case CoreCallError.failed(let msg) = err else {
+                    return XCTFail("wrong error \(err) for \(body)")
+                }
+                XCTAssertTrue(msg.hasPrefix("config_load"), "\(msg) for \(body)")
+            }
+        }
+    }
+
+    func testStatusBareCRAndControlsAreConfigLoad() {
+        for body in [
+            "a = \"x\"\ry\n",
+            "a = \"x\u{01}y\"\n",
+            "a = 'x\u{7F}y'\n",
+        ] {
+            write("config.toml", body)
+            XCTAssertThrowsError(
+                try CoreLocal.status(profile: "default", configDir: tmpDir), "body: \(body)"
+            )
+        }
+        // Tab inside strings is legal TOML.
+        write("config.toml", "a = \"x\ty\"\n[access_token]\ntoken = \"a\"\n")
+        XCTAssertNoThrow(try CoreLocal.status(profile: "default", configDir: tmpDir))
+    }
+
+    func testStatusIgnoresUnknownKeys() throws {
+        write("config.toml", """
+        # comment line
+        future_key = "v" # trailing comment
+        count = -5
+        ratio = 1.5
+        flag = true
+        when = 2024-01-02T03:04:05Z
+        list = [1, "a"]
+        [unknown_table]
+        anything = "goes"
+        [access_token]
+        token = "a"
+        noted = "extra"
+        """)
+        let st = try CoreLocal.status(profile: "default", configDir: tmpDir)
+        XCTAssertTrue(st.ok)
+        XCTAssertTrue(st.signed_in)
+    }
+
+    func testStatusCRLFAndLiteralStrings() throws {
+        write("config.toml", "refresh_token = 'r#c'\r\nregion_gtms = '{\"k\":\"v#1\"}'\r\n")
+        let st = try CoreLocal.status(profile: "default", configDir: tmpDir)
+        XCTAssertTrue(st.ok)
+        XCTAssertTrue(st.tokens.refresh_present)
+        XCTAssertTrue(st.tokens.region_gtms_present)
+        XCTAssertFalse(st.signed_in)
+    }
+
+    func testStatusEnvelopeKeys() throws {
+        // Mirror of the deleted Rust status_envelope_has_expected_keys.
+        let st = try CoreLocal.status(profile: "no-such", configDir: tmpDir)
+        XCTAssertTrue(st.ok)
+        // Tokens struct shape is compile-checked; booleans decode:
+        XCTAssertFalse(st.signed_in)
+    }
+
+    // MARK: - B0: active profile
+
+    func testProfileActiveDefaultsToDefault() throws {
+        let p = try CoreLocal.profileActive(defaults: suite)
+        XCTAssertTrue(p.ok)
+        XCTAssertEqual(p.profile, "default")
+    }
+
+    func testProfileActiveReadsPersisted() throws {
+        suite.set("acct-9", forKey: AccountStore.activeKey)
+        let p = try CoreLocal.profileActive(defaults: suite)
+        XCTAssertEqual(p.profile, "acct-9")
+    }
+
+    func testProfileActiveBlankIsDefault() throws {
+        suite.set("  ", forKey: AccountStore.activeKey)
+        let p = try CoreLocal.profileActive(defaults: suite)
+        XCTAssertEqual(p.profile, "default")
+    }
+
+    func testStatusNoArgUsesPersistedActive() throws {
+        let future = UInt64(Date().timeIntervalSince1970) + 3600
+        write("config-acct-z.toml", "[access_token]\ntoken = \"a\"\nexpires_at = \(future)\n")
+        suite.set("acct-z", forKey: AccountStore.activeKey)
+        let st = try CoreLocal.status(defaults: suite, configDir: tmpDir)
+        XCTAssertTrue(st.signed_in)
+    }
+
+    // MARK: - B0: perf smoke (generous bounds; guards against regressions)
+
+    func testStatusParsePerf() throws {
+        let future = UInt64(Date().timeIntervalSince1970) + 3600
+        let body = """
+        refresh_token = "r"
+        tenant_id = "t"
+        region_gtms = '{"a":"b"}'
+        [access_token]
+        token = "aad"
+        expires_at = \(future)
+        [graph_token]
+        token = "g"
+        expires_at = \(future)
+        """
+        let t0 = Date()
+        for _ in 0 ..< 1000 { _ = try TomlConfig.parse(body) }
+        XCTAssertLessThan(Date().timeIntervalSince(t0), 2.0)
+    }
+}

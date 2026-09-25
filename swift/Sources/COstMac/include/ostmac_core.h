@@ -8,25 +8,12 @@
 #include <stddef.h>
 #include <stdint.h>
 
-// Static version string ("1.0.0"). Never freed.
-const char *ostmac_version(void);
-
-// 0 = core usable (tokio runtime builds). No network.
-int ostmac_init(void);
-
-// Auth status JSON. Caller frees.
-char *ostmac_status(void);
-
-// Auth status JSON for one account profile (no active switch).
-// Caller frees. No network.
-char *ostmac_status_for(const char *profile);
+// NOTE (R12 ffi-move-now B0): version/init/status/status_for/
+// profile_active moved to Swift (CoreLocal); decls deleted.
 
 // Switch the active account profile ("" = default): {ok, profile}.
 // Caller frees. No network.
 char *ostmac_profile_set(const char *profile);
-
-// Current active profile id: {ok, profile}. Caller frees. No network.
-char *ostmac_profile_active(void);
 
 // Device-code start JSON: session, verification_uri, user_code, message.
 // Caller frees. Hits network.
