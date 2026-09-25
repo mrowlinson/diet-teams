@@ -52,7 +52,7 @@ final class ThreadSummaryTests: XCTestCase {
     func testOnDeviceListedAlongsideCloudProviders() {
         XCTAssertTrue(CatchUpProvider.allCases.contains(.onDevice))
         XCTAssertEqual(CatchUpProvider.onDevice.title, "On-device (Apple Intelligence)")
-        XCTAssertEqual(CatchUpProvider.allCases.count, 4)
+        XCTAssertEqual(CatchUpProvider.allCases.count, 3)
     }
 
     func testOnDeviceNeedsNoKeyURLOrCLI() async {
@@ -233,7 +233,7 @@ final class ThreadSummaryTests: XCTestCase {
     func testPrivacyNoteVariant() {
         let onDevice = CatchUp.privacyNote(for: .onDevice)
         XCTAssertTrue(onDevice.contains("never leaves this device"))
-        for provider: CatchUpProvider in [.openAICompatible, .openCode, .openCodeCLI] {
+        for provider: CatchUpProvider in [.openAICompatible, .openCodeCLI] {
             XCTAssertEqual(CatchUp.privacyNote(for: provider), CatchUp.privacyNote)
         }
     }

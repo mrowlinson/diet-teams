@@ -185,7 +185,7 @@ final class CatchUpTests: XCTestCase {
         let keys = CatchUpMemoryKeyStore()
         let a = CatchUpStore(defaults: defaults, keyStore: keys)
         a.adopt(CatchUpConfig(
-            provider: .openCode, enabled: true,
+            provider: .openAICompatible, enabled: true,
             baseURL: "http://x/v1", model: "mm", apiKey: "kk"))
         let b = CatchUpStore(defaults: defaults, keyStore: keys)
         // Lazy key: non-secret config restores at init, the key only
@@ -193,21 +193,21 @@ final class CatchUpTests: XCTestCase {
         XCTAssertEqual(b.config.apiKey, "")
         b.ensureKeyLoaded()
         XCTAssertEqual(b.config, CatchUpConfig(
-            provider: .openCode, enabled: true,
+            provider: .openAICompatible, enabled: true,
             baseURL: "http://x/v1", model: "mm", apiKey: "kk"))
     }
 
     // MARK: - om-catchup-oc: provider picker
 
-    func testOpenCodePreloadsZenBaseAndSparkModel() {
+    func testCLIPreloadsZenBaseAndQualifiedModel() {
         let (store, _) = store()
         store.adopt(CatchUpConfig(
             enabled: true, baseURL: "http://custom/v1", model: "custom",
             apiKey: "test-key-DO-NOT-USE"))
-        store.selectProvider(.openCode)
-        XCTAssertEqual(store.config.provider, .openCode)
+        store.selectProvider(.openCodeCLI)
+        XCTAssertEqual(store.config.provider, .openCodeCLI)
         XCTAssertEqual(store.config.baseURL, "https://opencode.ai/zen/v1")
-        XCTAssertEqual(store.config.model, "muse-spark-1.3-contributor-free")
+        XCTAssertEqual(store.config.model, "opencode/muse-spark-1.3-contributor-free")
         // Switch preloads endpoint fields only — key + enabled survive.
         XCTAssertEqual(store.config.apiKey, "test-key-DO-NOT-USE")
         XCTAssertTrue(store.config.enabled)
@@ -215,7 +215,7 @@ final class CatchUpTests: XCTestCase {
 
     func testProviderSwitchBackPreloadsOpenAI() {
         let (store, _) = store()
-        store.selectProvider(.openCode)
+        store.selectProvider(.openCodeCLI)
         store.selectProvider(.openAICompatible)
         XCTAssertEqual(store.config.provider, .openAICompatible)
         XCTAssertEqual(store.config.baseURL, "https://api.openai.com/v1")
@@ -225,11 +225,11 @@ final class CatchUpTests: XCTestCase {
     func testProviderPersistsAcrossStores() {
         let keys = CatchUpMemoryKeyStore()
         let a = CatchUpStore(defaults: defaults, keyStore: keys)
-        a.selectProvider(.openCode)
+        a.selectProvider(.openCodeCLI)
         let b = CatchUpStore(defaults: defaults, keyStore: keys)
-        XCTAssertEqual(b.config.provider, .openCode)
+        XCTAssertEqual(b.config.provider, .openCodeCLI)
         XCTAssertEqual(b.config.baseURL, "https://opencode.ai/zen/v1")
-        XCTAssertEqual(b.config.model, "muse-spark-1.3-contributor-free")
+        XCTAssertEqual(b.config.model, "opencode/muse-spark-1.3-contributor-free")
     }
 
     // MARK: - om-catchup-oc: keychain key store
@@ -254,7 +254,7 @@ final class CatchUpTests: XCTestCase {
         let mock = CatchUpCannedTransport(stub: "SHOULD NOT APPEAR")
         let cliMock = CatchUpCannedTransport(stub: "SHOULD NOT APPEAR")
         let (store, _) = store(transport: mock, cliTransport: cliMock)
-        store.adopt(CatchUpConfig(provider: .openCode, enabled: true, apiKey: ""))
+        store.adopt(CatchUpConfig(provider: .openAICompatible, enabled: true, apiKey: ""))
         await store.summarize(messages: thread(25))
         XCTAssertTrue(mock.prompts.isEmpty)
         XCTAssertTrue(cliMock.prompts.isEmpty)
@@ -289,7 +289,7 @@ final class CatchUpTests: XCTestCase {
         XCTAssertEqual(store.config.apiKey, "")
         // A keyless config change pre-load must not wipe the stored
         // key (empty apiKey = "not loaded", not "no key").
-        store.selectProvider(.openCode)
+        store.selectProvider(.openAICompatible)
         XCTAssertEqual(keys.loads, 0)
         XCTAssertEqual(keys.saves, 0)
         XCTAssertEqual(keys.key, "zk")
@@ -300,7 +300,7 @@ final class CatchUpTests: XCTestCase {
         let keys = CountingKeyStore(key: "zk")
         let store = CatchUpStore(
             transport: mock, defaults: defaults, keyStore: keys)
-        store.adopt(CatchUpConfig(provider: .openCode, enabled: true, apiKey: ""))
+        store.adopt(CatchUpConfig(provider: .openAICompatible, enabled: true, apiKey: ""))
         XCTAssertEqual(keys.loads, 0)
         await store.summarize(messages: thread(25))
         XCTAssertEqual(keys.loads, 1)
@@ -335,7 +335,7 @@ final class CatchUpTests: XCTestCase {
         let store = CatchUpStore(
             transport: mock, cliTransport: cliMock,
             defaults: defaults, keyStore: keys)
-        store.adopt(CatchUpConfig(provider: .openCode, enabled: false, apiKey: ""))
+        store.adopt(CatchUpConfig(provider: .openAICompatible, enabled: false, apiKey: ""))
         await store.summarize(messages: thread(25))
         XCTAssertEqual(keys.loads, 0)
         XCTAssertEqual(keys.saves, 0)

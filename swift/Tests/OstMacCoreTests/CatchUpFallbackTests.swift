@@ -76,7 +76,7 @@ final class CatchUpFallbackTests: XCTestCase {
         let runner = CatchUpMockCLIRunner(result: CatchUpCLIResult(
             stdout: #"{"content":"SHOULD NOT APPEAR"}"#, stderr: "", exitCode: 0))
         let store = store(direct: direct, runner: runner)
-        store.adopt(CatchUpConfig(provider: .openCode, enabled: true, apiKey: "k"))
+        store.adopt(CatchUpConfig(provider: .openAICompatible, enabled: true, apiKey: "k"))
         await store.summarize(messages: thread(25))
         XCTAssertTrue(runner.calls.isEmpty, "direct providers must never shell out")
         XCTAssertEqual(direct.prompts.count, 1)

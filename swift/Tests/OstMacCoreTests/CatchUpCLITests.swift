@@ -143,10 +143,6 @@ final class CatchUpCLITests: XCTestCase {
             "opencode/muse-spark-1.3-contributor-free")
         XCTAssertEqual(
             CatchUpConfig().model, "opencode/muse-spark-1.3-contributor-free")
-        // The Zen HTTPS path keeps the bare id.
-        XCTAssertEqual(
-            CatchUpProvider.openCode.defaultModel,
-            "muse-spark-1.3-contributor-free")
     }
 
     func testSelectProviderCLIPreloadsQualifiedModel() {
