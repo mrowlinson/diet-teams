@@ -40,6 +40,10 @@ struct ReactionMenuBridge: NSViewRepresentable {
     /// Pinned state (om-pinmessages): drives the Pin/Unpin label.
     var isPinned: Bool = false
     var onTogglePin: () -> Void = {}
+    /// Inline translation (e1-translation): Translate shows iff true
+    /// (eligible text + macOS 15+); hidden otherwise, never disabled.
+    var canTranslate: Bool = false
+    var onTranslate: () -> Void = {}
 
     func makeNSView(context: Context) -> ReactionMenuAnchorView {
         let view = ReactionMenuAnchorView()
@@ -55,6 +59,8 @@ struct ReactionMenuBridge: NSViewRepresentable {
         view.onDelete = onDelete
         view.isPinned = isPinned
         view.onTogglePin = onTogglePin
+        view.canTranslate = canTranslate
+        view.onTranslate = onTranslate
         context.coordinator.monitor = NSEvent.addLocalMonitorForEvents(
             matching: .rightMouseDown
         ) { [weak view] event in
@@ -80,6 +86,8 @@ struct ReactionMenuBridge: NSViewRepresentable {
         view.onDelete = onDelete
         view.isPinned = isPinned
         view.onTogglePin = onTogglePin
+        view.canTranslate = canTranslate
+        view.onTranslate = onTranslate
     }
 
     func dismantleNSView(_: ReactionMenuAnchorView, coordinator: Coordinator) {
@@ -112,6 +120,8 @@ final class ReactionMenuAnchorView: NSView {
     var onDelete: () -> Void = {}
     var isPinned: Bool = false
     var onTogglePin: () -> Void = {}
+    var canTranslate: Bool = false
+    var onTranslate: () -> Void = {}
 
     /// Upward overhang of the tapback badges (badge half-height ~10 +
     /// the ZStack's 16pt lift, plus 2pt breathing room). Shared by the
@@ -186,44 +196,47 @@ final class ReactionMenuAnchorView: NSView {
         menu.addItem(row)
         menu.addItem(.separator())
         // TOP-LEVEL ONLY: every action is a direct item, never a submenu.
-        let reply = NSMenuItem(
-            title: "Reply", action: #selector(replyAction), keyEquivalent: "")
-        reply.target = self
-        menu.addItem(reply)
-        let copy = NSMenuItem(
-            title: "Copy", action: #selector(copyAction), keyEquivalent: "c")
-        copy.target = self
-        menu.addItem(copy)
-        let forward = NSMenuItem(
-            title: "Forward…", action: #selector(forwardAction), keyEquivalent: "")
-        forward.target = self
-        menu.addItem(forward)
-        let save = NSMenuItem(
-            title: "Save…", action: #selector(saveAction), keyEquivalent: "")
-        save.target = self
-        menu.addItem(save)
-        let pin = NSMenuItem(
-            title: PinnedMessages.menuTitle(isPinned: isPinned),
-            action: #selector(togglePinAction), keyEquivalent: "")
-        pin.target = self
-        menu.addItem(pin)
-        if message.isOwn {
-            let edit = NSMenuItem(
-                title: "Edit…", action: #selector(editAction), keyEquivalent: "")
-            edit.target = self
-            menu.addItem(edit)
-            let delete = NSMenuItem(
-                title: "Delete…", action: #selector(deleteAction), keyEquivalent: "")
-            delete.target = self
-            menu.addItem(delete)
-        }
-        if failed {
-            let retry = NSMenuItem(
-                title: "Retry send", action: #selector(retryAction), keyEquivalent: "")
-            retry.target = self
-            menu.addItem(retry)
+        for item in Self.actionItems(
+            for: message, failed: failed, isPinned: isPinned,
+            canTranslate: canTranslate)
+        {
+            let built = NSMenuItem(
+                title: item.title, action: item.action,
+                keyEquivalent: item.key)
+            built.target = self
+            menu.addItem(built)
         }
         NSMenu.popUpContextMenu(menu, with: event, for: self)
+    }
+
+    /// Ordered action rows below the emoji row (title + selector + key).
+    /// Single source for popMenu; MessageBubble.keyboardMenuTitles must
+    /// match (parity pinned by MessageTranslationTests — update BOTH).
+    static func actionItems(
+        for message: ChatMessage, failed: Bool, isPinned: Bool,
+        canTranslate: Bool
+    ) -> [(title: String, action: Selector, key: String)] {
+        var items: [(String, Selector, String)] = [
+            ("Reply", #selector(replyAction), ""),
+            ("Copy", #selector(copyAction), "c"),
+            ("Forward…", #selector(forwardAction), ""),
+            ("Save…", #selector(saveAction), ""),
+        ]
+        if canTranslate {
+            items.append(
+                (MessageTranslation.menuTitle, #selector(translateAction), ""))
+        }
+        items.append((
+            PinnedMessages.menuTitle(isPinned: isPinned),
+            #selector(togglePinAction), ""))
+        if message.isOwn {
+            items.append(("Edit…", #selector(editAction), ""))
+            items.append(("Delete…", #selector(deleteAction), ""))
+        }
+        if failed {
+            items.append(("Retry send", #selector(retryAction), ""))
+        }
+        return items
     }
 
     /// Retained while open (NSPopover is not retained by `show`).
@@ -314,6 +327,10 @@ final class ReactionMenuAnchorView: NSView {
 
     @objc private func togglePinAction() {
         onTogglePin()
+    }
+
+    @objc private func translateAction() {
+        onTranslate()
     }
 }
 

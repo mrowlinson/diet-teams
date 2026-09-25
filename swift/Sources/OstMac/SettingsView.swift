@@ -42,6 +42,9 @@ struct SettingsView: View {
     @State private var blockDraft = ""
     @State private var allowError: String?
     @State private var blockError: String?
+    /// Inline-translation target (e1-translation): same key the
+    /// TranslationStore reads (default = system language).
+    @AppStorage("om.translation.target") private var translationTarget = MessageTranslation.defaultTargetCode()
     private let fixedAccount: AccountInfo?
 
     /// Live view: shares the app's models (single source of truth).
@@ -315,6 +318,22 @@ struct SettingsView: View {
                             .font(DietType.caption1)
                             .foregroundStyle(DietColor.textSecondaryColor)
                     }
+                    Section("Translation") {
+                        if MessageTranslation.isAvailable {
+                            Picker("Translate to", selection: $translationTarget) {
+                                ForEach(translationOptions, id: \.self) { code in
+                                    Text(MessageTranslation.displayName(for: code)).tag(code)
+                                }
+                            }
+                            Text("Per-bubble Translate renders below the original. On-device only — nothing is sent anywhere; works offline once models download.")
+                                .font(DietType.caption1)
+                                .foregroundStyle(DietColor.textSecondaryColor)
+                        } else {
+                            Text(MessageTranslation.unavailableReason)
+                                .font(DietType.caption1)
+                                .foregroundStyle(DietColor.textSecondaryColor)
+                        }
+                    }
                     CatchUpSettingsSection(catchUp: catchUp)
                 }
                 .formStyle(.grouped)
@@ -343,6 +362,14 @@ struct SettingsView: View {
                 }
             }
         }
+    }
+
+    /// Translation picker options: curated list, current choice kept
+    /// first when off-list (never strand the selection).
+    private var translationOptions: [String] {
+        MessageTranslation.targetCodes.contains(translationTarget)
+            ? MessageTranslation.targetCodes
+            : [translationTarget] + MessageTranslation.targetCodes
     }
 
     /// Overridden ids with no roster row (renamed/left chats): still

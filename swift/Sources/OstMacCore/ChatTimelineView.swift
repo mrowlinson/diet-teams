@@ -26,6 +26,8 @@ struct ChatTimelineView: View {
     @ObservedObject var receipts: ReceiptStore = ReceiptStore()
     /// Pinned messages (om-pinmessages): the strip + bubble menu state.
     @ObservedObject var pins: PinnedMessageStore = PinnedMessageStore()
+    /// Inline translation (e1-translation): per-bubble cached entries.
+    @ObservedObject var translations: TranslationStore = TranslationStore()
     /// Preview-row tap (om-linkpreview passthrough).
     var onOpenLink: (URL) -> Void = { LinkPreviewOpen.default($0) }
     @StateObject private var scroll = ChatScrollModel()
@@ -41,6 +43,9 @@ struct ChatTimelineView: View {
         // quote, and receipt lookups share it instead of scanning the
         // thread per bubble. Same values, O(n) build + O(1) lookups.
         timelineBody(index: MessageIndex(store.messages))
+            // On-device translation session (e1-translation, macOS 15+;
+            // pass-through below — menus omit Translate there).
+            .translationSessionHost(store: translations)
     }
 
     private func timelineBody(index: MessageIndex) -> some View {
@@ -111,7 +116,11 @@ struct ChatTimelineView: View {
                                         pins.toggle(chatID: store.chatID, message: msg)
                                     },
                                     chatID: store.chatID,
-                                    onQuoteJump: { jumpToQuote(proxy, id: $0) }
+                                    onQuoteJump: { jumpToQuote(proxy, id: $0) },
+                                    translation: translations.entry(for: msg.id),
+                                    onTranslate: {
+                                        Task { await translations.toggle(msg) }
+                                    }
                                 )
                                 .id(msg.id)
                                 .onAppear {
