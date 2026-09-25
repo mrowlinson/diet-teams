@@ -83,7 +83,7 @@ public enum AvSummary {
 
     /// Mic TCC denial -> human line + where to fix it.
     public static let micDenied =
-        "Microphone denied — allow Diet Teams in System Settings › Privacy & Security › Microphone"
+        "Microphone denied — allow Better Teams in System Settings › Privacy & Security › Microphone"
 
     /// True-unplug heal: the pick is gone, the panel switched to the default.
     public static func healedMic(_ fallback: String?) -> String {
@@ -619,7 +619,7 @@ public struct AvPanelView: View {
                                 Text("Microphone access is off — the test and level meter need it.")
                                     .font(DietType.callout).bold()
                                     .foregroundStyle(DietColor.textPrimaryColor)
-                                Text("Allow Diet Teams in System Settings › Privacy & Security › Microphone.")
+                                Text("Allow Better Teams in System Settings › Privacy & Security › Microphone.")
                                     .font(DietType.caption1)
                                     .foregroundStyle(
                                         DietColor.textSecondaryColor)

@@ -1,4 +1,4 @@
-// MCPServer.swift — om-mcp lane: stdio JSON-RPC (MCP) server for Diet Teams.
+// MCPServer.swift — om-mcp lane: stdio JSON-RPC (MCP) server for Better Teams.
 //
 // Minimal Model Context Protocol server: initialize handshake, tools/list,
 // tools/call, ping. One JSON-RPC message per line on stdin, responses on
@@ -52,7 +52,7 @@ public final class MockTransport: MCPTransport {
 // MARK: - Server
 
 public struct MCPServer {
-    public static let serverName = "diet-teams"
+    public static let serverName = "better-teams"
     public static let defaultProtocolVersion = "2025-06-18"
     public static let toolNames = [
         "list-chats", "list-messages", "send-message", "react-message", "list-teams", "list-channels",
@@ -105,8 +105,8 @@ public struct MCPServer {
                         ?? defaultProtocolVersion,
                     "capabilities": ["tools": [String: Any]()],
                     "serverInfo": ["name": serverName, "version": AppIdentity.version],
-                    "instructions": "Diet Teams (Teams) chats over MCP. "
-                        + "Sign-in lives in the Diet Teams app; when tools report "
+                    "instructions": "Better Teams (Teams) chats over MCP. "
+                        + "Sign-in lives in the Better Teams app; when tools report "
                         + "unsigned, tell the user to sign in there first.",
                 ],
             ])
@@ -284,7 +284,7 @@ public struct MCPServer {
     private static let toolDescriptors: [[String: Any]] = [
         [
             "name": "list-chats",
-            "description": "List recent Teams chats (1:1 and group). Needs sign-in via the Diet Teams app.",
+            "description": "List recent Teams chats (1:1 and group). Needs sign-in via the Better Teams app.",
             "inputSchema": [
                 "type": "object",
                 "properties": ["limit": ["type": "integer", "minimum": 1, "maximum": 100, "default": 20]],

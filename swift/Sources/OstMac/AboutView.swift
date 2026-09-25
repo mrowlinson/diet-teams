@@ -1,4 +1,4 @@
-// AboutView.swift — om-package lane: About Diet Teams window content.
+// AboutView.swift — om-package lane: About Better Teams window content.
 //
 // om-reskin-chrome: Diet tokens only.
 import AppKit

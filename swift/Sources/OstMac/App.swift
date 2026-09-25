@@ -1,4 +1,4 @@
-// Diet Teams — THE app (om-auth-gate): the main window is gated on the
+// Better Teams — THE app (om-auth-gate): the main window is gated on the
 // AuthViewModel 13-state gate — unsigned shows the full sign-in UI
 // (device code, copy/open-browser, polling, expiry/refresh, sign-out)
 // where the chats would be; chats, conversation, and the live feed
@@ -6,7 +6,7 @@
 // --demo bypasses the gate fully offline.
 //
 // Usage:
-//   Diet Teams [--demo | --demo-rich | --demo-reactions | --demo-botposts] [--chat <id> [--name <n>]] [--say <text>]
+//   Better Teams [--demo | --demo-rich | --demo-reactions | --demo-botposts] [--chat <id> [--name <n>]] [--say <text>]
 //          [--show-about] [--show-settings] [--auth-state <name>]
 //          [--show-call incoming|active|live] [--show-av]
 // --show-call seeds the call banner offline (demo state, no core calls).
@@ -153,17 +153,17 @@ struct OstMacAppMain: App {
     }
 
     var body: some Scene {
-        WindowGroup("Diet Teams") {
+        WindowGroup("Better Teams") {
             RootView()
                 .environmentObject(state)
         }
         .defaultSize(width: 1000, height: 640)
-        Window("About Diet Teams", id: AppIdentity.aboutWindowID) {
+        Window("About Better Teams", id: AppIdentity.aboutWindowID) {
             AboutView()
         }
         .defaultSize(width: 360, height: 340)
         .windowResizability(.contentSize)
-        Window("Diet Teams Auth", id: AppIdentity.authWindowID) {
+        Window("Better Teams Auth", id: AppIdentity.authWindowID) {
             if let cannedAuth {
                 AuthView(model: cannedAuth)
                     .background(DietColor.windowColor)
@@ -225,7 +225,7 @@ private struct OstMacCommands: Commands {
 
     var body: some Commands {
         CommandGroup(replacing: .appInfo) {
-            Button("About Diet Teams") { openWindow(id: AppIdentity.aboutWindowID) }
+            Button("About Better Teams") { openWindow(id: AppIdentity.aboutWindowID) }
         }
         CommandGroup(after: .appInfo) {
             Button("Sign In…") { openWindow(id: AppIdentity.authWindowID) }

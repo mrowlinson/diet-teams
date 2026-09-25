@@ -206,7 +206,7 @@ public struct PreJoinSheet: View {
                 .frame(width: 320)
                 .accessibilityLabel("Microphone level")
             if prejoin.micDenied {
-                Text("Microphone denied — allow Diet Teams in System Settings › Privacy & Security › Microphone")
+                Text("Microphone denied — allow Better Teams in System Settings › Privacy & Security › Microphone")
                     .font(DietType.caption1)
                     .foregroundStyle(Color(nsColor: DietColor.warning))
             }

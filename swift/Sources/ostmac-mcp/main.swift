@@ -5,14 +5,14 @@ import OstMacMCP
 
 private func usage() -> String {
     """
-    ostmac-mcp \(AppIdentity.version) — Diet Teams over MCP (stdio JSON-RPC).
+    ostmac-mcp \(AppIdentity.version) — Better Teams over MCP (stdio JSON-RPC).
 
     usage: ostmac-mcp [--version] [--help]
 
     Runs a Model Context Protocol server on stdin/stdout:
       initialize, tools/list, tools/call, ping.
     Tools: list-chats, list-messages, send-message, list-teams, list-channels.
-    Sign in once in the Diet Teams app; this server reuses that session.
+    Sign in once in the Better Teams app; this server reuses that session.
     See docs/mcp.md for the Claude Desktop config.
     """
 }

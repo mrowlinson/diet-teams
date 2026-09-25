@@ -5,7 +5,7 @@
 import Foundation
 
 public enum AppIdentity {
-    public static let name = "Diet Teams"
+    public static let name = "Better Teams"
     public static let bundleID = "dev.ostmac.OstMac"
     public static let version = "1.0.0"
     public static let minimumOS = "14.0"
