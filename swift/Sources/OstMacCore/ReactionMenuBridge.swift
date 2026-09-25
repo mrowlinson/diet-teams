@@ -1,7 +1,7 @@
-// ReactionMenuBridge.swift — om-reactions/om-msgactions/om-replies/om-editdel/om-react-polish/om-pinmessages/om-react-picker:
+// ReactionMenuBridge.swift — om-reactions/om-msgactions/om-replies/om-editdel/om-react-polish/om-pinmessages/om-react-picker/e2-saved:
 // the bubble's ONE right-click menu (inline emoji row + Reply / Copy /
-// Forward / Save / Pin-Unpin, plus Edit / Delete on own bubbles — all
-// top-level, no submenu).
+// Forward / Save / Pin-Unpin / Save-message-Unsave-message, plus Edit /
+// Delete on own bubbles — all top-level, no submenu).
 //
 // Why AppKit: SwiftUI renders ControlGroup-in-menu as a submenu with an
 // inline preview (verified by screenshot: the row carries a ">" that
@@ -40,6 +40,9 @@ struct ReactionMenuBridge: NSViewRepresentable {
     /// Pinned state (om-pinmessages): drives the Pin/Unpin label.
     var isPinned: Bool = false
     var onTogglePin: () -> Void = {}
+    /// Saved state (e2-saved): drives the Save/Unsave message label.
+    var isSaved: Bool = false
+    var onToggleSave: () -> Void = {}
     /// Inline translation (e1-translation): Translate shows iff true
     /// (eligible text + macOS 15+); hidden otherwise, never disabled.
     var canTranslate: Bool = false
@@ -59,6 +62,8 @@ struct ReactionMenuBridge: NSViewRepresentable {
         view.onDelete = onDelete
         view.isPinned = isPinned
         view.onTogglePin = onTogglePin
+        view.isSaved = isSaved
+        view.onToggleSave = onToggleSave
         view.canTranslate = canTranslate
         view.onTranslate = onTranslate
         context.coordinator.monitor = NSEvent.addLocalMonitorForEvents(
@@ -86,6 +91,8 @@ struct ReactionMenuBridge: NSViewRepresentable {
         view.onDelete = onDelete
         view.isPinned = isPinned
         view.onTogglePin = onTogglePin
+        view.isSaved = isSaved
+        view.onToggleSave = onToggleSave
         view.canTranslate = canTranslate
         view.onTranslate = onTranslate
     }
@@ -120,6 +127,8 @@ final class ReactionMenuAnchorView: NSView {
     var onDelete: () -> Void = {}
     var isPinned: Bool = false
     var onTogglePin: () -> Void = {}
+    var isSaved: Bool = false
+    var onToggleSave: () -> Void = {}
     var canTranslate: Bool = false
     var onTranslate: () -> Void = {}
 
@@ -198,7 +207,7 @@ final class ReactionMenuAnchorView: NSView {
         // TOP-LEVEL ONLY: every action is a direct item, never a submenu.
         for item in Self.actionItems(
             for: message, failed: failed, isPinned: isPinned,
-            canTranslate: canTranslate)
+            isSaved: isSaved, canTranslate: canTranslate)
         {
             let built = NSMenuItem(
                 title: item.title, action: item.action,
@@ -214,7 +223,7 @@ final class ReactionMenuAnchorView: NSView {
     /// match (parity pinned by MessageTranslationTests — update BOTH).
     static func actionItems(
         for message: ChatMessage, failed: Bool, isPinned: Bool,
-        canTranslate: Bool
+        isSaved: Bool = false, canTranslate: Bool
     ) -> [(title: String, action: Selector, key: String)] {
         var items: [(String, Selector, String)] = [
             ("Reply", #selector(replyAction), ""),
@@ -229,6 +238,9 @@ final class ReactionMenuAnchorView: NSView {
         items.append((
             PinnedMessages.menuTitle(isPinned: isPinned),
             #selector(togglePinAction), ""))
+        items.append((
+            SavedMessages.menuTitle(isSaved: isSaved),
+            #selector(toggleSaveAction), ""))
         if message.isOwn {
             items.append(("Edit…", #selector(editAction), ""))
             items.append(("Delete…", #selector(deleteAction), ""))
@@ -327,6 +339,10 @@ final class ReactionMenuAnchorView: NSView {
 
     @objc private func togglePinAction() {
         onTogglePin()
+    }
+
+    @objc private func toggleSaveAction() {
+        onToggleSave()
     }
 
     @objc private func translateAction() {
