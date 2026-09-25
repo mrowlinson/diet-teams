@@ -701,11 +701,15 @@ needing maintainer buy-in. Minor PRs stand alone; majors are separate PRs.
     primary-path precedence, eu-alias pin. Genuine signaling
     generalization, not OstMac-specific. Merged `7296487` + alias
     pin `5b93357` (both on main @ `98e3e33`).
-    (Numbering note: two §53 entries above — region-headers and
-    turn-md5; left as-is since #51 already cites §53. Cf. wave-2
-    dup-17/19 precedent.)
-    Upstream: UNFILED (no PR yet; stacks after §53 region-headers
-    on `TeamsRegion`).
+    (Numbering note: two §54 entries — turn-md5 renumbered §53→§54
+    after this entry was written; left as-is per the wave-2 dup-17/19
+    precedent. Neither PR #51's nor #53's body cites a ledger number,
+    so no upstream mismatch.)
+    Upstream: https://github.com/eisbaw/ost/pull/53 (filed
+    2026-09-25, stacks after #52 on `TeamsRegion`, only the top
+    commit new; recording.rs only, 102/102 bin tests with the
+    sdp-dance temp-fix reverted; offline vectors only, no live
+    non-AMER call — stated in body).
 
 55. [minor] `src/calling/recording.rs` — **gate recorder frame
     dumps behind `TEAMS_DEBUG_DUMP` (om-recorder-region lane)**.
