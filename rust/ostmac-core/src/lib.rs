@@ -519,6 +519,9 @@ pub fn whoami_json_for(profile: &str) -> String {
     }
 }
 
+// NOTE (R14 om-later-b4 B4): whoami exports moved to Swift (CoreReads).
+// whoami_json* + cache + envelope stay (calls.rs display_name_or).
+
 // ---------------------------------------------------------------------------
 // Chats
 // ---------------------------------------------------------------------------
@@ -605,28 +608,8 @@ fn team_to_json(t: &ost::api::TeamInfo) -> serde_json::Value {
     })
 }
 
-/// Joined teams with their channels as JSON. Requires sign-in; unsigned
-/// yields `{ok:false}`. Channel ids open as conversations through the
-/// same `messages`/`send` path as chat ids (ost TUI parity).
-pub fn teams_json() -> String {
-    let run = || -> Result<String, String> {
-        let rt = rt()?;
-        rt.block_on(async {
-            let client = ost::api::client::TeamsClient::new()
-                .await
-                .map_err(|e| format!("{:#}", e))?;
-            let teams = ost::api::list_teams_data(&client)
-                .await
-                .map_err(|e| format!("{:#}", e))?;
-            let items: Vec<_> = teams.iter().map(team_to_json).collect();
-            Ok(json!({"ok": true, "teams": items}).to_string())
-        })
-    };
-    match run() {
-        Ok(s) => s,
-        Err(e) => err_json("teams", e),
-    }
-}
+// NOTE (R14 om-later-b4 B4): teams moved to Swift (CoreReads);
+// backing fn + export deleted. team_to_json stays (team_create).
 
 /// Create one standard channel in a team. Returns
 /// `{ok:true, channel:{id,name}}` or `{ok:false}`. Bad `team_id` and
@@ -1984,26 +1967,8 @@ fn presence_status_pair(status: &str) -> Option<(&'static str, &'static str)> {
     }
 }
 
-/// Own presence via Graph /me/presence (ost `get_presence_data`).
-/// `{ok:true, availability, activity}` or `{ok:false}`.
-pub fn presence_json() -> String {
-    let run = || -> Result<String, String> {
-        let rt = rt()?;
-        rt.block_on(async {
-            let client = ost::api::client::TeamsClient::new()
-                .await
-                .map_err(|e| format!("{:#}", e))?;
-            let info = ost::api::get_presence_data(&client)
-                .await
-                .map_err(|e| format!("{:#}", e))?;
-            Ok(presence_envelope(&info.availability, &info.activity))
-        })
-    };
-    match run() {
-        Ok(s) => s,
-        Err(e) => err_json("presence", e),
-    }
-}
+// NOTE (R14 om-later-b4 B4): presence read moved to Swift (CoreReads);
+// backing fn + export deleted. presence_envelope stays (set/user).
 
 /// Set own preferred presence (ost `set_presence` table + body, minus the
 /// CLI print). Unknown/empty `status` is rejected before any network.
@@ -2325,43 +2290,9 @@ pub fn reminder_done_json(list_id: &str, task_id: &str) -> String {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Meetings (om-meet-join lane: upcoming via Graph calendarView + join parse)
-// ---------------------------------------------------------------------------
-
-fn meeting_to_json(m: &ost::api::MeetingInfo) -> serde_json::Value {
-    json!({
-        "id": m.id,
-        "subject": m.subject,
-        "start": m.start,
-        "end": m.end,
-        "join_url": m.join_url,
-        "organizer": m.organizer,
-        "is_online": m.is_online,
-    })
-}
-
-/// Upcoming meetings as JSON. Requires sign-in; unsigned yields `{ok:false}`.
-pub fn meetings_json(limit: usize) -> String {
-    let run = || -> Result<String, String> {
-        let rt = rt()?;
-        rt.block_on(async {
-            let client = ost::api::client::TeamsClient::new()
-                .await
-                .map_err(|e| format!("{:#}", e))?;
-            let meetings = ost::api::list_upcoming_meetings_data(&client, limit)
-                .await
-                .map_err(|e| format!("{:#}", e))?;
-            let items: Vec<_> = meetings.iter().map(meeting_to_json).collect();
-            Ok(json!({"ok": true, "meetings": items}).to_string())
-        })
-    };
-    match run() {
-        Ok(s) => s,
-        Err(e) => err_json("meetings", e),
-    }
-}
-
+// NOTE (R14 om-later-b4 B4): meetings + meeting_to_json moved to Swift
+// (CoreReads); backing fn + export deleted. meeting_to_json_shape
+// ported to FfiLaterB4Tests.
 // NOTE (R12 ffi-move-now B1): meeting_join_parse moved to Swift
 // (JoinParse); backing fn + export deleted.
 
@@ -2782,22 +2713,6 @@ pub extern "C" fn ostmac_authcode_start_for(profile: *const c_char) -> *mut c_ch
     }
 }
 
-/// Current-user JSON (Graph /me, cached). See [`whoami_json`].
-/// Caller frees with [`ostmac_free`].
-#[no_mangle]
-pub extern "C" fn ostmac_whoami() -> *mut c_char {
-    string_to_c(whoami_json())
-}
-
-/// Current-user JSON for one account profile. See [`whoami_json_for`].
-#[no_mangle]
-pub extern "C" fn ostmac_whoami_for(profile: *const c_char) -> *mut c_char {
-    match cstr_to_string(profile) {
-        Ok(p) => string_to_c(whoami_json_for(&p)),
-        Err(e) => string_to_c(err_json("arg", e)),
-    }
-}
-
 /// Chat list JSON. See [`chats_json`].
 #[no_mangle]
 pub extern "C" fn ostmac_chats(limit: c_int) -> *mut c_char {
@@ -2813,12 +2728,6 @@ pub extern "C" fn ostmac_chat_create_one_to_one(user: *const c_char) -> *mut c_c
         Ok(u) => string_to_c(chat_create_one_to_one_json(&u)),
         Err(e) => string_to_c(err_json("arg", e)),
     }
-}
-
-/// Joined-teams JSON (requires sign-in). See [`teams_json`].
-#[no_mangle]
-pub extern "C" fn ostmac_teams() -> *mut c_char {
-    string_to_c(teams_json())
 }
 
 /// Create one channel in a team. `description` may be NULL (no
@@ -3470,13 +3379,6 @@ pub extern "C" fn ostmac_reminder_done(
     }
 }
 
-/// Upcoming meetings JSON (requires sign-in). Caller frees.
-#[no_mangle]
-pub extern "C" fn ostmac_meetings(limit: c_int) -> *mut c_char {
-    let lim = if limit <= 0 { 20 } else { limit as usize };
-    string_to_c(meetings_json(lim))
-}
-
 /// Start background Trouter push. See [`trouter_start`].
 #[no_mangle]
 pub extern "C" fn ostmac_trouter_start() -> c_int {
@@ -3545,13 +3447,6 @@ pub extern "C" fn ostmac_sign_out_for(profile: *const c_char) -> *mut c_char {
         Ok(p) => string_to_c(sign_out_json_for(&p)),
         Err(e) => string_to_c(err_json("arg", e)),
     }
-}
-
-/// Own presence JSON (Graph /me/presence). See [`presence_json`].
-/// Caller frees with [`ostmac_free`].
-#[no_mangle]
-pub extern "C" fn ostmac_presence() -> *mut c_char {
-    string_to_c(presence_json())
 }
 
 /// Set own preferred presence. `status` is one of: available, busy,
@@ -4582,13 +4477,8 @@ mod tests {
         whoami_cache_store(fake.clone());
         // Served from cache: no TeamsClient, no network.
         assert_eq!(whoami_json(), fake);
-        unsafe {
-            let p = ostmac_whoami();
-            assert!(!p.is_null());
-            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
-            ostmac_free(p);
-            assert_eq!(s, fake);
-        }
+        // (R14 B4: ostmac_whoami export deleted; FFI leg moved to
+        // FfiLaterB4Tests.testWhoamiCacheHitServesWithoutNetwork.)
         whoami_cache_clear();
         assert!(whoami_cache()
             .lock()
@@ -5122,26 +5012,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn meeting_to_json_shape() {
-        let m = ost::api::MeetingInfo {
-            id: "E1".to_string(),
-            subject: "Standup".to_string(),
-            start: Some("2026-09-24T09:00:00.0000000".to_string()),
-            end: None,
-            join_url: Some("https://teams.microsoft.com/l/meetup-join/x".to_string()),
-            organizer: Some("Doe, Jane".to_string()),
-            is_online: true,
-        };
-        let v = meeting_to_json(&m);
-        assert_eq!(v["id"], "E1");
-        assert_eq!(v["subject"], "Standup");
-        assert_eq!(v["start"], "2026-09-24T09:00:00.0000000");
-        assert!(v["end"].is_null());
-        assert_eq!(v["join_url"], "https://teams.microsoft.com/l/meetup-join/x");
-        assert_eq!(v["organizer"], "Doe, Jane");
-        assert_eq!(v["is_online"], true);
-    }
+    // NOTE (R14 om-later-b4 B4): meeting_to_json_shape ported to
+    // FfiLaterB4Tests.testMeetingsDecode; helper deleted.
 
     // NOTE (R12 ffi-move-now B1): join-parse matrix + null-arg test
     // moved to Swift (FfiMoveNowTests).

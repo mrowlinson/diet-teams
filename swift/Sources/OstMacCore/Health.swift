@@ -14,7 +14,7 @@ import DietDesign
 import Foundation
 import SwiftUI
 
-/// Token health + live probes. All fetches run off-main (blocking FFI).
+/// Token health + live probes. All fetches run off-main (blocking network/FFI).
 @MainActor
 public final class HealthStore: ObservableObject {
     public typealias StatusFetcher = @Sendable () throws -> StatusResponse
@@ -33,7 +33,7 @@ public final class HealthStore: ObservableObject {
     private let teamsFetcher: TeamsFetcher
     private let chatsFetcher: ChatsFetcher
     /// Per-fetch ceiling (om-settings-org): the core fetchers are
-    /// blocking FFI with no timeout of their own, so a wedged core
+    /// blocking calls with no timeout of their own, so a wedged core
     /// used to stick `running` (and the "Checking…" badge) forever.
     /// Every fetch now races this clock; timeouts fail the status
     /// read or the probe in place, and `running` always clears.

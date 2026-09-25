@@ -100,7 +100,7 @@ public extension DietPresence {
     }
 }
 
-/// Own status + chatmate cache. All fetches run off-main (blocking FFI).
+/// Own status + chatmate cache. All fetches run off-main (blocking network/FFI).
 @MainActor
 public final class PresenceStore: ObservableObject {
     public typealias OwnFetcher = @Sendable () throws -> PresenceResponse

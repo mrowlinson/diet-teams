@@ -53,10 +53,9 @@ public enum RustCore {
     }
 
     /// Current user for one account profile (no active switch).
+    /// Swift-native (R14 om-later-b4 B4; was `ostmac_whoami_for`).
     public static func whoami(profile: String) throws -> WhoamiResponse {
-        try profile.withCString { ptr in
-            try call(ostmac_whoami_for(ptr), as: WhoamiResponse.self)
-        }
+        try CoreReads.whoami(profile: profile)
     }
 
     /// Refresh one account profile's tokens (no active switch).
@@ -69,7 +68,10 @@ public enum RustCore {
     /// Sign one account profile out (clears its tokens, deletes a
     /// non-default profile file; other profiles untouched).
     public static func signOut(profile: String) throws -> SignOutResponse {
-        try profile.withCString { ptr in
+        // Swift whoami slot follows the Rust clear (success or fail: the
+        // FFI always ran the core clear first).
+        defer { CoreReads.whoamiCacheClear(profile: profile) }
+        return try profile.withCString { ptr in
             try call(ostmac_sign_out_for(ptr), as: SignOutResponse.self)
         }
     }
@@ -79,7 +81,9 @@ public enum RustCore {
     }
 
     public static func devicePoll(session: String) throws -> DevicePoll {
-        try session.withCString { ptr in
+        // Tokens may land (profile untracked here): drop all Swift slots.
+        defer { CoreReads.whoamiCacheClearAll() }
+        return try session.withCString { ptr in
             try call(ostmac_device_poll(ptr), as: DevicePoll.self)
         }
     }
@@ -89,7 +93,8 @@ public enum RustCore {
     }
 
     public static func signOut() throws -> SignOutResponse {
-        try call(ostmac_sign_out(), as: SignOutResponse.self)
+        defer { CoreReads.whoamiCacheClear(profile: CoreLocal.activeProfileID()) }
+        return try call(ostmac_sign_out(), as: SignOutResponse.self)
     }
 
     /// Browser-capture start (auth-code + PKCE, no network): returns the
@@ -102,7 +107,9 @@ public enum RustCore {
     /// for tokens (state verified in core). Blocking FFI (network): call
     /// off the main thread.
     public static func browserComplete(session: String, callback: String) throws -> AuthCodeComplete {
-        try session.withCString { sPtr in
+        // Tokens land (profile untracked here): drop all Swift slots.
+        defer { CoreReads.whoamiCacheClearAll() }
+        return try session.withCString { sPtr in
             try callback.withCString { cPtr in
                 try call(ostmac_authcode_complete(sPtr, cPtr), as: AuthCodeComplete.self)
             }
@@ -116,16 +123,18 @@ public enum RustCore {
         }
     }
 
+    /// Swift-native (R14 om-later-b4 B4; was `ostmac_whoami`).
     public static func whoami() throws -> WhoamiResponse {
-        try call(ostmac_whoami(), as: WhoamiResponse.self)
+        try CoreReads.whoami()
     }
 
     public static func chats(limit: Int32 = 20) throws -> ChatsResponse {
         try call(ostmac_chats(limit), as: ChatsResponse.self)
     }
 
+    /// Swift-native (R14 om-later-b4 B4; was `ostmac_teams`).
     public static func teams() throws -> TeamsResponse {
-        try call(ostmac_teams(), as: TeamsResponse.self)
+        try CoreReads.teams()
     }
 
     /// Create one standard channel in a team (nil/blank description is
@@ -498,8 +507,9 @@ public enum RustCore {
         }
     }
 
+    /// Swift-native (R14 om-later-b4 B4; was `ostmac_presence`).
     public static func presence() throws -> PresenceResponse {
-        try call(ostmac_presence(), as: PresenceResponse.self)
+        try CoreReads.presence()
     }
 
     public static func setPresence(status: String) throws -> PresenceResponse {
@@ -560,9 +570,10 @@ public enum RustCore {
         }
     }
 
-    /// Upcoming meetings (blocking FFI + network: call off main thread).
+    /// Upcoming meetings (blocking network: call off main thread).
+    /// Swift-native (R14 om-later-b4 B4; was `ostmac_meetings`).
     public static func meetings(limit: Int32 = 20) throws -> MeetingsResponse {
-        try call(ostmac_meetings(limit), as: MeetingsResponse.self)
+        try CoreReads.meetings(limit: limit)
     }
 
     /// Classify a pasted join string (pure parse, no network, no FFI).

@@ -18,7 +18,7 @@ public enum TeamsState: Equatable, Sendable {
 
 /// Loads the teams list off the main thread and publishes rows.
 ///
-/// Default fetcher calls `RustCore.teams` (blocking FFI + network) on a
+/// Default fetcher calls `RustCore.teams` (blocking network) on a
 /// detached task. Tests inject a mock fetcher.
 @MainActor
 public final class TeamsViewModel: ObservableObject {

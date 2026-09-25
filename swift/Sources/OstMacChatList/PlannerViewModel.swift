@@ -18,7 +18,7 @@ public enum PlannerState: Equatable, Sendable {
 /// Loads joined teams off the main thread, owns team selection, the
 /// selected team's plans, and the selected plan's buckets + tasks.
 /// Default fetchers call `RustCore.teams` / `PlannerCore.*` (blocking
-/// FFI + network) on detached tasks. Tests inject mock fetchers.
+/// network) on detached tasks. Tests inject mock fetchers.
 /// `localEdits` (demo mode) applies add/complete/reopen to the
 /// in-memory rows instead of calling core, so `--demo` stays offline.
 @MainActor

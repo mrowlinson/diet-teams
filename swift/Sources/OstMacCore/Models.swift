@@ -121,7 +121,7 @@ public struct AuthCodeCancel: Decodable, Sendable {
 
 // MARK: - Identity (om-identity-own lane)
 
-/// Current user from core `ostmac_whoami` (Graph /me, core-cached).
+/// Current user from `CoreReads.whoami` (Graph /me, Swift-cached).
 /// `display_name` is the `ChatMessage.sender` match key for `isOwn`
 /// (same sender==name rule the ost TUI uses).
 public struct WhoamiResponse: Decodable, Sendable {
@@ -175,7 +175,7 @@ public struct ChatsResponse: Decodable, Sendable {
 
 // MARK: - Teams (om-teams lane)
 
-/// One channel inside a team. Wire format from core `ostmac_teams`:
+/// One channel inside a team. Wire format from `CoreReads.teams`:
 /// `{"id","name","description?","membership_type?","web_url?"}`.
 /// The id opens as a conversation through the same messages/send path
 /// as chat ids (ost TUI parity). Detail fields are nil on pre-H1
@@ -555,7 +555,7 @@ public struct ReminderTaskResult: Decodable, Sendable {
 
 // MARK: - Meetings (om-meet-join lane: upcoming via Graph calendarView)
 
-/// One upcoming meeting from core `ostmac_meetings`: `{"id","subject",
+/// One upcoming meeting from `CoreReads.meetings`: `{"id","subject",
 /// "start?","end?","join_url?","organizer?","is_online"}`.
 public struct MeetingItem: Decodable, Sendable, Identifiable, Equatable {
     public var id: String { meetingId }
@@ -1305,7 +1305,7 @@ public struct UploadProgressResponse: Decodable, Sendable {
 
 // MARK: - Presence (om-presence lane)
 
-/// Own presence from core `ostmac_presence` / `ostmac_presence_set`
+/// Own presence from `CoreReads.presence` / `ostmac_presence_set`
 /// (Graph /me/presence): availability ∈ Available, Busy, DoNotDisturb,
 /// Away, Offline, PresenceUnknown (+ future server values, passed through).
 public struct PresenceResponse: Decodable, Sendable {

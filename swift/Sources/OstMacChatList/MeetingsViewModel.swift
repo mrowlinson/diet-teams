@@ -25,7 +25,7 @@ public enum MeetingsState: Equatable, Sendable {
 
 /// Loads upcoming meetings off the main thread and owns the join flow.
 // Default fetchers call `RustCore.meetings` / `meetingJoinParse`
-/// (blocking FFI) on detached tasks; the join runner defaults to
+/// (blocking network) on detached tasks; the join runner defaults to
 /// `RustCore.callPlace` (signaling only). Tests inject mock fetchers.
 @MainActor
 public final class MeetingsViewModel: ObservableObject {
