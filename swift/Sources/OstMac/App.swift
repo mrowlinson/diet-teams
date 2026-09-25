@@ -23,6 +23,7 @@
 // --say auto-sends once into the open chat. In live mode that is a REAL
 // send via core — never use it on shared chats for testing.
 // --show-about / --show-settings / --show-av open those windows at launch (shot hooks).
+// --show-catchup-ondevice is --show-catchup with the on-device provider (canned, shot hook).
 // --show-meeting seeds the Meeting window offline + opens it (shot hook).
 // --show-diagnostics opens the Diagnostics window at launch (shot hook).
 // --show-calls opens the Recent Calls window at launch (shot hook).
@@ -367,7 +368,7 @@ final class AppState: ObservableObject {
         showNotes = args.contains("--show-notes")
         showJump = args.contains("--show-jump") // shot hook: palette open at launch
         call = CallStore(demo: isDemo)
-        showCatchUp = args.contains("--show-catchup")
+        showCatchUp = args.contains("--show-catchup") || args.contains("--show-catchup-ondevice")
         showForward = args.contains("--show-forward")
         showReply = args.contains("--show-reply")
         showSidebarChurn = args.contains("--show-sidebarchurn")
@@ -386,13 +387,24 @@ final class AppState: ObservableObject {
         if showCatchUp {
             // Shot hook only: throwaway defaults (never the real ones),
             // canned summary, no network.
-            let canned = CatchUpCannedTransport(stub: Self.catchUpDemoSummary)
-            let store = CatchUpStore(
-                cliTransport: canned,
-                defaults: UserDefaults(suiteName: "shot-catchup") ?? .standard,
-                keyStore: CatchUpMemoryKeyStore())
-            store.adopt(CatchUpConfig(enabled: true, apiKey: "demo"))
-            catchUp = store
+            if args.contains("--show-catchup-ondevice") {
+                let runner = OnDeviceMockRunner(stub: Self.catchUpDemoSummary)
+                let store = CatchUpStore(
+                    onDeviceTransport: OnDeviceCatchUpTransport(
+                        runner: runner, availability: { .available }),
+                    defaults: UserDefaults(suiteName: "shot-catchup") ?? .standard,
+                    keyStore: CatchUpMemoryKeyStore())
+                store.adopt(CatchUpConfig(provider: .onDevice, enabled: true))
+                catchUp = store
+            } else {
+                let canned = CatchUpCannedTransport(stub: Self.catchUpDemoSummary)
+                let store = CatchUpStore(
+                    cliTransport: canned,
+                    defaults: UserDefaults(suiteName: "shot-catchup") ?? .standard,
+                    keyStore: CatchUpMemoryKeyStore())
+                store.adopt(CatchUpConfig(enabled: true, apiKey: "demo"))
+                catchUp = store
+            }
         } else if showHistory {
             // Shot hook only: memory key store, never the real keychain
             // (--show-catchup precedent; no SecurityAgent prompt).
