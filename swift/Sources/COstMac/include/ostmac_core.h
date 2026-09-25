@@ -265,6 +265,21 @@ char *ostmac_meetings(int limit);
 // thread|meeting-id|url|unknown. Caller frees.
 char *ostmac_meeting_join_parse(const char *raw);
 
+// Week-window meetings JSON (Graph calendarView [week_start,
+// week_start+days], requires sign-in): {ok,week_start,days,
+// meetings:[{id,subject,start?,end?,join_url?,organizer?,
+// is_online}]}. week_start<=0 means now; days<=0 means 7. Caller frees.
+char *ostmac_cal_week(long long week_start, int days, int limit);
+
+// Schedule one meeting (requires sign-in + Calendars.ReadWrite):
+// {ok,event:{...}}. online!=0 requests a Teams link. Caller frees.
+char *ostmac_cal_schedule(
+    const char *subject, const char *start, const char *end,
+    const char *time_zone, int online);
+
+// Cancel one meeting (requires sign-in): {ok,id}. Caller frees.
+char *ostmac_cal_cancel(const char *event_id);
+
 // Start background Trouter push: 0 ok, -1 running, -2 no auth, -3 rt fail.
 int ostmac_trouter_start(void);
 

@@ -32,6 +32,7 @@ use serde_json::json;
 pub mod av;
 pub mod browser_auth;
 pub mod calls;
+pub mod calweek;
 pub mod live;
 pub mod planner;
 pub mod realtime;
