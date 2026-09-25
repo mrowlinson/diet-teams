@@ -686,6 +686,38 @@ needing maintainer buy-in. Minor PRs stand alone; majors are separate PRs.
     rewrite — cf. wave-2 and wave-8 dup notes. PR #51's body cites
     no ledger number, so no upstream mismatch.)
 
+54. [minor] `src/calling/recording.rs` — **region-threaded
+    recorder-base fallback (om-recorder-region lane)**.
+    `RecordingParams` gains `region`; `extract_recorder_from_payload`
+    + `wait_for_recorder_info` take a caller-supplied
+    `fallback_region` instead of hardcoded `TEAMS_REGION`
+    (`DEFAULT_RECORDER_REGION = "amer"`, captured traffic is
+    AMER/USEA). Payload callrecorder-hostname extraction stays the
+    primary path; the region map feeds only the fallback.
+    Follow-up: `eu`/`emea` aliases pinned to the EUWE base +
+    case/whitespace test. Region-headers lane later retyped the
+    field to `&TeamsRegion` (its slug feeds the fallback; §53
+    region-headers). Tests: recorder-base region variance,
+    primary-path precedence, eu-alias pin. Genuine signaling
+    generalization, not OstMac-specific. Merged `7296487` + alias
+    pin `5b93357` (both on main @ `98e3e33`).
+    (Numbering note: two §53 entries above — region-headers and
+    turn-md5; left as-is since #51 already cites §53. Cf. wave-2
+    dup-17/19 precedent.)
+    Upstream: UNFILED (no PR yet; stacks after §53 region-headers
+    on `TeamsRegion`).
+
+55. [minor] `src/calling/recording.rs` — **gate recorder frame
+    dumps behind `TEAMS_DEBUG_DUMP` (om-recorder-region lane)**.
+    `wait_for_recorder_info` wrote `/tmp/recorder_trouter_payload.json`
+    + `/tmp/recorder_frame_N.json` unconditionally on every frame;
+    only the add-recorder response dump honored the opt-in gate.
+    New `debug_dump_enabled`/`write_debug_dump` helpers (pure
+    `enabled` param keeps tests hermetic, `with_overrides` pattern);
+    all 3 dump sites go through them. 2 tests (disabled writes
+    nothing, enabled round-trips content).
+    Upstream: UNFILED (stacks with §54).
+
 ## Upstream PRs (2026-09-22, base 0892144; main red on sdp E0308 until #5)
 
 Minor (standalone modulo #5-first; merge in any order after):
