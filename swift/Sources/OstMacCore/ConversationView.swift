@@ -25,6 +25,8 @@ public struct ConversationView: View {
     @ObservedObject public var attachments: ComposeAttachmentsStore
     /// Pinned messages per thread (om-pinmessages): passed to the timeline.
     @ObservedObject public var pins: PinnedMessageStore
+    /// Cross-chat saved collection (e2-saved): passed to the timeline.
+    @ObservedObject public var saved: SavedMessageStore
     /// Scheduled-send queue (d2-send): the clock button enqueues, the
     /// strip + sheet list this chat's pending items.
     @ObservedObject public var scheduled: ScheduledSendStore
@@ -55,6 +57,9 @@ public struct ConversationView: View {
     /// Forward tap (om-msgactions): the host opens its jump-palette sheet
     /// (OstMac target owns JumpPaletteView; this module cannot import it).
     private let onForward: (ChatMessage) -> Void
+    /// Channel context for saves (e2-saved): the team/channel ids behind
+    /// one chat id (nil for plain chats). The host walks its teams model.
+    private let savedContext: (String) -> (teamID: String?, channelID: String?)
     /// Edit sheet target + draft (om-editdel).
     @State private var editingMessage: ChatMessage?
     @State private var editDraft = ""
@@ -87,6 +92,7 @@ public struct ConversationView: View {
         receipts: ReceiptStore = ReceiptStore(),
         attachments: ComposeAttachmentsStore = ComposeAttachmentsStore(),
         pins: PinnedMessageStore = PinnedMessageStore(),
+        saved: SavedMessageStore = SavedMessageStore(),
         scheduled: ScheduledSendStore = ScheduledSendStore(),
         isGroup: Bool = true, initialTab: Int = 0, catchUpOpen: Bool = false,
         onForward: @escaping (ChatMessage) -> Void = { _ in },
@@ -94,7 +100,8 @@ public struct ConversationView: View {
         scheduleOpen: Bool = false, scheduledListOpen: Bool = false,
         onOpenLink: @escaping (URL) -> Void = { LinkPreviewOpen.default($0) },
         initialDraft: String = "",
-        onDraftChange: ((String) -> Void)? = nil
+        onDraftChange: ((String) -> Void)? = nil,
+        savedContext: @escaping (String) -> (teamID: String?, channelID: String?) = { _ in (nil, nil) }
     ) {
         self.store = store
         self.presence = presence
@@ -107,6 +114,8 @@ public struct ConversationView: View {
         self.receipts = receipts
         self.attachments = attachments
         self.pins = pins
+        self.saved = saved
+        self.savedContext = savedContext
         self.scheduled = scheduled
         self.isGroup = isGroup
         self.onForward = onForward
@@ -165,6 +174,8 @@ public struct ConversationView: View {
                     onOpenDoc: { _ = shared.open($0.file) },
                     receipts: receipts,
                     pins: pins,
+                    saved: saved,
+                    savedContext: savedContext,
                     onOpenLink: onOpenLink)
                     .id("chat-\(store.chatID ?? "-")")
                 DietSeamH()
@@ -893,6 +904,9 @@ struct MessageBubble: View {
     /// Pinned state (om-pinmessages): drives the Pin/Unpin menu label.
     var isPinned: Bool = false
     var onTogglePin: () -> Void = {}
+    /// Saved state (e2-saved): drives the Save/Unsave message menu label.
+    var isSaved: Bool = false
+    var onToggleSave: () -> Void = {}
     /// Open chat id (om-jd-cardactions): feeds the "Open in Teams"
     /// fallback link. Nil (previews, tests) falls back to Teams home.
     var chatID: String? = nil
@@ -1044,6 +1058,7 @@ struct MessageBubble: View {
                     onSave: { saveBody() }, onRetry: onRetry,
                     onReply: onReply, onEdit: onEdit, onDelete: onDelete,
                     isPinned: isPinned, onTogglePin: onTogglePin,
+                    isSaved: isSaved, onToggleSave: onToggleSave,
                     canTranslate: MessageTranslation.isEligible(message),
                     onTranslate: onTranslate))
             // Keyboard/VO path (om-a3-keyboard): the bubble takes focus
@@ -1087,6 +1102,7 @@ struct MessageBubble: View {
             Button(MessageTranslation.menuTitle, action: onTranslate)
         }
         Button(PinnedMessages.menuTitle(isPinned: isPinned), action: onTogglePin)
+        Button(SavedMessages.menuTitle(isSaved: isSaved), action: onToggleSave)
         if message.isOwn {
             Button("Edit…", action: onEdit)
             Button("Delete…", action: onDelete)
@@ -1102,13 +1118,14 @@ struct MessageBubble: View {
     /// update BOTH with keyboardMenu above).
     static func keyboardMenuTitles(
         for message: ChatMessage, failed: Bool, isPinned: Bool,
-        canTranslate: Bool
+        isSaved: Bool = false, canTranslate: Bool
     ) -> [String] {
         var titles = ["React…", "Reply", "Copy", "Forward…", "Save…"]
         if canTranslate {
             titles.append(MessageTranslation.menuTitle)
         }
         titles.append(PinnedMessages.menuTitle(isPinned: isPinned))
+        titles.append(SavedMessages.menuTitle(isSaved: isSaved))
         if message.isOwn {
             titles += ["Edit…", "Delete…"]
         }

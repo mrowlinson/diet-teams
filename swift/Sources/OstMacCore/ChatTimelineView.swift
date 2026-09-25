@@ -26,6 +26,11 @@ struct ChatTimelineView: View {
     @ObservedObject var receipts: ReceiptStore = ReceiptStore()
     /// Pinned messages (om-pinmessages): the strip + bubble menu state.
     @ObservedObject var pins: PinnedMessageStore = PinnedMessageStore()
+    /// Saved messages (e2-saved): the bubble menu save state.
+    @ObservedObject var saved: SavedMessageStore = SavedMessageStore()
+    /// Channel context for saves (e2-saved): team/channel ids behind one
+    /// chat id (nil pair for plain chats). Injected; default saves bare.
+    var savedContext: (String) -> (teamID: String?, channelID: String?) = { _ in (nil, nil) }
     /// Inline translation (e1-translation): per-bubble cached entries.
     @ObservedObject var translations: TranslationStore = TranslationStore()
     /// Preview-row tap (om-linkpreview passthrough).
@@ -114,6 +119,15 @@ struct ChatTimelineView: View {
                                         chatID: store.chatID, messageID: msg.id),
                                     onTogglePin: {
                                         pins.toggle(chatID: store.chatID, message: msg)
+                                    },
+                                    isSaved: saved.isSaved(
+                                        chatID: store.chatID, messageID: msg.id),
+                                    onToggleSave: {
+                                        let ctx = store.chatID.map { savedContext($0) }
+                                        saved.toggle(
+                                            chatID: store.chatID,
+                                            teamID: ctx?.teamID, channelID: ctx?.channelID,
+                                            message: msg)
                                     },
                                     chatID: store.chatID,
                                     onQuoteJump: { jumpToQuote(proxy, id: $0) },

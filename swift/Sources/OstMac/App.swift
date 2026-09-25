@@ -270,6 +270,12 @@ private struct OstMacCommands: Commands {
                 NotificationCenter.default.post(name: .showJumpPalette, object: nil)
             }
             .keyboardShortcut("k", modifiers: .command)
+            // e2-saved entry: a sheet, NOT an 8th sidebar tab (R8
+            // app-nav-sidebar owns the nav surface concurrently — see X1).
+            Button("Saved Messages…") {
+                NotificationCenter.default.post(name: .showSavedMessages, object: nil)
+            }
+            .keyboardShortcut("s", modifiers: [.command, .shift])
         }
         CommandGroup(after: .windowList) {
             Button("Diagnostics") { openWindow(id: AppIdentity.diagWindowID) }
@@ -325,6 +331,9 @@ final class AppState: ObservableObject {
     let receipts = ReceiptStore()
     /// Rebuilt per account on switch (d1-accounts).
     @Published var pinnedMessages: PinnedMessageStore
+    /// Cross-chat saved collection (e2-saved). Rebuilt per account on
+    /// switch (d1-accounts) like pins.
+    @Published var savedMessages: SavedMessageStore
     let auth = AuthViewModel()
     let presence = PresenceStore()
     let call: CallStore
@@ -398,6 +407,8 @@ final class AppState: ObservableObject {
     @Published var notifSkipped = 0
     @Published var notifLastReason = ""
     @Published var showJump = false
+    /// Saved collection sheet (e2-saved): Go-menu command + --show-saved.
+    @Published var showSaved = false
     @AppStorage("selectedChatID") private var persistedSelection: String?
 
     private let preselectID: String?
@@ -427,6 +438,8 @@ final class AppState: ObservableObject {
             || args.contains("--show-folders") || args.contains("--show-folders-manage")
         showNotes = args.contains("--show-notes")
         showJump = args.contains("--show-jump") // shot hook: palette open at launch
+        showSaved = args.contains("--show-saved") // shot hook: saved sheet open at launch
+        savedMessages = SavedMessageStore()
         call = CallStore(demo: isDemo)
         showCatchUp = args.contains("--show-catchup") || args.contains("--show-catchup-ondevice")
         showForward = args.contains("--show-forward")
@@ -751,6 +764,7 @@ final class AppState: ObservableObject {
         chats = makeChats(accountID: id, blocked: freshBlocked)
         wireChats()
         pinnedMessages = PinnedMessageStore(key: PinnedMessages.key(for: id))
+        savedMessages = SavedMessageStore(key: SavedMessages.key(for: id))
         history = CallHistoryStore(key: CallHistoryStore.key(for: id))
         wireHistory()
         meetingChat = makeMeetingChat(accountID: id)
@@ -1153,6 +1167,24 @@ final class AppState: ObservableObject {
     /// jump headers share it). Unknown ids fall back to the generic label.
     func displayName(for chatID: String) -> String {
         chatNameOrNil(for: chatID) ?? "Conversation"
+    }
+
+    /// Channel context for saves (e2-saved): the team/channel ids
+    /// behind one chat id (nil pair for plain chats and unknown ids).
+    func savedContext(for chatID: String) -> (teamID: String?, channelID: String?) {
+        for team in teams.teams {
+            if team.channels.contains(where: { $0.id == chatID }) {
+                return (team.id, chatID)
+            }
+        }
+        return (nil, nil)
+    }
+
+    /// Saved-row jump (e2-saved): close the sheet, then the standard
+    /// message-hit funnel (open the chat + seek the bubble).
+    func jumpToSaved(_ hit: SearchHit) {
+        showSaved = false
+        jumpToMessage(hit)
     }
 
     /// Name for one conversation id, nil when unknown (palette hit
@@ -2037,6 +2069,7 @@ struct RootView: View {
                             catchUp: state.catchUp, typing: state.typing,
                             receipts: state.receipts,
                             pins: state.pinnedMessages,
+                            saved: state.savedMessages,
                             scheduled: state.scheduled,
                             isGroup: state.chats.selectedChat?.is_group ?? true,
                             initialTab: CommandLine.arguments.contains("--show-shared") ? 1
@@ -2048,7 +2081,8 @@ struct RootView: View {
                             scheduleOpen: CommandLine.arguments.contains("--show-schedule"),
                             scheduledListOpen: CommandLine.arguments.contains("--show-scheduled"),
                             initialDraft: state.popouts.draft(for: state.openChatID ?? ""),
-                            onDraftChange: { state.popouts.saveDraft($0, for: state.openChatID ?? "") })
+                            onDraftChange: { state.popouts.saveDraft($0, for: state.openChatID ?? "") },
+                            savedContext: { state.savedContext(for: $0) })
                             // Per-chat composer (e1-popout): drafts restore
                             // per thread instead of leaking across switches.
                             .id(state.openChatID)
@@ -2066,6 +2100,9 @@ struct RootView: View {
         .frame(minWidth: 760, minHeight: 520)
         .onReceive(NotificationCenter.default.publisher(for: .showJumpPalette)) { _ in
             state.showJump = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .showSavedMessages)) { _ in
+            state.showSaved = true
         }
         // e1-popout shot hook: open the armed pop-out window once the
         // list lands (openWindow lives in the view layer only).
@@ -2091,6 +2128,14 @@ struct RootView: View {
                 state.showJump = false
                 state.jump(chatID: id, chatName: name)
             }
+        }
+        .sheet(isPresented: $state.showSaved) {
+            SavedMessagesView(
+                store: state.savedMessages,
+                live: state.conv.messages,
+                showPreview: state.notifs.showPreview,
+                chatNameFor: { state.chatNameOrNil(for: $0) },
+                onJump: { state.jumpToSaved($0) })
         }
         .sheet(item: $state.forwardMessage) { msg in
             ForwardSheetLive(
