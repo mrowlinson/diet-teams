@@ -658,7 +658,7 @@ needing maintainer buy-in. Minor PRs stand alone; majors are separate PRs.
     `TEAMS_REGION`/`TEAMS_RING` env, per-field AMER fallback; +2
     tests, hermetic `with_overrides`).
 
-53. [minor] `src/calling/turn.rs` + `Cargo.toml`/`Cargo.lock` —
+54. [minor] `src/calling/turn.rs` + `Cargo.toml`/`Cargo.lock` —
     **RFC 5389 MD5 long-term credential key (om-turn-md5 lane)**.
     `compute_long_term_key` ignored its MD5(username:realm:password)
     contract and returned raw password bytes (short-term fallback
@@ -673,6 +673,10 @@ needing maintainer buy-in. Minor PRs stand alone; majors are separate PRs.
     2026-09-25, base 0892144; verbatim lane hunk, 93/93 bin tests
     with sdp-dance temp-fix reverted; unit vectors only, no live
     TURN-server verification — stated in body).
+    (Renumbered §53→§54: disambiguates the duplicate §53 from the
+    om-region-headers lane; entry order preserved, no history
+    rewrite — cf. wave-2 and wave-8 dup notes. PR #51's body cites
+    no ledger number, so no upstream mismatch.)
 
 ## Upstream PRs (2026-09-22, base 0892144; main red on sdp E0308 until #5)
 
