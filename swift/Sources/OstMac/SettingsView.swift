@@ -47,11 +47,6 @@ struct SettingsView: View {
     /// Inline-translation target (e1-translation): same key the
     /// TranslationStore reads (default = system language).
     @AppStorage("om.translation.target") private var translationTarget = MessageTranslation.defaultTargetCode()
-    /// Template editor drafts + refusal text (e2-canned): Settings-local.
-    @State private var templateTitleDraft = ""
-    @State private var templateBodyDraft = ""
-    @State private var templateError: String?
-    @State private var editingTemplate: CannedTemplate?
     private let fixedAccount: AccountInfo?
 
     /// Live view: shares the app's models (single source of truth).
@@ -344,52 +339,7 @@ struct SettingsView: View {
                                 .foregroundStyle(DietColor.textSecondaryColor)
                         }
                     }
-                    Section("Templates") {
-                        if canned.templates.isEmpty {
-                            Text("No templates yet. Add one below — the composer button inserts it into your draft.")
-                                .font(DietType.caption1)
-                                .foregroundStyle(DietColor.textSecondaryColor)
-                        } else {
-                            ForEach(Array(canned.templates.enumerated()), id: \.element.id) { i, template in
-                                HStack {
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(template.title)
-                                            .lineLimit(1)
-                                            .truncationMode(.middle)
-                                        Text(template.body)
-                                            .font(DietType.caption1)
-                                            .foregroundStyle(DietColor.textSecondaryColor)
-                                            .lineLimit(2)
-                                    }
-                                    Spacer()
-                                    Button("Up") { canned.move(from: i, to: i - 1) }
-                                        .disabled(i == 0)
-                                    Button("Down") { canned.move(from: i, to: i + 1) }
-                                        .disabled(i == canned.templates.count - 1)
-                                    Button("Edit") { editingTemplate = template }
-                                    Button("Remove") { canned.delete(id: template.id) }
-                                }
-                            }
-                        }
-                        TextField("Title, e.g. Standup", text: $templateTitleDraft)
-                        TextField("Message text", text: $templateBodyDraft, axis: .vertical)
-                            .lineLimit(2...4)
-                        HStack {
-                            Button("Add template", action: submitTemplate)
-                            Spacer()
-                        }
-                        if let templateError {
-                            Text(templateError)
-                                .font(DietType.caption1)
-                                .foregroundStyle(Color(nsColor: DietColor.danger))
-                        }
-                        Text("Templates insert into the composer draft — nothing sends until you hit Send. Stored on this Mac only.")
-                            .font(DietType.caption1)
-                            .foregroundStyle(DietColor.textSecondaryColor)
-                    }
-                    .sheet(item: $editingTemplate) { template in
-                        TemplateEditSheet(canned: canned, template: template)
-                    }
+                    TemplatesSettingsSection(canned: canned)
                     CatchUpSettingsSection(catchUp: catchUp)
                 }
                 .formStyle(.grouped)
@@ -503,15 +453,6 @@ struct SettingsView: View {
     private func submitBlock() {
         blockError = rules.addBlockKeyword(blockDraft)
         if blockError == nil { blockDraft = "" }
-    }
-
-    /// Submit the template drafts: refusal text shows, success clears.
-    private func submitTemplate() {
-        templateError = canned.add(title: templateTitleDraft, body: templateBodyDraft)
-        if templateError == nil {
-            templateTitleDraft = ""
-            templateBodyDraft = ""
-        }
     }
 
     /// Shot hook flag (R6): fixed sanitized view, scrolled to keywords.
@@ -638,6 +579,90 @@ private struct ObservedAccountStatus: View {
             .font(DietType.caption1)
             .foregroundStyle(DietColor.textSecondaryColor)
             .lineLimit(1)
+    }
+}
+
+/// Templates Settings section (e2-canned): rows with Up/Down/Edit/
+/// Remove, create fields with inline refusal text. Extracted
+/// (CatchUpSettingsSection precedent) so the shot hook renders the
+/// real section standalone.
+struct TemplatesSettingsSection: View {
+    @ObservedObject var canned: CannedResponsesStore
+    @State private var titleDraft = ""
+    @State private var bodyDraft = ""
+    @State private var error: String?
+    @State private var editingTemplate: CannedTemplate?
+
+    var body: some View {
+        Section("Templates") {
+            if canned.templates.isEmpty {
+                Text("No templates yet. Add one below — the composer button inserts it into your draft.")
+                    .font(DietType.caption1)
+                    .foregroundStyle(DietColor.textSecondaryColor)
+            } else {
+                ForEach(Array(canned.templates.enumerated()), id: \.element.id) { i, template in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(template.title)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Text(template.body)
+                                .font(DietType.caption1)
+                                .foregroundStyle(DietColor.textSecondaryColor)
+                                .lineLimit(2)
+                        }
+                        Spacer()
+                        Button("Up") { canned.move(from: i, to: i - 1) }
+                            .disabled(i == 0)
+                        Button("Down") { canned.move(from: i, to: i + 1) }
+                            .disabled(i == canned.templates.count - 1)
+                        Button("Edit") { editingTemplate = template }
+                        Button("Remove") { canned.delete(id: template.id) }
+                    }
+                }
+            }
+            TextField("Title, e.g. Standup", text: $titleDraft)
+            TextField("Message text", text: $bodyDraft, axis: .vertical)
+                .lineLimit(2...4)
+            HStack {
+                Button("Add template") {
+                    error = canned.add(title: titleDraft, body: bodyDraft)
+                    if error == nil {
+                        titleDraft = ""
+                        bodyDraft = ""
+                    }
+                }
+                Spacer()
+            }
+            if let error {
+                Text(error)
+                    .font(DietType.caption1)
+                    .foregroundStyle(Color(nsColor: DietColor.danger))
+            }
+            Text("Templates insert into the composer draft — nothing sends until you hit Send. Stored on this Mac only.")
+                .font(DietType.caption1)
+                .foregroundStyle(DietColor.textSecondaryColor)
+        }
+        .sheet(item: $editingTemplate) { template in
+            TemplateEditSheet(canned: canned, template: template)
+        }
+    }
+}
+
+/// Standalone shot view (--show-settings-templates): the real
+/// Templates section in a compact window (Form-embedded scrollTo is
+/// broken for every section, keywords included — no scroll hook can
+/// land it in the full Settings window).
+struct TemplatesShotView: View {
+    @ObservedObject var canned: CannedResponsesStore
+
+    var body: some View {
+        Form {
+            TemplatesSettingsSection(canned: canned)
+        }
+        .formStyle(.grouped)
+        .padding()
+        .frame(width: 460)
     }
 }
 

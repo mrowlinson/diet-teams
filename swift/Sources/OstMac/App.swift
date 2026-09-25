@@ -222,7 +222,11 @@ struct OstMacAppMain: App {
         }
         .defaultSize(width: 560, height: 640)
         Settings {
-            if CommandLine.arguments.contains("--show-settings-keywords") {
+            if CommandLine.arguments.contains("--show-settings-templates") {
+                // Shot hook (e2-canned): the real Templates section
+                // standalone in a compact window.
+                TemplatesShotView(canned: state.canned)
+            } else if CommandLine.arguments.contains("--show-settings-keywords") {
                 // Shot hook (R6): fixed sanitized view (no live account
                 // rows), scrolled to Keyword alerts; rules load from the
                 // seeded rules.json like the live store.
@@ -2132,7 +2136,8 @@ struct RootView: View {
                 openWindow(id: AppIdentity.meetWindowID)
             }
             if CommandLine.arguments.contains("--show-settings")
-                || CommandLine.arguments.contains("--show-settings-keywords") {
+                || CommandLine.arguments.contains("--show-settings-keywords")
+                || CommandLine.arguments.contains("--show-settings-templates") {
                 openSettings()
             }
             if OstMacAppMain.authStateName(args: CommandLine.arguments) != nil {
