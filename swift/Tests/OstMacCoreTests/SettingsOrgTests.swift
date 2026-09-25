@@ -114,6 +114,11 @@ final class SettingsOrgTests: XCTestCase {
             isDemo: false, args: ["--show-settings-attention"]))
     }
 
+    func testChatsShotStaysIsolated() {
+        XCTAssertTrue(SettingsRouting.useIsolatedDemo(
+            isDemo: false, args: ["--show-settings-chats"]))
+    }
+
     func testIsolatedDemoAccountIsSignedOut() {
         let account = SettingsRouting.isolatedDemoAccount
         XCTAssertFalse(account.signedIn)
@@ -149,5 +154,9 @@ final class SettingsOrgTests: XCTestCase {
             SettingsRouting.initialCategory(
                 args: ["--show-settings-attention"]),
             .notifications)
+        XCTAssertEqual(
+            SettingsRouting.initialCategory(
+                args: ["--show-settings-chats"]),
+            .chats)
     }
 }

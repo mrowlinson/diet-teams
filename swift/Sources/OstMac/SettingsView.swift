@@ -132,7 +132,18 @@ struct SettingsView: View {
         _accounts = ObservedObject(wrappedValue: AccountStore())
         // Demo slot: taps flip local state only, never touch core.
         _call = ObservedObject(wrappedValue: CallStore(demo: true))
-        _canned = ObservedObject(wrappedValue: CannedResponsesStore())
+        if Self.isChatsShot {
+            // Chats shot: throwaway suite + two demo rows (never the
+            // real templates), wiped first for determinism.
+            let suite = UserDefaults(suiteName: "shot-chats") ?? .standard
+            suite.removePersistentDomain(forName: "shot-chats")
+            let seeded = CannedResponsesStore(defaults: suite)
+            _ = seeded.add(title: "Standup", body: "Yesterday: <done>. Today: <plan>. Blockers: none.")
+            _ = seeded.add(title: "OOO", body: "Out today, back tomorrow — ping Priya for anything urgent.")
+            _canned = ObservedObject(wrappedValue: seeded)
+        } else {
+            _canned = ObservedObject(wrappedValue: CannedResponsesStore())
+        }
         onAccountAdded = { _ in }
         onRemoveAccount = { _ in }
         fixedAccount = account
@@ -178,7 +189,7 @@ struct SettingsView: View {
                 }
             }
         }
-        .frame(width: 660, height: 520)
+        .frame(width: 660, height: Self.shotHeight)
     }
 
     /// Detail form for the selected sidebar category.
@@ -603,6 +614,21 @@ struct SettingsView: View {
     /// schedules, seeded from the throwaway suite).
     fileprivate static var isAttentionShot: Bool {
         CommandLine.arguments.contains("--show-settings-attention")
+    }
+
+    /// Shot hook flag (r8-merge): fixed view preselected on Chats
+    /// (Templates section in situ, seeded throwaway rows).
+    fileprivate static var isChatsShot: Bool {
+        CommandLine.arguments.contains("--show-settings-chats")
+    }
+
+    /// Shot window heights: the full Attention surface (banners
+    /// through schedules) and the Chats detail (through Templates)
+    /// fit without scrolling; real launches stay 520.
+    private static var shotHeight: CGFloat {
+        if isAttentionShot { return 2150 }
+        if isChatsShot { return 950 }
+        return 520
     }
 
     private var account: AccountInfo {
