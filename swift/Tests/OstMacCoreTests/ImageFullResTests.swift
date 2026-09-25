@@ -105,6 +105,34 @@ final class ImageFullResTests: XCTestCase {
         XCTAssertEqual(reopen.phase, .loaded)
         XCTAssertEqual(reopen.image?.size, NSSize(width: 960, height: 640))
     }
+
+    // MARK: - Animated viewer (om-gif-playback)
+
+    func testFullResModelLoadsGifClip() async throws {
+        let bytes = try DemoMedia.data(for: DemoMedia.gif1Full)
+        let model = FullResImageModel(
+            thumbURL: DemoMedia.gif1, messageID: "m1", thumb: nil,
+            cache: RichMediaCache(diskDir: nil),
+            fetcher: { _ in bytes })
+        await model.reload()
+        XCTAssertEqual(model.phase, .loaded)
+        XCTAssertNotNil(model.image) // frame 0 still (paused/RM path)
+        let clip = try XCTUnwrap(model.gif)
+        XCTAssertEqual(clip.frames.count, 4)
+        XCTAssertTrue(model.isAnimated)
+    }
+
+    func testFullResModelStillHasNoClip() async throws {
+        let bytes = try DemoMedia.data(for: DemoMedia.photo1Full)
+        let model = FullResImageModel(
+            thumbURL: DemoMedia.photo1, messageID: "m1", thumb: nil,
+            cache: RichMediaCache(diskDir: nil),
+            fetcher: { _ in bytes })
+        await model.reload()
+        XCTAssertEqual(model.phase, .loaded)
+        XCTAssertNil(model.gif)
+        XCTAssertFalse(model.isAnimated)
+    }
 }
 
 /// Append-only URL log (Sendable for fetcher closures).

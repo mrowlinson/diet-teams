@@ -266,7 +266,7 @@ final class RichMediaTests: XCTestCase {
 
     func testMediaDemoThreadShape() {
         let msgs = DemoData.mediaMessages()
-        XCTAssertEqual(msgs.count, 6)
+        XCTAssertEqual(msgs.count, 7) // +media-7 animated GIF (om-gif-playback)
         // Captioned photo + image-only + failure + emoticon raws.
         XCTAssertEqual(MessageRender.images(fromRaw: msgs[1].raw).count, 1)
         XCTAssertEqual(msgs[2].content, "")
@@ -278,7 +278,7 @@ final class RichMediaTests: XCTestCase {
         XCTAssertEqual(row.chatId, DemoData.mediaID)
         XCTAssertEqual(row.last_message_preview, msgs.last?.content)
         XCTAssertTrue(DemoData.chats.contains(where: { $0.id == DemoData.mediaID }))
-        XCTAssertEqual(DemoData.messages(for: DemoData.mediaID).count, 6)
+        XCTAssertEqual(DemoData.messages(for: DemoData.mediaID).count, 7)
     }
 
     // MARK: - Image load states

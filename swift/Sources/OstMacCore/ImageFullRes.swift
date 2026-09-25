@@ -52,6 +52,10 @@ public enum ImageFullRes {
 public final class FullResImageModel: ObservableObject {
     @Published public private(set) var phase: RemoteImagePhase = .loading
     @Published public private(set) var image: NSImage?
+    /// Decoded animation when the full-res bytes are multi-frame
+    /// (om-gif-playback). `image` still holds frame 0.
+    @Published public private(set) var gif: GifClip?
+    public var isAnimated: Bool { gif != nil }
     public let thumbURL: String
     public let fullURL: String
     public let messageID: String
@@ -85,9 +89,23 @@ public final class FullResImageModel: ObservableObject {
     public func reload() async {
         phase = .loading
         image = nil
+        gif = nil
         do {
             let data = try await cache.data(
                 url: fullURL, messageID: messageID, fetcher: fetcher)
+            if GifProbe.isAnimated(data) {
+                let clip = await Task.detached(priority: .userInitiated) {
+                    GifClip.decode(data: data, maxPixels: ImageDecode.viewerMaxPixels)
+                }.value
+                guard let clip, let first = clip.frames.first else {
+                    phase = .failed("not an image")
+                    return
+                }
+                image = first
+                gif = clip
+                phase = .loaded
+                return
+            }
             guard let img = await ImageDecode.decodeOffMain(
                 data: data, maxPixels: ImageDecode.viewerMaxPixels)
             else {

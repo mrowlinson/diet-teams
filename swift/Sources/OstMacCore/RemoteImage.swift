@@ -28,6 +28,10 @@ public enum RemoteImagePhase: Sendable, Equatable {
 public final class RemoteImageModel: ObservableObject {
     @Published public private(set) var phase: RemoteImagePhase = .loading
     @Published public private(set) var image: NSImage?
+    /// Decoded animation when the bytes are multi-frame (om-gif-playback).
+    /// `image` still holds frame 0 — the paused / Reduce Motion still.
+    @Published public private(set) var gif: GifClip?
+    public var isAnimated: Bool { gif != nil }
     public private(set) var url: String
     public private(set) var messageID: String
     private let cache: RichMediaCache
@@ -53,8 +57,22 @@ public final class RemoteImageModel: ObservableObject {
     public func reload() async {
         phase = .loading
         image = nil
+        gif = nil
         do {
             let data = try await cache.data(url: url, messageID: messageID, fetcher: fetcher)
+            if GifProbe.isAnimated(data) {
+                let clip = await Task.detached(priority: .userInitiated) {
+                    GifClip.decode(data: data, maxPixels: ImageDecode.bubbleMaxPixels)
+                }.value
+                guard let clip, let first = clip.frames.first else {
+                    phase = .failed("not an image")
+                    return
+                }
+                image = first
+                gif = clip
+                phase = .loaded
+                return
+            }
             guard let img = await ImageDecode.decodeOffMain(
                 data: data, maxPixels: ImageDecode.bubbleMaxPixels)
             else {
@@ -107,7 +125,11 @@ public struct RemoteImage: View {
                 }
                 .accessibilityLabel(alt.isEmpty ? "Loading image" : "Loading \(alt)")
             case .loaded:
-                if let img = model.image {
+                if let clip = model.gif, let still = model.image {
+                    GifPlayerView(
+                        clip: clip, still: still, url: model.url,
+                        messageID: model.messageID, alt: alt)
+                } else if let img = model.image {
                     Button { expanded = true } label: {
                         Image(nsImage: img)
                             .resizable()
@@ -155,8 +177,10 @@ public struct RemoteImage: View {
 /// image and closes via Close or Esc.
 struct ZoomedImage: View {
     @StateObject private var full: FullResImageModel
+    @StateObject private var gifState = GifPlayerState(playing: true)
     let alt: String
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var scale: Double
     @State private var viewportWidth: CGFloat = 0
     @State private var didFit = false
@@ -175,22 +199,31 @@ struct ZoomedImage: View {
     }
 
     /// Full-res bytes when loaded, else the thumbnail (never blank).
-    private var display: NSImage? { full.image ?? full.thumb }
+    /// Animated GIFs show the playhead frame while playing, frame 0
+    /// (the still) while paused or under Reduce Motion.
+    private var display: NSImage? {
+        if let clip = full.gif, gifState.playing {
+            let i = GifClip.frameIndex(at: gifState.playhead, durations: clip.durations)
+            return clip.frames[i]
+        }
+        return full.image ?? full.thumb
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             GeometryReader { geo in
                 ZStack {
                     if let display {
-                        ZoomScrollView(image: display, scale: scale)
-                            .onAppear {
-                                viewportWidth = geo.size.width
-                                fitOnce(viewportWidth: geo.size.width)
+                        if full.isAnimated, gifState.playing, let clip = full.gif {
+                            TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { tick in
+                                scrollContent(image: display, geo: geo)
+                                    .onChange(of: tick.date) { _, now in
+                                        gifState.tick(now: now, totalDuration: clip.totalDuration)
+                                    }
                             }
-                            .onChange(of: geo.size) { _, newSize in
-                                viewportWidth = newSize.width
-                                fitOnce(viewportWidth: newSize.width)
-                            }
+                        } else {
+                            scrollContent(image: display, geo: geo)
+                        }
                     } else {
                         ProgressView("Loading full resolution…")
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -267,6 +300,10 @@ struct ZoomedImage: View {
                     }
                 }
                 .disabled(viewportWidth <= 0)
+                if full.isAnimated {
+                    Button(gifState.playing ? "Pause" : "Play") { gifState.toggle() }
+                        .accessibilityLabel(gifState.playing ? "Pause GIF" : "Play GIF")
+                }
                 Spacer()
                 Button("Close") { dismiss() }
                     .keyboardShortcut(.cancelAction)
@@ -288,13 +325,29 @@ struct ZoomedImage: View {
         )
         .onAppear {
             full.load()
+            gifState.applyReduceMotion(reduceMotion)
             // Release the restored size after first layout so the window is
             // freely resizable; the size reader above keeps remembering it.
             if fixedSize != nil {
                 DispatchQueue.main.async { fixedSize = nil }
             }
         }
+        .onChange(of: reduceMotion) { _, rm in gifState.applyReduceMotion(rm) }
         .accessibilityLabel(alt.isEmpty ? "Expanded image" : "Expanded \(alt)")
+    }
+
+    /// Zoom host with fit-width wiring, shared by the still and
+    /// animated (TimelineView-driven) branches.
+    private func scrollContent(image: NSImage, geo: GeometryProxy) -> some View {
+        ZoomScrollView(image: image, scale: scale)
+            .onAppear {
+                viewportWidth = geo.size.width
+                fitOnce(viewportWidth: geo.size.width)
+            }
+            .onChange(of: geo.size) { _, newSize in
+                viewportWidth = newSize.width
+                fitOnce(viewportWidth: newSize.width)
+            }
     }
 
     /// Fit-width default: applied once to the first real viewport; later

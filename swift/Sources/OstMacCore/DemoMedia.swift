@@ -13,6 +13,14 @@ public enum DemoMedia {
     /// Full-res viewer variants (om-imgfull): same scene at 2×.
     public static let photo1Full = "demo://photo-1-full"
     public static let photo2Full = "demo://photo-2-full"
+    /// Animated GIF fixture (om-gif-playback): 4-frame looping sunset,
+    /// disc arcs left→right as the sky cools. No binary blobs, like PNGs.
+    public static let gif1 = "demo://gif-1"
+    public static let gif1Full = "demo://gif-1-full"
+    /// Frame count of the GIF fixtures (probe/decode tests pin this).
+    public static let gifFrameCount = 4
+    /// Per-frame delay of the GIF fixtures, seconds.
+    public static let gifFrameDelay = 0.25
 
     public static func data(for url: String) throws -> Data {
         switch url {
@@ -20,8 +28,59 @@ public enum DemoMedia {
         case photo2: return render(seed: 2)
         case photo1Full: return render(seed: 1, width: 960, height: 640)
         case photo2Full: return render(seed: 2, width: 960, height: 640)
+        case gif1: return renderGif()
+        case gif1Full: return renderGif(width: 960, height: 640)
         default: throw MediaFetchError.failed("unknown demo media: \(url)")
         }
+    }
+
+    /// Programmatic animated GIF (no binary blob): the sunset scene
+    /// with its disc arcing left→right and the sky cooling per frame,
+    /// so every frame's pixels differ. Loops forever.
+    static func renderGif(width: Int = 480, height: Int = 320) -> Data {
+        let space = CGColorSpaceCreateDeviceRGB()
+        var frames: [CGImage] = []
+        for i in 0 ..< gifFrameCount {
+            let f = Double(i) / Double(gifFrameCount - 1) // 0…1 across the loop
+            let ctx = CGContext(
+                data: nil, width: width, height: height,
+                bitsPerComponent: 8, bytesPerRow: 0,
+                space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )!
+            let w = CGFloat(width), h = CGFloat(height)
+            // Sky cools dusk→night across frames.
+            let top = CGColor(
+                red: 0.13 - 0.06 * f, green: 0.16 - 0.08 * f,
+                blue: 0.38 - 0.10 * f, alpha: 1)
+            let bottom = CGColor(
+                red: 0.98 - 0.55 * f, green: 0.55 - 0.30 * f,
+                blue: 0.30 + 0.10 * f, alpha: 1)
+            let grad = CGGradient(
+                colorsSpace: space, colors: [top, bottom] as CFArray, locations: [0, 1])!
+            ctx.drawLinearGradient(
+                grad, start: CGPoint(x: 0, y: h), end: CGPoint(x: 0, y: 0), options: [])
+            // Disc arcs left→right and sinks as it sets.
+            ctx.setFillColor(CGColor(red: 1, green: 0.85 - 0.25 * f, blue: 0.55, alpha: 1))
+            let dx = w * (0.15 + 0.55 * f)
+            let dy = h * (0.58 - 0.22 * f)
+            ctx.fillEllipse(in: CGRect(x: dx, y: dy, width: w * 0.14, height: w * 0.14))
+            // Ground strip (constant anchor).
+            ctx.setFillColor(CGColor(red: 0.12, green: 0.20, blue: 0.34, alpha: 0.92))
+            ctx.fill(CGRect(x: 0, y: 0, width: w, height: h * 0.22))
+            frames.append(ctx.makeImage()!)
+        }
+        let out = CFDataCreateMutable(nil, 0)!
+        let dest = CGImageDestinationCreateWithData(
+            out, UTType.gif.identifier as CFString, frames.count, nil)!
+        CGImageDestinationSetProperties(dest, [
+            kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFLoopCount: 0],
+        ] as CFDictionary)
+        let frameProps = [
+            kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFDelayTime: gifFrameDelay],
+        ] as CFDictionary
+        for cg in frames { CGImageDestinationAddImage(dest, cg, frameProps) }
+        CGImageDestinationFinalize(dest)
+        return out as Data
     }
 
     static func render(seed: Int, width: Int = 480, height: Int = 320) -> Data {

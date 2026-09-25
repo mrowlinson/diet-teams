@@ -467,6 +467,11 @@ public enum DemoData {
                 content: "Resending the vibe instead",
                 isOwn: true,
                 raw: #"<p>Resending the vibe instead <img src="demo://photo-1" width="20" height="20" alt="(smile)"></p>"#),
+            ChatMessage(
+                id: "media-7", sender: "Tom Becker",
+                timestamp: iso(at(h: 9, m: 13)),
+                content: "Friday mood",
+                raw: #"<p>Friday mood</p><p><img src="demo://gif-1" alt="celebration gif"></p>"#),
         ]
     }
 
