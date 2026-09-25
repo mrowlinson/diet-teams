@@ -78,6 +78,8 @@ import Foundation
 ///   notify ONLY on owner mention (MRI preferred, display-name backup
 ///   when matchByDisplayName) or — when noisyChannelMentions —
 ///   channel/Everyone mention.
+/// - Mentions-only chats (d2-alerts, per-chat level): same gates and
+///   reasons as noisy chats, scoped by chat id instead of name text.
 /// - All other chats: notify.
 public enum ChatFilter {
     public enum Decision: Sendable, Equatable {
@@ -265,8 +267,14 @@ public enum ChatFilter {
         if message.isEdit, !eff.notifyOnEdit {
             return .skip(reason: "edit")
         }
-        // Noisy-chat rule.
-        if isLoudChat(chatDisplayName, substring: eff.loudSubstring) {
+        // Noisy-chat rule, plus per-chat mentions-only (d2-alerts):
+        // a mentions-only chat runs the SAME mention gates as a loud
+        // chat (same reasons), scoped by chat id instead of name text.
+        // Keyword-allow already notified above (noisy parity); block
+        // likewise already skipped.
+        if eff.mentionOnlyChatIDs.contains(message.chatID)
+            || isLoudChat(chatDisplayName, substring: eff.loudSubstring)
+        {
             if Mentions.mentionsOwner(message.mentions, ownerMRI: ownerMRI, ownerDisplayName: eff.ownerDisplayName, matchByName: eff.matchByDisplayName) {
                 return .notify(reason: "loud-owner-mention")
             }

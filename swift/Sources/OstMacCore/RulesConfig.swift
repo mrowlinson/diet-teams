@@ -42,6 +42,11 @@ public struct EffectiveRules: Sendable, Equatable {
     /// OstMac per-chat mutes (chat ids). Pass-through from the stored
     /// config (not rule-owned): the filter skips these chats entirely.
     public var mutedChatIDs: Set<String>
+    /// OstMac per-chat mentions-only (chat ids). Pass-through from the
+    /// stored config (not rule-owned): these chats notify only on
+    /// mention (noisy-rule semantics, scoped per chat).
+
+    public var mentionOnlyChatIDs: Set<String>
 
     public init(
         ownerDisplayName: String = "",
@@ -54,7 +59,8 @@ public struct EffectiveRules: Sendable, Equatable {
         allowKeywords: [String] = [],
         blockKeywords: [String] = [],
         muted: Bool = false,
-        mutedChatIDs: Set<String> = []
+        mutedChatIDs: Set<String> = [],
+        mentionOnlyChatIDs: Set<String> = []
     ) {
         self.ownerDisplayName = ownerDisplayName
         self.loudSubstring = loudSubstring
@@ -67,6 +73,28 @@ public struct EffectiveRules: Sendable, Equatable {
         self.blockKeywords = blockKeywords
         self.muted = muted
         self.mutedChatIDs = mutedChatIDs
+        self.mentionOnlyChatIDs = mentionOnlyChatIDs
+    }
+}
+
+/// Per-chat notification level (d2-alerts): the Settings + sidebar
+/// 3-state picker over the stored mute/mentions-only sets. Muted wins
+/// when a chat sits in both (setLevel never leaves that state).
+public enum ChatNotifyLevel: String, Codable, Sendable, Equatable, CaseIterable {
+    /// Every notifiable message banners.
+    case all
+    /// Only mentions banner (noisy-rule semantics, scoped to the chat).
+    case mentions
+    /// Absolute: no banner, no unread, no breakthrough.
+    case muted
+
+    /// Picker/menu row title (shared by Settings + sidebar).
+    public var displayName: String {
+        switch self {
+        case .all: "All"
+        case .mentions: "Mentions only"
+        case .muted: "Muted"
+        }
     }
 }
 
@@ -101,6 +129,11 @@ public struct RulesConfig: Codable, Sendable, Equatable {
     /// rule-owned (like `muted`): persisted as-is, resolved into every
     /// EffectiveRules, skipped by the filter with reason "chat-muted".
     public var mutedChatIDs: Set<String>
+    /// OstMac per-chat mentions-only (chat ids), edited in Settings +
+    /// the sidebar level picker. NOT rule-owned (like `muted`):
+    /// persisted as-is, resolved into every EffectiveRules, gated by
+    /// the filter with noisy-rule semantics scoped to the chat.
+    public var mentionOnlyChatIDs: Set<String>
     /// OstMac hidden chats (chat ids), edited in the sidebar context
     /// menu. List-visibility ONLY: persisted as-is, never resolved into
     /// EffectiveRules, never read by ChatFilter — hidden threads keep
@@ -122,6 +155,7 @@ public struct RulesConfig: Codable, Sendable, Equatable {
         blockKeywords: [String] = [],
         muted: Bool = false,
         mutedChatIDs: Set<String> = [],
+        mentionOnlyChatIDs: Set<String> = [],
         hiddenChatIDs: Set<String> = [],
         notifyRules: [NotifyRule] = []
     ) {
@@ -136,8 +170,16 @@ public struct RulesConfig: Codable, Sendable, Equatable {
         self.blockKeywords = blockKeywords
         self.muted = muted
         self.mutedChatIDs = mutedChatIDs
+        self.mentionOnlyChatIDs = mentionOnlyChatIDs
         self.hiddenChatIDs = hiddenChatIDs
         self.notifyRules = notifyRules
+    }
+
+    /// Effective level for one chat: muted wins, then mentions-only.
+    public func level(chatID: String) -> ChatNotifyLevel {
+        if mutedChatIDs.contains(chatID) { return .muted }
+        if mentionOnlyChatIDs.contains(chatID) { return .mentions }
+        return .all
     }
 
     enum CodingKeys: String, CodingKey {
@@ -145,6 +187,7 @@ public struct RulesConfig: Codable, Sendable, Equatable {
         case noisyChannelMentions, matchByDisplayName
         case allowKeywords, blockKeywords
         case mutedChatIDs
+        case mentionOnlyChatIDs
         case hiddenChatIDs
         case notifyRules
     }
@@ -166,6 +209,7 @@ public struct RulesConfig: Codable, Sendable, Equatable {
         blockKeywords = (try? c.decodeIfPresent([String].self, forKey: .blockKeywords)) ?? d.blockKeywords
         muted = (try? c.decodeIfPresent(Bool.self, forKey: .muted)) ?? d.muted
         mutedChatIDs = (try? c.decodeIfPresent(Set<String>.self, forKey: .mutedChatIDs)) ?? d.mutedChatIDs
+        mentionOnlyChatIDs = (try? c.decodeIfPresent(Set<String>.self, forKey: .mentionOnlyChatIDs)) ?? d.mentionOnlyChatIDs
         hiddenChatIDs = (try? c.decodeIfPresent(Set<String>.self, forKey: .hiddenChatIDs)) ?? d.hiddenChatIDs
         notifyRules = (try? c.decodeIfPresent([NotifyRule].self, forKey: .notifyRules)) ?? []
         applyRules()
@@ -178,12 +222,13 @@ public struct RulesConfig: Codable, Sendable, Equatable {
     /// (message-types then allows every type via the "*" marker) —
     /// EXCEPT noisy-chats-channel-mentions and my-name-as-backup, whose
     /// ABSENT default is ON: only a present disabled rule turns them off.
-    /// `muted`, `mutedChatIDs`, `hiddenChatIDs` and `owner` are NOT
-    /// touched (not rule-owned).
+    /// `muted`, `mutedChatIDs`, `mentionOnlyChatIDs`, `hiddenChatIDs`
+    /// and `owner` are NOT touched (not rule-owned).
     public mutating func applyRules() {
         let eff = Self.resolve(
             notifyRules, ownerDisplayName: owner.displayName, muted: muted,
-            mutedChatIDs: mutedChatIDs)
+            mutedChatIDs: mutedChatIDs,
+            mentionOnlyChatIDs: mentionOnlyChatIDs)
         loudSubstring = eff.loudSubstring
         notifyOnEdit = eff.notifyOnEdit
         skipOwnMessages = eff.skipOwnMessages
@@ -202,21 +247,23 @@ public struct RulesConfig: Codable, Sendable, Equatable {
         let scoped = notifyRules.filter { $0.inScope(chatDisplayName: chatDisplayName) }
         return Self.resolve(
             scoped, ownerDisplayName: owner.displayName, muted: muted,
-            mutedChatIDs: mutedChatIDs)
+            mutedChatIDs: mutedChatIDs,
+            mentionOnlyChatIDs: mentionOnlyChatIDs)
     }
 
     /// Shared resolver over an ordered rule slice (global = whole list,
     /// per-chat = in-scope subset). Pure.
     static func resolve(
         _ rules: [NotifyRule], ownerDisplayName: String, muted: Bool,
-        mutedChatIDs: Set<String>
+        mutedChatIDs: Set<String>, mentionOnlyChatIDs: Set<String> = []
     ) -> EffectiveRules {
         func first(_ kind: String) -> NotifyRule? {
             rules.first(where: { NotifyRule.canonicalKind($0.kind) == kind })
         }
         var eff = EffectiveRules(
             ownerDisplayName: ownerDisplayName, muted: muted,
-            mutedChatIDs: mutedChatIDs)
+            mutedChatIDs: mutedChatIDs,
+            mentionOnlyChatIDs: mentionOnlyChatIDs)
         if let r = first(NotifyRule.skipMyMessages) {
             eff.skipOwnMessages = r.enabled
         } else {
