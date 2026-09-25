@@ -1,5 +1,5 @@
 // GridNav.swift — om-a3-keyboard: pure arrow navigation for picker
-// grids (ReactionPickerView, TenorPickerView). No SwiftUI: the views
+// grids (ReactionPickerView, KlipyPickerView). No SwiftUI: the views
 // keep one `highlight` index and map keys onto (dx, dy) steps.
 import Foundation
 

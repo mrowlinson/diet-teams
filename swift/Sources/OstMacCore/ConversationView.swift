@@ -31,7 +31,9 @@ public struct ConversationView: View {
     @State private var tab: Int
     @State private var showGIFs = false
     @State private var showMentions = false
-    @AppStorage("tenorAPIKey") private var tenorAPIKey = ""
+    /// KLIPY key (Settings → GIFs), read from the keychain on appear
+    /// and each time the picker opens (Settings may have changed it).
+    @State private var gifAPIKey = ""
     @State private var showCatchUp: Bool
     @FocusState private var boxFocused: Bool
     @State private var gifHovering = false
@@ -451,6 +453,7 @@ public struct ConversationView: View {
                     }
                 }
                 Button {
+                    gifAPIKey = KlipyClient.storedKey()
                     showGIFs = true
                 } label: {
                 Text("GIF")
@@ -469,9 +472,9 @@ public struct ConversationView: View {
             .onHover { gifHovering = $0 }
             .accessibilityLabel("Insert a GIF")
             .plainFocusRing()
-            .help("Insert a GIF (Tenor)")
+            .help("Insert a GIF (KLIPY)")
             .popover(isPresented: $showGIFs, arrowEdge: .top) {
-                TenorPickerView(apiKey: tenorAPIKey) { url in
+                KlipyPickerView(apiKey: gifAPIKey) { url in
                     insertGIF(url)
                     showGIFs = false
                 }
@@ -493,6 +496,7 @@ public struct ConversationView: View {
         }
         .onAppear {
             boxFocused = true
+            gifAPIKey = KlipyClient.storedKey()
             // Shot hook: --show-gif opens the picker at launch.
             if CommandLine.arguments.contains("--show-gif") { showGIFs = true }
             // Shot hook (om-a3-keyboard): --show-mention opens the @

@@ -4,7 +4,7 @@
 // one-liner), Sign in (shared AuthViewModel), Notifications (banner,
 // preview and sound toggles, persisted), Per-chat overrides (mute
 // toggles per chat, persisted in rules.json and enforced by the
-// rules engine), GIFs Tenor key (picker reads the same key),
+// rules engine), GIFs KLIPY key (keychain; picker reads the same key),
 // Thread catch-up (CatchUpStore; Base URL hides when the CLI provider
 // ignores it).
 // Removed: Application (dup of About), Diagnostics (moved to the
@@ -24,7 +24,9 @@ struct SettingsView: View {
     @ObservedObject private var chats: ChatListViewModel
     @ObservedObject private var quiet: QuietHoursStore
     @ObservedObject private var blocked: BlockedStore
-    @AppStorage("tenorAPIKey") private var tenorAPIKey = ""
+    /// KLIPY BYO key, keychain-backed (never UserDefaults). Loaded on
+    /// appear, saved on every edit (blank clears).
+    @State private var klipyAPIKey = ""
     private let fixedAccount: AccountInfo?
 
     /// Live view: shares the app's models (single source of truth).
@@ -180,9 +182,12 @@ struct SettingsView: View {
                         .font(DietType.caption1)
                         .foregroundStyle(DietColor.textSecondaryColor)
                 }
-                Section("GIFs (Tenor)") {
-                    SecureField("Tenor API key", text: $tenorAPIKey)
-                    Text("Bring your own free key (Google Cloud Console → Tenor API). Empty = GIF picker stays off; nothing is sent anywhere.")
+                Section("GIFs (KLIPY)") {
+                    SecureField("KLIPY API key", text: $klipyAPIKey)
+                        .onChange(of: klipyAPIKey) { _, next in
+                            KlipyClient.saveKey(next)
+                        }
+                    Text("Bring your own free key (klipy.com → Developers; stored in your keychain). Empty = GIF picker stays off; nothing is sent anywhere.")
                         .font(DietType.caption1)
                         .foregroundStyle(DietColor.textSecondaryColor)
                 }
@@ -194,8 +199,11 @@ struct SettingsView: View {
         // Live embeds the full AuthView (min 420 tall); fixed stays compact.
         .frame(width: 460, height: fixedAccount == nil ? 760 : nil)
         .task {
-            guard fixedAccount == nil else { return }
-            await auth.refreshStatus()
+            // Fixed (preview/shot) view must not touch the real keychain.
+            if fixedAccount == nil {
+                klipyAPIKey = KlipyClient.storedKey()
+                await auth.refreshStatus()
+            }
         }
     }
 

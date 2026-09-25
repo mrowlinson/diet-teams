@@ -1,17 +1,17 @@
-// TenorPickerView.swift — om-cmdk lane: GIF picker popover for the composer.
-// Trending on open, search on submit, thumbnails in a grid. No API key =
-// graceful off-state pointing at Settings (no request is ever made).
+// KlipyPickerView.swift — om-gif-provider-klipy lane: GIF picker popover
+// for the composer. Trending on open, search on submit, thumbnails in a
+// grid. No API key = graceful off-state pointing at Settings (no
+// request is ever made).
 import DietDesign
 import SwiftUI
-import DietDesign
 
 /// GIF picker. `onPick` fires with the full-size GIF URL; the host inserts
 /// it into the draft (or sends it) and dismisses the popover.
-public struct TenorPickerView: View {
+public struct KlipyPickerView: View {
     private let apiKey: String
     private let onPick: (String) -> Void
     @State private var query = ""
-    @State private var gifs: [TenorGIF] = []
+    @State private var gifs: [KlipyGIF] = []
     @State private var loading = false
     @State private var error: String?
 
@@ -52,7 +52,7 @@ public struct TenorPickerView: View {
     private var offState: some View {
         DietEmptyState(
             systemImage: "photo.on.rectangle.angled",
-            title: "GIFs need a Tenor API key",
+            title: "GIFs need a KLIPY API key",
             message: "Add your free key in Settings → GIFs to enable the picker.")
     }
 
@@ -144,7 +144,7 @@ public struct TenorPickerView: View {
         error = nil
         defer { loading = false }
         do {
-            gifs = try await TenorClient.featured(apiKey: apiKey)
+            gifs = try await KlipyClient.trending(apiKey: apiKey)
         } catch {
             self.error = message(for: error)
         }
@@ -160,15 +160,15 @@ public struct TenorPickerView: View {
         error = nil
         defer { loading = false }
         do {
-            gifs = try await TenorClient.search(query: q, apiKey: apiKey)
+            gifs = try await KlipyClient.search(query: q, apiKey: apiKey)
         } catch {
             self.error = message(for: error)
         }
     }
 
     private func message(for error: Error) -> String {
-        if case TenorError.badResponse(let m) = error { return "Tenor: \(m)" }
-        if case TenorError.network(let m) = error { return "Network: \(m)" }
+        if case KlipyError.badResponse(let m) = error { return "KLIPY: \(m)" }
+        if case KlipyError.network(let m) = error { return "Network: \(m)" }
         return String(describing: error)
     }
 }
