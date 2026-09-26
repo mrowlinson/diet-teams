@@ -562,11 +562,16 @@ public struct LevelBar: View {
     }
 
     public var body: some View {
-        ProgressView(
-            value: live ? min(1, max(0, fraction)) : 0,
-            total: 1
-        )
-        .progressViewStyle(.linear)
+        // Empty label views: hosted inside LabeledContent at both call
+        // sites, so the Gauge must not print its own title or value
+        // (.labelsHidden leaves linearCapacity labels stacked on macOS).
+        // VoiceOver keeps the meter semantics via explicit traits.
+        Gauge(value: live ? min(1, max(0, fraction)) : 0, in: 0...1) {
+            EmptyView()
+        } currentValueLabel: {
+            EmptyView()
+        }
+        .gaugeStyle(.linearCapacity)
         .accessibilityLabel("Input level")
         .accessibilityValue(live ? "\(Int(fraction * 100)) percent" : "no input")
     }

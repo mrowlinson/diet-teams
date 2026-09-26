@@ -146,23 +146,16 @@ final class NativeControlsTests: XCTestCase {
         XCTAssertFalse(
             layout.text.contains("RoundedRectangle(cornerRadius: DietRadius.card)"),
             "cards must not draw custom chrome")
+    }
 
     func testSettingsSurfacesRenderNative() throws {
-        // om-settings-convert: settings+modules CONVERT #1-4 —
-        // LevelBar is a system ProgressView, planner toggle is a
-        // system borderless button (no hand-drawn focus ring), and
-        // calendar/contact rows are real Buttons (keyboard/focus
-        // activation), not tap-gesture stacks.
+        // om-settings-convert: settings+modules CONVERT #2-4 — planner
+        // toggle is a system borderless button (no hand-drawn focus
+        // ring), and calendar/contact rows are real Buttons
+        // (keyboard/focus activation), not tap-gesture stacks.
+        // (merge-finish: CONVERT #1 LevelBar resolved to the native
+        // Gauge — pinned by testCallsAvSurfacesRenderNative, not here.)
         let files = try Self.swiftFiles()
-        let av = try XCTUnwrap(
-            files.first(where: { $0.name == "AvPanelView.swift" }),
-            "AvPanelView.swift missing")
-        XCTAssertTrue(
-            av.text.contains(".progressViewStyle(.linear)"),
-            "LevelBar must be a system linear ProgressView")
-        XCTAssertFalse(
-            av.text.contains("GeometryReader"),
-            "LevelBar must not hand-draw its meter")
         let planner = try XCTUnwrap(
             files.first(where: { $0.name == "PlannerBrowser.swift" }),
             "PlannerBrowser.swift missing")
@@ -184,6 +177,43 @@ final class NativeControlsTests: XCTestCase {
         XCTAssertFalse(
             contacts.text.contains(".onTapGesture"),
             "contact row must be a Button, not a tap gesture")
+    }
+
+    func testCallsAvSurfacesRenderNative() throws {
+        // LevelBar is the native Gauge (linear capacity); the meeting
+        // jump pill/jump are bordered system bezels (chat-lane #7
+        // precedent). Static pins: SwiftUI styles are not
+        // runtime-introspectable.
+        let files = try Self.swiftFiles()
+        let av = try XCTUnwrap(
+            files.first(where: { $0.name == "AvPanelView.swift" }),
+            "AvPanelView.swift missing")
+        XCTAssertTrue(
+            av.text.contains("Gauge(value:"),
+            "LevelBar must use the native Gauge")
+        XCTAssertTrue(
+            av.text.contains(".gaugeStyle(.linearCapacity)"),
+            "LevelBar must use the linear capacity style")
+        XCTAssertFalse(
+            av.text.contains("GeometryReader"),
+            "LevelBar must not hand-draw the meter")
+        let meeting = try XCTUnwrap(
+            files.first(where: { $0.name == "MeetingChat.swift" }),
+            "MeetingChat.swift missing")
+        XCTAssertFalse(
+            meeting.text.contains(
+                "background(Color.accentColor, in: Capsule())"),
+            "jump pill must use the native bezel")
+        XCTAssertFalse(
+            meeting.text.contains(
+                "background(DietColor.wellColor, in: Capsule())"),
+            "jump button must use the native bezel")
+        XCTAssertFalse(
+            meeting.text.contains(".plainFocusRing(radius: 14)"),
+            "jump controls must carry the system ring via bordered styles")
+        XCTAssertTrue(
+            meeting.text.contains(".buttonStyle(.borderedProminent)"),
+            "jump pill must be borderedProminent")
     }
 
     func testButtonComponentsRenderNative() throws {

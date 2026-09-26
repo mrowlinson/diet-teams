@@ -736,16 +736,11 @@ public struct MeetingChatPanel: View {
                                         Text(title)
                                             .font(DietType.caption1).bold()
                                     }
-                                    .foregroundStyle(.white)
-                                    .padding(.horizontal, DietSpace.sm + DietSpace.xs)
-                                    .padding(.vertical, DietSpace.xs)
-                                    .background(Color.accentColor, in: Capsule())
-                                    .shadow(color: .black.opacity(0.2), radius: 2, y: 1)
                                 }
-                                .buttonStyle(.plain)
+                                .buttonStyle(.borderedProminent)
+                                .controlSize(.small)
                                 .accessibilityElement(children: .combine)
                                 .accessibilityLabel(A11yLabels.jumpPill(title: title))
-                                .plainFocusRing(radius: 14)
                                 .help("Jump to latest messages")
                                 .padding(.bottom, DietSpace.sm)
                             case .jump:
@@ -755,19 +750,11 @@ public struct MeetingChatPanel: View {
                                         Text("Jump to latest")
                                             .font(DietType.caption1).bold()
                                     }
-                                    .foregroundStyle(DietColor.textPrimaryColor)
-                                    .padding(.horizontal, DietSpace.sm + DietSpace.xs)
-                                    .padding(.vertical, DietSpace.xs)
-                                    .background(DietColor.wellColor, in: Capsule())
-                                    .overlay(
-                                        Capsule()
-                                            .stroke(DietColor.dividerColor, lineWidth: 1))
-                                    .shadow(color: .black.opacity(0.15), radius: 2, y: 1)
                                 }
-                                .buttonStyle(.plain)
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
                                 .accessibilityElement(children: .combine)
                                 .accessibilityLabel(A11yLabels.jumpPill(title: nil))
-                                .plainFocusRing(radius: 14)
                                 .help("Jump to latest messages")
                                 .padding(.bottom, DietSpace.sm)
                             }
