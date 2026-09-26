@@ -321,6 +321,119 @@ fn html_escape(text: &str) -> String {
         .replace('\'', "&#39;")
 }
 
+/// Max fenced code blocks parsed per outbound message (hostile-input
+/// cap, mirrors Swift `CodeBlocks.maxBlocks`); extra fences stay prose.
+pub const WIRE_FENCE_MAX_BLOCKS: usize = 50;
+
+/// One line classified as a fence opener: (fence char, run length).
+/// Mirrors Swift `CodeBlocks.fenceMarker`: any indent, ``` or ~~~ runs
+/// of ≥ 3, info strings must not contain the fence char (CommonMark).
+fn wire_fence_opener(line: &str) -> Option<(char, usize)> {
+    let t = line.trim_start_matches([' ', '\t']);
+    let c = t.chars().next()?;
+    if c != '`' && c != '~' {
+        return None;
+    }
+    let len = t.chars().take_while(|&ch| ch == c).count();
+    if len < 3 {
+        return None;
+    }
+    let rest: String = t.chars().skip(len).collect();
+    if rest.trim().is_empty() {
+        return Some((c, len));
+    }
+    if rest.contains(c) {
+        return None;
+    }
+    Some((c, len))
+}
+
+/// A closer line: same-char run ≥ opening length + nothing but
+/// whitespace after (info-carrying lines never close).
+fn wire_fence_closer(line: &str, ch: char, len: usize) -> bool {
+    let t = line.trim_start_matches([' ', '\t']);
+    let run = t.chars().take_while(|&c| c == ch).count();
+    if run < len {
+        return false;
+    }
+    t.chars().skip(run).collect::<String>().trim().is_empty()
+}
+
+/// Outbound wire HTML for a composer body. Fence-less messages keep the
+/// legacy single-`<p>` shape bit-identical; each fenced block becomes a
+/// `<pre>` (HTML preserves its newlines/indents in every client) and
+/// surrounding prose becomes `<p>` chunks. Fence lines are consumed,
+/// info strings dropped (the wire carries no highlighter), code
+/// interiors byte-exact modulo HTML-escaping. Unclosed fences run to
+/// end of text (Swift `CodeBlocks` parity).
+pub fn build_message_html(message: &str) -> String {
+    if !message.lines().any(|l| wire_fence_opener(l).is_some()) {
+        return format!("<p>{}</p>", html_escape(message));
+    }
+    enum Seg {
+        Prose(String),
+        Code(String),
+    }
+    let mut segs: Vec<Seg> = Vec::new();
+    let mut prose = String::new();
+    let mut code: Option<(Vec<String>, char, usize)> = None;
+    let mut blocks = 0;
+    for line in message.split('\n') {
+        if let Some((mut lines, ch, len)) = code.take() {
+            if wire_fence_closer(line, ch, len) {
+                segs.push(Seg::Code(lines.join("\n")));
+            } else {
+                lines.push(line.to_string());
+                code = Some((lines, ch, len));
+            }
+            continue;
+        }
+        if blocks < WIRE_FENCE_MAX_BLOCKS {
+            if let Some((ch, len)) = wire_fence_opener(line) {
+                if !prose.is_empty() {
+                    segs.push(Seg::Prose(std::mem::take(&mut prose)));
+                }
+                code = Some((Vec::new(), ch, len));
+                blocks += 1;
+                continue;
+            }
+        }
+        if !prose.is_empty() {
+            prose.push('\n');
+        }
+        prose.push_str(line);
+    }
+    if let Some((lines, _, _)) = code.take() {
+        segs.push(Seg::Code(lines.join("\n")));
+    } else if !prose.is_empty() {
+        segs.push(Seg::Prose(prose));
+    }
+    let mut out = String::new();
+    for s in segs {
+        match s {
+            Seg::Prose(t) => {
+                // Whitespace-only prose renders blank either way; skip it
+                // so whole-message fences emit a lone <pre>.
+                if !t.trim().is_empty() {
+                    out.push_str(&format!("<p>{}</p>", html_escape(&t)));
+                }
+            }
+            Seg::Code(t) => out.push_str(&format!("<pre>{}</pre>", html_escape(&t))),
+        }
+    }
+    out
+}
+
+/// POST body for sending one chat message (captured-body seam for
+/// tests: the exact JSON `chat_post` receives, minus transport).
+pub fn send_message_body(message: &str) -> serde_json::Value {
+    serde_json::json!({
+        "content": build_message_html(message),
+        "messagetype": "RichText/Html",
+        "contenttype": "text"
+    })
+}
+
 /// Send a message using an existing client (shared helper).
 pub async fn send_message_with_client(
     client: &TeamsClient,
@@ -330,12 +443,7 @@ pub async fn send_message_with_client(
     let base = client.chat_service_url();
     let url = format!("{}/v1/users/ME/conversations/{}/messages", base, chat_id);
 
-    let escaped = html_escape(message);
-    let body = serde_json::json!({
-        "content": format!("<p>{}</p>", escaped),
-        "messagetype": "RichText/Html",
-        "contenttype": "text"
-    });
+    let body = send_message_body(message);
 
     tracing::debug!("Sending message to {}", url);
     client.chat_post(&url, &body).await?;
@@ -361,7 +469,8 @@ pub fn reply_snippet(text: &str) -> String {
 }
 
 /// Build reply HTML: a Skype-style `<quote author guid>` block carrying the
-/// parent id, then the `<p>` body. Official clients render the quote;
+/// parent id, then the [`build_message_html`] body (fenced replies get
+/// `<pre>`, prose keeps `<p>`). Official clients render the quote;
 /// [`split_reply_quote`] recovers the parent id on read.
 pub fn build_reply_html(
     parent_id: &str,
@@ -370,11 +479,11 @@ pub fn build_reply_html(
     text: &str,
 ) -> String {
     format!(
-        "<quote author=\"{}\" guid=\"{}\">{}</quote><p>{}</p>",
+        "<quote author=\"{}\" guid=\"{}\">{}</quote>{}",
         html_escape(parent_sender),
         html_escape(parent_id),
         html_escape(&reply_snippet(parent_text)),
-        html_escape(text),
+        build_message_html(text),
     )
 }
 
@@ -699,13 +808,9 @@ pub async fn react(chat_id: &str, message_id: &str, emoji: &str, remove: bool) -
 /// Edit body for the native chat API. `skypeeditedid` carries the original
 /// id so receivers (and our realtime parser) classify it as an edit.
 pub fn edit_message_body(message_id: &str, text: &str) -> serde_json::Value {
-    let escaped = html_escape(text);
-    serde_json::json!({
-        "content": format!("<p>{}</p>", escaped),
-        "messagetype": "RichText/Html",
-        "contenttype": "text",
-        "skypeeditedid": message_id,
-    })
+    let mut body = send_message_body(text);
+    body["skypeeditedid"] = serde_json::json!(message_id);
+    body
 }
 
 /// Edit one own message's text via PUT (prints to stdout).
@@ -2051,5 +2156,90 @@ src="x">"#));
         assert_eq!(parent_id_from_content(""), None);
         assert_eq!(parent_id_from_content("<p>no keys here</p>"), None);
         assert_eq!(parent_id_from_content(r#"rootMessageId="m1"#), None);
+    }
+
+    // wire-pre lane: fenced blocks go out as <pre> (other clients keep
+    // indents); prose keeps the legacy single-<p> shape bit-identical.
+
+    #[test]
+    fn wire_prose_unchanged_single_p() {
+        assert_eq!(build_message_html("hi"), "<p>hi</p>");
+        assert_eq!(
+            build_message_html("a<b>&\"'\nline2  indented"),
+            "<p>a&lt;b&gt;&amp;&quot;&#39;\nline2  indented</p>"
+        );
+        // Inline backticks and short runs are not fences.
+        assert_eq!(build_message_html("use `x` here"), "<p>use `x` here</p>");
+        assert_eq!(build_message_html("a\n``\nb"), "<p>a\n``\nb</p>");
+        // Info string containing the fence char: not a fence (CommonMark).
+        assert_eq!(
+            build_message_html("``` `x` ```\nstill prose"),
+            "<p>``` `x` ```\nstill prose</p>"
+        );
+    }
+
+    #[test]
+    fn wire_fenced_block_byte_exact_pre() {
+        // Captured wire body: exact JSON `chat_post` receives.
+        let body = send_message_body("```swift\nlet x  =  1\n\tindented\n```");
+        assert_eq!(body["messagetype"], "RichText/Html");
+        assert_eq!(body["contenttype"], "text");
+        assert_eq!(body["content"], "<pre>let x  =  1\n\tindented</pre>");
+        // Escaping still applies inside <pre>; fences + info consumed.
+        let body = send_message_body("```\na<b>&\"'\n```");
+        assert_eq!(body["content"], "<pre>a&lt;b&gt;&amp;&quot;&#39;</pre>");
+        // ~~~ fences + indented fence lines work.
+        let body = send_message_body("  ~~~py\nx = 1\n  ~~~");
+        assert_eq!(body["content"], "<pre>x = 1</pre>");
+    }
+
+    #[test]
+    fn wire_mixed_prose_and_code_segments() {
+        assert_eq!(
+            build_message_html("hi\n```\ncode  x\n```\nbye"),
+            "<p>hi</p><pre>code  x</pre><p>bye</p>"
+        );
+        // Longer runs need equally long closers; inner short runs stay code.
+        assert_eq!(
+            build_message_html("````\n```\ninner\n```\n````"),
+            "<pre>```\ninner\n```</pre>"
+        );
+    }
+
+    #[test]
+    fn wire_unclosed_fence_runs_to_end() {
+        // Swift CodeBlocks parity: mid-typing states stay code.
+        assert_eq!(
+            build_message_html("note\n```\nline1\nline2"),
+            "<p>note</p><pre>line1\nline2</pre>"
+        );
+    }
+
+    #[test]
+    fn wire_fence_cap_leaves_extras_prose() {
+        let mut msg = String::new();
+        for i in 0..(WIRE_FENCE_MAX_BLOCKS + 1) {
+            msg.push_str(&format!("```\nc{}\n```\n", i));
+        }
+        let html = build_message_html(&msg);
+        assert_eq!(html.matches("<pre>").count(), WIRE_FENCE_MAX_BLOCKS);
+        // 51st block never parsed: its fences stay literal prose, nothing lost.
+        assert!(html.contains("```\nc50\n```"), "{}", html);
+    }
+
+    #[test]
+    fn wire_reply_and_edit_carry_pre() {
+        let html = build_reply_html("m1", "A", "parent", "```\ncode\n```");
+        assert!(html.starts_with("<quote"), "{}", html);
+        assert!(html.contains("<pre>code</pre>"), "{}", html);
+        // Prose reply keeps the legacy quote+<p> shape.
+        assert_eq!(
+            build_reply_html("m1", "A", "p", "On it!"),
+            "<quote author=\"A\" guid=\"m1\">p</quote><p>On it!</p>"
+        );
+        let b = edit_message_body("123", "```\ncode\n```");
+        assert_eq!(b["content"], "<pre>code</pre>");
+        assert_eq!(b["messagetype"], "RichText/Html");
+        assert_eq!(b["skypeeditedid"], "123");
     }
 }
