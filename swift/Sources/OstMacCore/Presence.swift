@@ -330,12 +330,18 @@ public struct PresenceDot: View {
 }
 
 /// Own-status picker (status bar menu): dot + availability label, five
-/// rows + refresh. Nil own = "Unknown" (pre-first-refresh).
+/// rows + refresh + (top10-presence) the status-lock section. Nil own =
+/// "Unknown" (pre-first-refresh). Nil truth = lock section hidden.
 public struct PresencePicker: View {
     @ObservedObject private var store: PresenceStore
+    /// Plain (ObservedObject can't be Optional): menus rebuild on open,
+    /// so lock rows are always fresh without observation.
+    private var truth: PresenceTruthStore?
+    @State private var pendingLock: PresenceStatus = .dnd
 
-    public init(store: PresenceStore) {
+    public init(store: PresenceStore, truth: PresenceTruthStore? = nil) {
         self.store = store
+        self.truth = truth
     }
 
     public var body: some View {
@@ -350,6 +356,10 @@ public struct PresencePicker: View {
             }
             Divider() // native Menu separator; keep.
             Button("Refresh status") { store.refreshOwnSoon() }
+            if let truth {
+                Divider()
+                lockSection(truth)
+            }
         } label: {
             HStack(spacing: 4) {
                 PresenceDot(availability: store.own?.availability)
@@ -365,5 +375,31 @@ public struct PresencePicker: View {
 
     private func isSelected(_ status: PresenceStatus) -> Bool {
         store.own.map { PresenceStatus.from(availability: $0.availability) == status } ?? false
+    }
+
+    /// Status lock (top10-presence): while locked, idle auto-away and
+    /// schedule windows hold and server drift is reasserted. Pick the
+    /// status, then the duration locks immediately.
+    @ViewBuilder
+    private func lockSection(_ truth: PresenceTruthStore) -> some View {
+        if truth.isLocked() {
+            Button("Unlock status (\(DiagnosticsFormat.presenceLockLine(lock: truth.lock)))") {
+                truth.unlock()
+            }
+        } else {
+            ForEach(PresenceStatus.allCases, id: \.rawValue) { status in
+                Button {
+                    pendingLock = status
+                } label: {
+                    Label("Lock as \(status.title)", systemImage: pendingLock == status ? "lock" : "")
+                }
+            }
+            Divider()
+            ForEach(PresenceLockDuration.allCases, id: \.rawValue) { duration in
+                Button("Lock \(pendingLock.title) · \(duration.label)") {
+                    truth.lock(status: pendingLock, duration: duration)
+                }
+            }
+        }
     }
 }

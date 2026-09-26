@@ -42,6 +42,9 @@ struct SettingsView: View {
     /// surface — these sections sit next to Quiet hours / DND).
     @ObservedObject private var focus: FocusSyncStore
     @ObservedObject private var sched: PresenceScheduleStore
+    /// Status lock + idle truth (top10-presence: the Truthful presence
+    /// section sits next to Presence schedules).
+    @ObservedObject private var truth: PresenceTruthStore
     @ObservedObject private var blocked: BlockedStore
     @ObservedObject private var accounts: AccountStore
     /// Shared call slot (place test call reuses CallStore.echoLive).
@@ -75,6 +78,9 @@ struct SettingsView: View {
     /// Attention-surface refusal text (Settings-local, zero-refresh).
     @State private var windowError: String?
     @State private var schedError: String?
+    /// Pending lock choice (top10-presence; applied by the Lock button).
+    @State private var lockStatus: PresenceStatus = .dnd
+    @State private var lockDuration: PresenceLockDuration = .oneHour
     /// Inline-translation target (e1-translation): same key the
     /// TranslationStore reads (default = system language).
     @AppStorage("om.translation.target") private var translationTarget = MessageTranslation.defaultTargetCode()
@@ -90,6 +96,7 @@ struct SettingsView: View {
         quiet: QuietHoursStore = QuietHoursStore(),
         focus: FocusSyncStore = FocusSyncStore(),
         sched: PresenceScheduleStore = PresenceScheduleStore(),
+        truth: PresenceTruthStore = PresenceTruthStore(),
         blocked: BlockedStore = BlockedStore(defaults: nil),
         accounts: AccountStore = AccountStore(),
         call: CallStore = CallStore(),
@@ -107,6 +114,7 @@ struct SettingsView: View {
         _quiet = ObservedObject(wrappedValue: quiet)
         _focus = ObservedObject(wrappedValue: focus)
         _sched = ObservedObject(wrappedValue: sched)
+        _truth = ObservedObject(wrappedValue: truth)
         _blocked = ObservedObject(wrappedValue: blocked)
         _accounts = ObservedObject(wrappedValue: accounts)
         _call = ObservedObject(wrappedValue: call)
@@ -138,6 +146,7 @@ struct SettingsView: View {
             _focus = ObservedObject(wrappedValue: FocusSyncStore())
             _sched = ObservedObject(wrappedValue: PresenceScheduleStore())
         }
+        _truth = ObservedObject(wrappedValue: PresenceTruthStore())
         _blocked = ObservedObject(wrappedValue: BlockedStore(defaults: nil))
         _accounts = ObservedObject(wrappedValue: AccountStore())
         // Demo slot: taps flip local state only, never touch core.
@@ -412,6 +421,42 @@ struct SettingsView: View {
                 }
             }
             Text("While a window is active your Teams status switches to its target (first match wins). Picking a status yourself pauses the schedule until the next window starts. Failures keep your last status — see Diagnostics.")
+                .font(DietType.caption1)
+                .foregroundStyle(DietColor.textSecondaryColor)
+        }
+        Section("Truthful presence") {
+            Toggle("Away when this Mac is idle", isOn: $truth.autoAway)
+                .help("Set Away after 5 idle minutes (Teams parity), logged with Undo")
+            Toggle("Back to Available on input", isOn: $truth.restoreOnActivity)
+                .help("Restore Available when input returns after an idle auto-Away")
+            LabeledContent(
+                "This Mac",
+                value: DiagnosticsFormat.presenceActivityLine(
+                    summary: truth.activitySummary, autoAway: truth.autoAway,
+                    restore: truth.restoreOnActivity))
+            if truth.isLocked() {
+                LabeledContent(
+                    "Lock",
+                    value: DiagnosticsFormat.presenceLockLine(lock: truth.lock))
+                Button("Unlock status") { truth.unlock() }
+            } else {
+                Picker("Lock status", selection: $lockStatus) {
+                    ForEach(PresenceStatus.allCases, id: \.rawValue) { status in
+                        Text(status.title).tag(status)
+                    }
+                }
+                .pickerStyle(.menu)
+                Picker("Lock for", selection: $lockDuration) {
+                    ForEach(PresenceLockDuration.allCases, id: \.rawValue) { duration in
+                        Text(duration.label).tag(duration)
+                    }
+                }
+                .pickerStyle(.menu)
+                Button("Lock \(lockStatus.title) · \(lockDuration.label)") {
+                    truth.lock(status: lockStatus, duration: lockDuration)
+                }
+            }
+            Text("A lock pins your status against idle AND schedule windows and holds it against server drift (DND for an hour stays DND for an hour). Every automatic change is logged in Diagnostics with an Undo toast — nothing flips silently.")
                 .font(DietType.caption1)
                 .foregroundStyle(DietColor.textSecondaryColor)
         }

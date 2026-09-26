@@ -309,7 +309,8 @@ struct OstMacAppMain: App {
                     auth: state.auth, catchUp: state.catchUp, notifs: state.notifs,
                     rules: state.rules, chats: state.chats,
                     quiet: state.quietHours, focus: state.focusSync,
-                    sched: state.presenceSchedule, blocked: state.blocked,
+                    sched: state.presenceSchedule, truth: state.presenceTruth,
+                    blocked: state.blocked,
                     accounts: state.accounts, call: state.call,
                     canned: state.canned, ghost: state.ghost,
                     density: state.density,
@@ -458,6 +459,10 @@ final class AppState: ObservableObject {
     let quietHours: QuietHoursStore
     let focusSync: FocusSyncStore
     let presenceSchedule: PresenceScheduleStore
+    /// top10-presence: status lock + activity truth + change log +
+    /// devices. Init-assigned next to the schedule (shot hook may point
+    /// it at the throwaway suite).
+    let presenceTruth: PresenceTruthStore
     /// d2-send: per-chat snooze expiries + the scheduled-send queue.
     let snooze = SnoozeStore()
     let scheduled = ScheduledSendStore()
@@ -673,17 +678,32 @@ final class AppState: ObservableObject {
                     status: .offline),
             ]
             presenceSchedule = sched
+            presenceTruth = PresenceTruthStore(defaults: suite, presence: presence)
         } else {
             quietHours = QuietHoursStore()
             focusSync = FocusSyncStore()
             // Schedule adopts set-echoes into presence (weak).
             presenceSchedule = PresenceScheduleStore(presence: presence)
+            presenceTruth = PresenceTruthStore(presence: presence)
         }
         // Ghost (f1-ghost): one store gates all three outbound paths
         // (receipt sends, manual presence sets, scheduled sets).
         receipts.ghost = ghost
         presence.ghost = ghost
         presenceSchedule.ghost = ghost
+        // top10-presence: truth auto-sets hold under ghost; the schedule
+        // holds while a lock owns the status and reports its fires to
+        // the truth log; idle logic yields to active schedule windows.
+        presenceTruth.ghost = ghost
+        presenceSchedule.externalHold = { [weak truth = presenceTruth] in
+            truth?.isLocked() ?? false
+        }
+        presenceSchedule.onApplied = { [weak truth = presenceTruth] status in
+            truth?.noteScheduledSet(status)
+        }
+        presenceTruth.scheduleActive = { [weak schedule = presenceSchedule] in
+            schedule?.activeEntry() != nil
+        }
         isDemo = args.contains("--demo") || args.contains("--demo-rich")
             || args.contains("--demo-reactions") || args.contains("--show-sidebarchurn")
             || args.contains("--demo-botposts") || args.contains("--show-pins")
@@ -997,9 +1017,11 @@ final class AppState: ObservableObject {
         wireSearchIndex() // gap-g6g7: history + delete → offline index
         popouts.bind(main: conv) // e1-popout: send mirroring both ways
         // e2-attention: manual picker sets pause the schedule until
-        // the next window boundary (contract (i)). Weak — no cycle.
-        presence.manualSetHook = { [weak schedule = presenceSchedule] in
+        // the next window boundary (contract (i)). top10-presence chains
+        // the truth note (echo labeled manual, idle disarmed). Weak.
+        presence.manualSetHook = { [weak schedule = presenceSchedule, weak truth = presenceTruth] in
             schedule?.noteManualSet()
+            truth?.noteManualSet()
         }
         // Single reaction point for the gate: every auth transition
         // (gate, Settings, Auth window — same model) runs authChanged,
@@ -1085,6 +1107,28 @@ final class AppState: ObservableObject {
             forName: .omNotifShowCall, object: nil, queue: nil
         ) { _ in
             Task { @MainActor in NSApp.activate(ignoringOtherApps: true) }
+        }
+        // top10-presence: screen lock/sleep feed activity truth (Away
+        // while locked is legitimate — and now labeled as such).
+        _ = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.willSleepNotification, object: nil, queue: nil
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.presenceTruth.noteSleep() }
+        }
+        _ = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: nil
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.presenceTruth.noteWake() }
+        }
+        _ = DistributedNotificationCenter.default().addObserver(
+            forName: NSNotification.Name("com.apple.screenIsLocked"), object: nil, queue: nil
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.presenceTruth.noteScreenLock() }
+        }
+        _ = DistributedNotificationCenter.default().addObserver(
+            forName: NSNotification.Name("com.apple.screenIsUnlocked"), object: nil, queue: nil
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.presenceTruth.noteScreenUnlock() }
         }
         // f1-composer: global hotkey → floating composer; Settings
         // toggle/remap/reset re-registers without a relaunch.
@@ -1220,6 +1264,7 @@ final class AppState: ObservableObject {
         teams.resetForAccount()
         presence.clear()
         presenceSchedule.clearApplied() // e2-attention: drop applied state
+        presenceTruth.clearSession() // top10-presence: drop lock/log/devices
         typing.clear()
         meeting.clear()
         unread.markAllRead()
@@ -2766,11 +2811,14 @@ final class AppState: ObservableObject {
         focusSync.refresh() // e2-attention: re-poll Focus (assign-on-change)
         // e2-attention: scheduled presence sets (transitions only;
         // signed-in live only — demo and the offline attention shot
-        // never touch core).
-        if signedIn == true, !isDemo,
-           !CommandLine.arguments.contains("--show-settings-attention")
-        {
-            presenceSchedule.tick()
+        // never touch core). top10-presence: the truth tick always runs
+        // (sweep + reconcile + rows) but writes only when live.
+        if !CommandLine.arguments.contains("--show-settings-attention") {
+            presenceTruth.liveWrites = signedIn == true && !isDemo
+            presenceTruth.tick()
+            if signedIn == true, !isDemo {
+                presenceSchedule.tick()
+            }
         }
         snooze.refresh() // d2-send: sweep expired snoozes (2s tick)
         fireScheduled() // d2-send: post due queue items (idle = no-op)
@@ -2954,6 +3002,7 @@ final class AppState: ObservableObject {
             feed.stop()
             presence.clear()
             presenceSchedule.clearApplied() // e2-attention: drop applied state
+            presenceTruth.clearSession() // top10-presence: drop lock/log/devices
             typing.clear()
             meeting.clear()
             meetingChat.clear()
@@ -3237,6 +3286,9 @@ struct RootView: View {
             CallBanner(store: state.call) {
                 openWindow(id: AppIdentity.callWindowID)
             }
+            // top10-presence: undo toast for auto presence changes
+            // (renders nothing without a live offer).
+            PresenceUndoToast(store: state.presenceTruth)
             if state.isDemo || state.switchingAccount || state.auth.state.allowsContent {
                 // R10 shifts-fullwidth: full-window modules take the
                 // whole content area outside the rail (chat viewport
