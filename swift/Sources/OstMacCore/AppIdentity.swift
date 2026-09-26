@@ -18,6 +18,8 @@ public enum AppIdentity {
     public static let meetWindowID = "meetings"
     public static let meetingWindowID = "meeting"
     public static let chatPopoutID = "chat-popout"
+    /// gap-g2: one value-driven window per open account (value = account id).
+    public static let accountWindowID = "account-window"
     public static let quickComposerPanelID = "quick-composer"
     public static let teamsFrameWindowID = "teams-frame"
     public static let tagline = "Teams client for macOS"

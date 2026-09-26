@@ -94,6 +94,8 @@ public struct AccountSwitcherView: View {
     @ObservedObject var accounts: AccountStore
     var onSelect: (String) -> Void
     var onAdded: (AuthViewModel) -> Void
+    /// gap-g2: account id to open beside the main window (no switch).
+    var onOpenWindow: (String) -> Void
 
     @State private var pendingVM: AuthViewModel?
     @State private var showAdd = false
@@ -101,11 +103,13 @@ public struct AccountSwitcherView: View {
     public init(
         accounts: AccountStore,
         onSelect: @escaping (String) -> Void,
-        onAdded: @escaping (AuthViewModel) -> Void
+        onAdded: @escaping (AuthViewModel) -> Void,
+        onOpenWindow: @escaping (String) -> Void = { _ in }
     ) {
         self.accounts = accounts
         self.onSelect = onSelect
         self.onAdded = onAdded
+        self.onOpenWindow = onOpenWindow
     }
 
     public var body: some View {
@@ -121,6 +125,17 @@ public struct AccountSwitcherView: View {
                 .disabled(record.id == accounts.activeID)
             }
             Divider()
+            // gap-g2: side-by-side accounts (one window per account;
+            // re-open refocuses). Listed separately so one-click switch
+            // keeps working above.
+            Menu("Open in New Window") {
+                ForEach(accounts.accounts) { record in
+                    Button(record.displayName) {
+                        onOpenWindow(record.id)
+                    }
+                }
+            }
+            .disabled(accounts.accounts.isEmpty)
             Button("Add Account…") {
                 pendingVM = accounts.beginAdd()
                 showAdd = true

@@ -167,6 +167,24 @@ public struct BackgroundUnreadRollup: Sendable, Equatable {
         counts.removeValue(forKey: accountID) ?? [:]
     }
 
+    /// Merge counts accrued elsewhere (gap-g2 window-close handoff:
+    /// the closing window's graph unread lands here, so a later
+    /// switch still shows unread N). Additive; blank ids and
+    /// non-positive counts are dropped. Empty input is a no-op.
+    public mutating func ingest(
+        _ incoming: [String: Int], for accountID: String
+    ) {
+        let acct = accountID.trimmingCharacters(
+            in: .whitespacesAndNewlines)
+        guard !acct.isEmpty else { return }
+        for (chatID, n) in incoming {
+            let chat = chatID.trimmingCharacters(
+                in: .whitespacesAndNewlines)
+            guard !chat.isEmpty, n > 0 else { continue }
+            counts[acct, default: [:]][chat, default: 0] += n
+        }
+    }
+
     /// Drop one account's stash without reading it (remove-account).
     public mutating func drop(accountID: String) {
         counts.removeValue(forKey: accountID)

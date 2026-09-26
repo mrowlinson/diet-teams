@@ -277,6 +277,20 @@ struct OstMacAppMain: App {
             }
         }
         .defaultSize(width: 560, height: 640)
+        // gap-g2: one value-driven window per open account (re-open of
+        // the same id focuses the existing window — no dups).
+        WindowGroup(
+            Text("Account"), id: AppIdentity.accountWindowID,
+            for: String.self
+        ) { value in
+            if let accountID = value.wrappedValue {
+                AccountWindowRootView(state: state, accountID: accountID)
+            } else {
+                // Stale restored window (value lost): close itself.
+                PopOutEmptyView()
+            }
+        }
+        .defaultSize(width: 900, height: 620)
         Settings {
             if CommandLine.arguments.contains("--show-settings-templates") {
                 // Shot hook (e2-canned): the real Templates section
@@ -490,7 +504,22 @@ final class AppState: ObservableObject {
     /// Multi-account list + per-account VMs (d1-accounts). The `auth`
     /// VM above is the live gate object, repointed at the active
     /// profile on every switch (stable identity for all observers).
-    let accounts = AccountStore()
+    /// Init-assigned (gap-g2): its profile flips serialize through
+    /// `profileGate` below.
+    let accounts: AccountStore
+    /// gap-g2: serializes every core-profile flip (switches, restore)
+    /// against account-window flip-flop ops; records the active
+    /// profile so flip-backs land on the CURRENT active.
+    let profileGate = AccountProfileGate()
+    /// gap-g2: side-by-side account windows (visible set + cached
+    /// per-account graphs).
+    let accountWindows = AccountWindowRegistry()
+    /// gap-g2: armed account-window request (RootView opens the window
+    /// for it, then clears it — openWindow lives in the view layer only).
+    @Published var pendingAccountWindowID: String?
+    /// gap-g2: last flip-flop gap-close (coalesces resyncs across
+    /// rapid window ops — trailing gaps still close, ≤2s stale).
+    private var lastWindowResync = Date.distantPast
     /// True between an account switch/add and its quiet reload landing
     /// (keeps the gate open across the `.unknown` repoint beat).
     @Published var switchingAccount = false
@@ -606,6 +635,13 @@ final class AppState: ObservableObject {
     private var ownerMRI: String?
 
     init(args: [String]) {
+        // gap-g2: every AccountStore profile flip serializes through
+        // the gate (window flip-flop ops queue behind the same lock);
+        // the gate seeds from the restored store (the one truth).
+        accounts = AccountStore(profileSet: { [profileGate] id in
+            try profileGate.setActive(id) { try RustCore.profileSet($0) }
+        })
+        profileGate.seed(accounts.activeID ?? AccountProfile.defaultID)
         // e2-attention: attention stores (shot hook may point them at
         // the throwaway suite + seed them; seeded values also feed the
         // Diagnostics rows). First: `let`s without defaults must land
@@ -1076,6 +1112,9 @@ final class AppState: ObservableObject {
                 // set (snapshot + roll-up stash dropped with it).
                 self?.bgPoller.drop(accountID: record.id)
                 self?.bgRollup.drop(accountID: record.id)
+                // gap-g2: its window graph goes too (a live window
+                // renders the removed placeholder).
+                self?.accountWindows.drop(accountID: record.id)
             },
             emptied: { [weak self] in
                 Task { @MainActor [weak self] in
@@ -1305,8 +1344,12 @@ final class AppState: ObservableObject {
         } else {
             // d1-accounts: relaunch restores the last-active profile
             // BEFORE the status read (gate + whoami follow it).
+            // gap-g2: routed through the gate (records + serializes;
+            // no window op can exist yet, but the record must be true).
             if let active = accounts.activeID {
-                _ = try? RustCore.profileSet(active)
+                _ = try? profileGate.setActive(active) {
+                    try RustCore.profileSet($0)
+                }
                 auth.repoint(profile: active)
             }
             await auth.refreshStatus()
@@ -1813,6 +1856,94 @@ final class AppState: ObservableObject {
         }
     }
 
+    // MARK: - Account windows (gap-g2)
+
+    /// Flip-flop runner: one blocking core op under an inactive
+    /// account's profile. Pauses the live feed first (no trouter poll
+    /// may START mid-flip — a wrong-profile poll would misattribute
+    /// events), then gated flip → op → flip-back → resume. The
+    /// resume's backlog drain is silent, so `onResumed` closes the
+    /// gap (refetch open chat + list). Skips the pause entirely when
+    /// the feed is already stopped (signed out).
+    private struct AccountWindowRunner: AccountCoreRunner {
+        let gate: AccountProfileGate
+        let feed: RealtimeFeed
+        let onResumed: @Sendable () -> Void
+
+        func run<T>(_ op: () throws -> T, accountID: String?) throws -> T {
+            let wasLive = feed.currentState != .stopped
+            if wasLive { feed.stop() }
+            defer {
+                if wasLive {
+                    feed.start()
+                    onResumed()
+                }
+            }
+            return try gate.run(under: accountID, op) {
+                try RustCore.profileSet($0)
+            }
+        }
+    }
+
+    /// Build one window graph: per-profile list reads + stamped conv
+    /// with the flip-flop runner. Demo runs the memory blocked store
+    /// (never the real defaults — main-window reset parity).
+    private func makeAccountGraph(for record: AccountRecord) -> AccountWindowGraph {
+        let runner = AccountWindowRunner(
+            gate: profileGate, feed: feed
+        ) { [weak self] in
+            Task { @MainActor [weak self] in self?.noteWindowOpResumed() }
+        }
+        let blocked = isDemo
+            ? BlockedStore(defaults: nil)
+            : BlockedStore(key: BlockedStore.key(for: record.id))
+        let chats = ChatListViewModel(
+            fetcher: { [id = record.id] in
+                try RustCore.chats(limit: $0, profile: id)
+            },
+            blocked: blocked,
+            folders: FolderStore(accountID: record.id))
+        return AccountWindowGraph(
+            account: record, chats: chats, runner: runner)
+    }
+
+    /// Side-by-side entry (switcher "Open in New Window"): register
+    /// the account window and return the window value for
+    /// `openWindow(value:)` (re-open refocuses — the registry
+    /// enforces one window per id). Nil for blank/unknown ids.
+    func openAccountWindow(accountID: String) -> String? {
+        let id = accountID.trimmingCharacters(
+            in: .whitespacesAndNewlines)
+        guard !id.isEmpty else { return nil }
+        guard let record = accounts.accounts.first(where: { $0.id == id })
+        else { return nil }
+        accountWindows.open(accountID: id) { makeAccountGraph(for: record) }
+        return id
+    }
+
+    /// Window closed: the graph's unread merges back into the
+    /// background roll-up (a later switch still lands on unread N)
+    /// and drains locally (never double-counted); the graph itself
+    /// stays cached — re-open restores selection, bubbles, and pins
+    /// with no reload.
+    func closeAccountWindow(accountID: String) {
+        if let g = accountWindows.graph(for: accountID) {
+            bgRollup.ingest(g.unread.counts, for: accountID)
+            g.unread.markAllRead()
+        }
+        accountWindows.close(accountID: accountID)
+    }
+
+    /// Flip-flop gap-close (coalesced): the pause's silent drain may
+    /// have swallowed live events, so re-fetch the open chat + list.
+    /// Leading-edge 2s throttle across rapid window ops.
+    private func noteWindowOpResumed() {
+        let now = Date()
+        guard now.timeIntervalSince(lastWindowResync) > 2 else { return }
+        lastWindowResync = now
+        handleResync()
+    }
+
     /// Armed message seek (om-ja-search): `jumpToMessage` sets it, `open`
     /// consumes it (even on the guard exits, so a refused open never
     /// leaks a stale seek into the next open).
@@ -2247,6 +2378,11 @@ final class AppState: ObservableObject {
         if popouts.ingest(realtime: msg), seenWorthy {
             receipts.refresh(threadID: msg.chatID)
         }
+        // gap-g2 fan-out (live leg): a window open on the event's
+        // account takes it too (live events stamp nil = active; the
+        // registry resolves that). Same decision — never re-decided.
+        _ = accountWindows.ingest(
+            msg, decision: decision, activeID: accounts.activeID)
     }
 
     /// Owner MRI for live-event matching: configured value wins, else
@@ -2582,7 +2718,16 @@ final class AppState: ObservableObject {
             notifLastReason = reason
         }
         guard case .notify = decision else { return }
-        bgRollup.note(accountID: ev.accountID, chatID: ev.chatID)
+        // gap-g2 fan-out (background leg): a window open on this
+        // account owns the event (list bump + open-conv bubble + its
+        // own unread) instead of the switch roll-up; the banner below
+        // still posts (the window may be behind).
+        if accountWindows.isOpen(accountID: ev.accountID) {
+            _ = accountWindows.ingest(
+                msg, decision: decision, activeID: accounts.activeID)
+        } else {
+            bgRollup.note(accountID: ev.accountID, chatID: ev.chatID)
+        }
         if localQuietNow {
             noteSuppressedIfWarranted(msg, chatName: ev.chatName, decision: decision)
         } else {
@@ -2867,6 +3012,151 @@ struct PopOutRootView: View {
     }
 }
 
+/// Side-by-side account window (gap-g2): the graph's chat list plus
+/// its conversation, both live-updating off the fan-out. Own
+/// Shared/Notes tab stores (un-opened — files/notes stay
+/// main-window); presence/call/typing/receipts/scheduled/canned are
+/// chat-keyed shares (pop-out precedent). Close drains the graph's
+/// unread into the background roll-up and drops the visible flag —
+/// the graph stays cached, so re-open restores with no reload.
+struct AccountWindowRootView: View {
+    @ObservedObject var state: AppState
+    let accountID: String
+    @StateObject private var shared = SharedFilesStore()
+    @StateObject private var notes = NotesStore()
+
+    var body: some View {
+        if let graph = state.accountWindows.graph(for: accountID) {
+            AccountWindowContent(
+                state: state, graph: graph,
+                shared: shared, notes: notes)
+        } else {
+            // Removed account (the registry evicted the graph).
+            VStack(spacing: 8) {
+                Text("Account removed")
+                    .font(.headline)
+                Text("This account was removed. Close this window.")
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+}
+
+private struct AccountWindowContent: View {
+    @ObservedObject var state: AppState
+    @ObservedObject var graph: AccountWindowGraph
+    @ObservedObject var shared: SharedFilesStore
+    @ObservedObject var notes: NotesStore
+
+    var body: some View {
+        DensityHost(density: state.density) {
+            NavigationSplitView {
+                AccountWindowListView(
+                    chats: graph.chats, unread: graph.unread)
+            } detail: {
+                if let openID = graph.openChatID {
+                    ConversationView(
+                        store: graph.conv,
+                        presence: state.presence,
+                        call: state.call, shared: shared, notes: notes,
+                        catchUp: state.catchUp, typing: state.typing,
+                        receipts: state.receipts,
+                        pins: graph.pins,
+                        saved: graph.saved,
+                        scheduled: state.scheduled,
+                        canned: state.canned,
+                        isGroup: graph.chats.chat(id: openID)?.is_group ?? true,
+                        onForward: { state.beginForward($0) },
+                        initialDraft: state.popouts.draft(for: openID),
+                        onDraftChange: {
+                            state.popouts.saveDraft($0, for: openID)
+                        })
+                } else {
+                    VStack(spacing: 8) {
+                        Text("No chat selected")
+                            .font(.headline)
+                        Text("Pick a chat from the list.")
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+            .popoutWindowTitle(graph.account.displayName)
+            .onDisappear {
+                state.closeAccountWindow(accountID: graph.account.id)
+            }
+        }
+    }
+}
+
+/// Minimal window list (gap-g2): rows + unread dots + selection. No
+/// leave/block entries (active-profile FFI has no window path), no
+/// folders UI (the VM still filters blocked rows).
+private struct AccountWindowListView: View {
+    @ObservedObject var chats: ChatListViewModel
+    @ObservedObject var unread: UnreadStore
+
+    var body: some View {
+        Group {
+            switch chats.state {
+            case .loading:
+                ProgressView("Loading chats…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            case .empty:
+                Text("No chats")
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            case .error(let message):
+                VStack(spacing: 8) {
+                    Text(message)
+                        .foregroundStyle(.secondary)
+                    Button("Retry") { chats.refresh() }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            case .loaded:
+                List(selection: $chats.selectedChatID) {
+                    ForEach(chats.chats) { chat in
+                        HStack(spacing: 8) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(chat.name)
+                                    .lineLimit(1)
+                                if let preview = chat.last_message_preview,
+                                   !preview.isEmpty
+                                {
+                                    Text(preview)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                }
+                            }
+                            Spacer()
+                            let n = unread.count(for: chat.id)
+                            if n > 0 {
+                                Text("\(n)")
+                                    .font(.caption2)
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(
+                                        Capsule().fill(Color.accentColor))
+                            }
+                        }
+                        .tag(chat.id)
+                    }
+                }
+            }
+        }
+        .task {
+            // First appear only: the cached graph keeps its rows, so
+            // re-open never refetches (close loses no state).
+            if chats.state == .loading {
+                await chats.load()
+            }
+        }
+    }
+}
+
 /// Stale restored pop-out (its value decoded nil): closes itself so no
 /// empty "Chat" window lingers.
 private struct PopOutEmptyView: View {
@@ -2984,6 +3274,16 @@ struct RootView: View {
             {
                 state.pendingPopoutID = nil
                 openWindow(value: target)
+            }
+        }
+        // gap-g2: open the armed account window (cleared even when the
+        // id is stale, so a dead arm never sticks).
+        .onChange(of: state.pendingAccountWindowID) {
+            if let id = state.pendingAccountWindowID {
+                state.pendingAccountWindowID = nil
+                if let target = state.openAccountWindow(accountID: id) {
+                    openWindow(value: target)
+                }
             }
         }
         .sheet(isPresented: $state.showJump) {
@@ -3304,7 +3604,8 @@ struct StatusBar: View {
                 AccountSwitcherView(
                     accounts: state.accounts,
                     onSelect: { state.switchAccount(to: $0) },
-                    onAdded: { state.completePendingAdd($0) })
+                    onAdded: { state.completePendingAdd($0) },
+                    onOpenWindow: { state.pendingAccountWindowID = $0 })
             }
         }
         .padding(.horizontal, DietSpace.sm)

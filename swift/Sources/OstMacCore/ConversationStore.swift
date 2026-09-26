@@ -62,7 +62,29 @@ public final class ConversationStore: ObservableObject {
     /// removals that restore never fire). AppState drops the offline
     /// index doc.
     public var onDelete: ((String, String) -> Void)?
+    /// Owning account profile (gap-g2): nil = the active profile
+    /// (every core call runs direct, unchanged). Account-window graphs
+    /// stamp their account + inject the App's flip-flop runner, so
+    /// history/sends/reacts land on the window's account.
+    public var accountID: String?
+    /// Profile-aware core-call wrapper (gap-g2). Default runs direct.
+    public var coreRunner: any AccountCoreRunner = DirectAccountCoreRunner()
     private var openGeneration = 0
+
+    /// Sendable hop for detached core calls: the runner + account
+    /// travel as values (self is MainActor-bound, the calls run
+    /// off-main). Capture once per func, wrap every `RustCore.*` site.
+    private struct CoreHop: Sendable {
+        let runner: any AccountCoreRunner
+        let accountID: String?
+        func run<T>(_ op: () throws -> T) throws -> T {
+            try runner.run(op, accountID: accountID)
+        }
+    }
+
+    private var coreHop: CoreHop {
+        CoreHop(runner: coreRunner, accountID: accountID)
+    }
 
     /// Opaque cursor for the next older page; nil = end of history.
     public private(set) var pageToken: String?
@@ -168,17 +190,18 @@ public final class ConversationStore: ObservableObject {
             let t = (seekMessageID ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             return t.isEmpty ? nil : t
         }()
+        let hop = coreHop
         Task {
             // Best-effort identity (core-cached after first call); a stale
             // stored name still stamps when refresh fails.
             let own: String? = try? await Task.detached {
-                try RustCore.whoami().display_name
+                try hop.run { try RustCore.whoami().display_name }
             }.value
             guard gen == self.openGeneration else { return } // superseded
             if let own { self.ownDisplayName = own }
             do {
                 let resp = try await Task.detached {
-                    try RustCore.messages(chatID: chatID, limit: limit)
+                    try hop.run { try RustCore.messages(chatID: chatID, limit: limit) }
                 }.value
                 guard gen == self.openGeneration else { return }
                 let stamped = Self.stampOwnership(resp.messages, ownName: self.ownDisplayName)
@@ -196,7 +219,7 @@ public final class ConversationStore: ObservableObject {
                     guard let tok = self.pageToken else { break }
                     do {
                         let next = try await Task.detached {
-                            try RustCore.messagesPage(chatID: chatID, pageToken: tok, limit: limit)
+                            try hop.run { try RustCore.messagesPage(chatID: chatID, pageToken: tok, limit: limit) }
                         }.value
                         guard gen == self.openGeneration else { return }
                         let stamped = Self.stampOwnership(next.messages, ownName: self.ownDisplayName)
@@ -225,7 +248,7 @@ public final class ConversationStore: ObservableObject {
                         guard let tok = self.pageToken else { break }
                         do {
                             let next = try await Task.detached {
-                                try RustCore.messagesPage(chatID: chatID, pageToken: tok, limit: limit)
+                                try hop.run { try RustCore.messagesPage(chatID: chatID, pageToken: tok, limit: limit) }
                             }.value
                             guard gen == self.openGeneration else { return }
                             let stamped = Self.stampOwnership(next.messages, ownName: self.ownDisplayName)
@@ -299,6 +322,7 @@ public final class ConversationStore: ObservableObject {
         loadingMore = true
         error = nil
         let gen = openGeneration
+        let hop = coreHop
         Task {
             var pages = 0
             var lastError: Error?
@@ -306,7 +330,7 @@ public final class ConversationStore: ObservableObject {
                 guard let tok = self.pageToken else { break }
                 do {
                     let resp = try await Task.detached {
-                        try RustCore.messagesPage(chatID: chat, pageToken: tok, limit: limit)
+                        try hop.run { try RustCore.messagesPage(chatID: chat, pageToken: tok, limit: limit) }
                     }.value
                     guard gen == self.openGeneration else { return } // superseded
                     let stamped = Self.stampOwnership(resp.messages, ownName: self.ownDisplayName)
@@ -405,6 +429,7 @@ public final class ConversationStore: ObservableObject {
         loadingMore = true
         error = nil
         let gen = openGeneration
+        let hop = coreHop
         let startDay = MessageRender.dayKey(messages.first?.timestamp ?? "")
         Task {
             var pages = 0
@@ -412,7 +437,7 @@ public final class ConversationStore: ObservableObject {
             while pages < Self.dayLoadMaxPages, let tok = self.pageToken {
                 do {
                     let resp = try await Task.detached {
-                        try RustCore.messagesPage(chatID: id, pageToken: tok, limit: limit)
+                        try hop.run { try RustCore.messagesPage(chatID: id, pageToken: tok, limit: limit) }
                     }.value
                     guard gen == self.openGeneration else { return } // superseded
                     let stamped = Self.stampOwnership(resp.messages, ownName: self.ownDisplayName)
@@ -583,18 +608,21 @@ public final class ConversationStore: ObservableObject {
             reply_to: parent?.id)
         messages.append(bubble)
         onLocalSend?(bubble)
+        let hop = coreHop
         Task {
             do {
                 if let parent {
                     let p = parent
                     _ = try await Task.detached {
-                        try RustCore.reply(
-                            chatID: id, parentID: p.id,
-                            parentSender: p.sender, parentText: p.content, text: body)
+                        try hop.run {
+                            try RustCore.reply(
+                                chatID: id, parentID: p.id,
+                                parentSender: p.sender, parentText: p.content, text: body)
+                        }
                     }.value
                 } else {
                     _ = try await Task.detached {
-                        try RustCore.send(chatID: id, text: body)
+                        try hop.run { try RustCore.send(chatID: id, text: body) }
                     }.value
                 }
             } catch {
@@ -629,10 +657,11 @@ public final class ConversationStore: ObservableObject {
             lastForwardDestName = destName
             return
         }
+        let hop = coreHop
         Task {
             do {
                 _ = try await Task.detached {
-                    try RustCore.send(chatID: dest, text: body)
+                    try hop.run { try RustCore.send(chatID: dest, text: body) }
                 }.value
                 self.lastForward = MessageActions.ForwardRecord(messageID: message.id, destChatID: dest, body: body)
                 self.lastForwardDestName = destName
@@ -705,10 +734,11 @@ public final class ConversationStore: ObservableObject {
         ReactionRecents.record(emoji)
         if isDemo { return }
         guard let id = chatID else { return }
+        let hop = coreHop
         Task {
             do {
                 _ = try await Task.detached {
-                    try RustCore.react(chatID: id, messageID: messageID, emoji: emoji)
+                    try hop.run { try RustCore.react(chatID: id, messageID: messageID, emoji: emoji) }
                 }.value
             } catch {
                 self.revertReaction(messageID: messageID, emoji: emoji, added: true)
@@ -732,10 +762,11 @@ public final class ConversationStore: ObservableObject {
         let old = messages[i].content
         let wasEdited = messages[i].edited
         messages = Self.applyingEdit(id: messageID, content: body, to: messages)
+        let hop = coreHop
         Task {
             do {
                 _ = try await Task.detached {
-                    try RustCore.edit(chatID: id, messageID: messageID, text: body)
+                    try hop.run { try RustCore.edit(chatID: id, messageID: messageID, text: body) }
                 }.value
             } catch {
                 // Roll back to the pre-edit text.
@@ -757,10 +788,11 @@ public final class ConversationStore: ObservableObject {
         if isDemo { return }
         guard Self.reactionEmojis.contains(emoji) else { return }
         guard let id = chatID else { return }
+        let hop = coreHop
         Task {
             do {
                 _ = try await Task.detached {
-                    try RustCore.removeReaction(chatID: id, messageID: messageID, emoji: emoji)
+                    try hop.run { try RustCore.removeReaction(chatID: id, messageID: messageID, emoji: emoji) }
                 }.value
             } catch {
                 self.revertReaction(messageID: messageID, emoji: emoji, added: false)
@@ -823,10 +855,11 @@ public final class ConversationStore: ObservableObject {
         let removed = messages[i]
         messages = Self.removing(id: id, from: messages)
         failedIDs.remove(id)
+        let hop = coreHop
         Task {
             do {
                 _ = try await Task.detached {
-                    try RustCore.deleteMessage(chatID: chat, messageID: id)
+                    try hop.run { try RustCore.deleteMessage(chatID: chat, messageID: id) }
                 }.value
                 self.onDelete?(chat, id)
             } catch {
