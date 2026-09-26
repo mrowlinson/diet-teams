@@ -134,7 +134,7 @@ public struct TeamsTabsView: View {
             .padding(.horizontal, DietSpace.md)
             .padding(.vertical, DietSpace.xs)
         case .loaded:
-            ScrollView(.horizontal, showsIndicators: false) {
+            ScrollView(.horizontal) {
                 HStack(spacing: DietSpace.sm) {
                     ForEach(store.tabs) { tab in
                         chip(for: tab)
@@ -143,6 +143,7 @@ public struct TeamsTabsView: View {
                 .padding(.horizontal, DietSpace.md)
                 .padding(.vertical, DietSpace.xs)
             }
+            .scrollIndicators(.hidden)
         }
     }
 
@@ -159,30 +160,32 @@ public struct TeamsTabsView: View {
                 return false
             }
         }()
-        return Button {
-            onSelect(target)
-        } label: {
-            HStack(spacing: DietSpace.xs) {
-                Image(systemName: icon(for: target))
-                    .font(DietType.caption2)
-                Text(tab.name)
-                    .font(DietType.caption1)
-                    .lineLimit(1)
-            }
-            .padding(.horizontal, DietSpace.sm)
-            .padding(.vertical, DietSpace.xs)
-            .background(
-                highlighted
-                    ? Color(nsColor: DietColor.accent).opacity(0.25)
-                    : Color.secondary.opacity(0.12)
-            )
-            .clipShape(Capsule())
+        // Native bezel per style: prominent (white label, accent
+        // fill) for the highlighted chip, bordered otherwise. One
+        // style per branch — the two are distinct concrete types.
+        let label = HStack(spacing: DietSpace.xs) {
+            Image(systemName: icon(for: target))
+                .font(DietType.caption2)
+            Text(tab.name)
+                .font(DietType.caption1)
+                .lineLimit(1)
         }
-        .buttonStyle(.plain)
-        .foregroundStyle(
-            target == .none ? DietColor.textTertiaryColor : DietColor.textPrimaryColor)
-        .disabled(target == .none)
-        .help(hint(for: tab))
+        return Group {
+            if highlighted {
+                Button { onSelect(target) } label: { label }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .help(hint(for: tab))
+            } else {
+                Button { onSelect(target) } label: { label }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .foregroundStyle(
+                        target == .none ? DietColor.textTertiaryColor : DietColor.textPrimaryColor)
+                    .disabled(target == .none)
+                    .help(hint(for: tab))
+            }
+        }
     }
 
     private func icon(for target: ChannelTabTarget) -> String {
