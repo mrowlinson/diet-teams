@@ -48,6 +48,37 @@ public enum InlineDocs {
     /// (same `attributes(of:)` parser the image miner uses).
     public static func refs(fromRaw raw: String?) -> [String] {
         guard let raw, !raw.isEmpty else { return [] }
+        refsLock.lock()
+        if let hit = refsCache[raw] {
+            refsLock.unlock()
+            return hit
+        }
+        refsLock.unlock()
+        let out = refsUncached(fromRaw: raw)
+        refsLock.lock()
+        refsComputes += 1
+        if refsCache.count >= maxRefsCacheEntries { refsCache.removeAll() }
+        refsCache[raw] = out
+        refsLock.unlock()
+        return out
+    }
+
+    static let maxRefsCacheEntries = 1000
+    private static let refsLock = NSLock()
+    private static var refsCache: [String: [String]] = [:]
+
+    /// Actual scans, excluding cache hits (perf-guard tests only).
+    static var refsComputes = 0
+
+    /// Drop the cached scans + zero the counter (tests only).
+    static func resetRefsCache() {
+        refsLock.lock()
+        defer { refsLock.unlock() }
+        refsCache.removeAll()
+        refsComputes = 0
+    }
+
+    static func refsUncached(fromRaw raw: String) -> [String] {
         var out: [String] = []
         var seen = Set<String>()
         var rest = raw[...]
@@ -76,10 +107,29 @@ public enum InlineDocs {
     /// falls back to existing text/placeholder behavior). Performs no
     /// I/O: safe to call on every render.
     public static func resolve(refs: [String], files: [SharedFile]) -> [InlineDoc] {
+        resolve(refs: refs, filesByAttachmentID: index(files: files))
+    }
+
+    /// `attachment_id` -> file, first wins (matches `first(where:)`).
+    /// Files without an id never match (resolve drops them, as before).
+    public static func index(files: [SharedFile]) -> [String: SharedFile] {
+        var out: [String: SharedFile] = [:]
+        out.reserveCapacity(files.count)
+        for f in files {
+            guard let id = f.attachment_id else { continue }
+            if out[id] == nil { out[id] = f }
+        }
+        return out
+    }
+
+    /// Resolve over a prebuilt index (om-perf-swift-render): one O(files)
+    /// index per `docs` call instead of a linear scan per ref. Same
+    /// values as `resolve(refs:files:)` — first file wins per id.
+    public static func resolve(refs: [String], filesByAttachmentID index: [String: SharedFile]) -> [InlineDoc] {
         var out: [InlineDoc] = []
         for id in refs {
             guard out.count < maxRows else { break }
-            guard let f = files.first(where: { $0.attachment_id == id }) else { continue }
+            guard let f = index[id] else { continue }
             out.append(InlineDoc(file: f, refID: id))
         }
         return out
@@ -87,7 +137,9 @@ public enum InlineDocs {
 
     /// Rows for one bubble: mine the refs, resolve against loaded files.
     public static func docs(for message: ChatMessage, files: [SharedFile]) -> [InlineDoc] {
-        resolve(refs: refs(fromRaw: message.raw), files: files)
+        let refs = refs(fromRaw: message.raw)
+        guard !refs.isEmpty else { return [] }
+        return resolve(refs: refs, filesByAttachmentID: index(files: files))
     }
 
     /// True when any message carries doc refs: the host preloads the
