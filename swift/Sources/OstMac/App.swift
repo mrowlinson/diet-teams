@@ -1165,7 +1165,11 @@ final class AppState: ObservableObject {
         // stay silent and banner-free). The hooks fire on the phase
         // machine's transitions; Notifier owns the banner itself.
         if !isDemo {
-            call.ringer = CallRinger()
+            // gap-g4: the ring respects the system output mute (a muted
+            // speaker never starts the loop; the banner still posts).
+            let ringer = CallRinger()
+            ringer.mutedCheck = { SystemAudioMute.isOutputMuted() }
+            call.ringer = ringer
             call.onIncomingRing = { info in
                 let peer = info.displayPeer
                 Notifier.shared.postCall(

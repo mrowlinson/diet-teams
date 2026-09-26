@@ -14,6 +14,12 @@
 // - CallStore owns the phase→bell glue (ringer + onIncomingRing /
 //   onRingEnded hooks); the app assigns the hooks to Notifier posts.
 //   Nil ringer = silent (headless/tests never make noise).
+// gap-g4: CallKit provider API does not exist on macOS (see
+// CallKitSupport.swift), so this G3 path is the PERMANENT macOS
+// route, not a fallback. G4 hardened it in place: the banner content
+// is built by OmCallInfo.makeContent (interruption .active = Focus/
+// DND suppress by OS policy) and the ringer consults the system
+// output-mute probe before starting.
 import AppKit
 import Foundation
 import UserNotifications
@@ -35,6 +41,26 @@ public enum OmCallInfo {
 
     public static func userInfo(callID: String) -> [String: String] {
         [callIDKey: callID]
+    }
+
+    /// gap-g4: sole builder for the call banner content
+    /// (Notifier.postCall posts through here). SILENT — the CallRinger loop owns
+    /// all call audio so banner + ring never double-play.
+    /// interruptionLevel is .active ON PURPOSE: Focus/DND suppress
+    /// the banner by OS policy (no app-side quiet check, no bypass).
+    /// Pure — fully unit-testable without UNCenter.
+    public static func makeContent(
+        title: String, body: String, callID: String
+    ) -> UNMutableNotificationContent {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body.isEmpty ? "(incoming call)" : body
+        content.sound = nil
+        content.interruptionLevel = .active
+        content.categoryIdentifier = categoryID
+        content.userInfo = userInfo(callID: callID)
+        content.threadIdentifier = callID
+        return content
     }
 
     /// Shared category (both backends register this same shape).
@@ -62,9 +88,16 @@ public protocol CallRinging: AnyObject {
 /// Looped system-sound ring (native NSSound only). start() is idempotent
 /// (a second ring for the same call never layers); stop() always silences.
 /// No system sound resolves headless → silent no-op, never a crash.
+/// gap-g4: start() consults mutedCheck first — a ring into a muted
+/// output never starts (the banner still posts; silence must not eat
+/// the visual call too). Nil check = ring unconditionally (legacy).
 public final class CallRinger: CallRinging {
     /// Preferred ring sounds, first resolvable wins.
     public static let soundNames = ["Glass", "Ping", "Tink"]
+
+    /// System-mute probe (the app installs SystemAudioMute's;
+    /// tests inject a stub). Consulted on every start().
+    public var mutedCheck: (() -> Bool)?
 
     private var sound: NSSound?
 
@@ -73,6 +106,7 @@ public final class CallRinger: CallRinging {
     public var isRinging: Bool { sound?.isPlaying == true }
 
     public func start() {
+        if mutedCheck?() == true { return }
         if isRinging { return }
         if sound == nil {
             sound = Self.soundNames.lazy.compactMap { NSSound(named: $0) }.first

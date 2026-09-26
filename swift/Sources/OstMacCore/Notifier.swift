@@ -184,17 +184,13 @@ public final class Notifier: NSObject, @unchecked Sendable {
 
     /// gap-g3: incoming-call banner (Accept/Decline actions, stable id
     /// per call so re-posts replace). SILENT — the CallRinger loop owns
-    /// all call audio so banner + ring never double-play. Posted for
-    /// every incoming ring regardless of quiet/Focus: a call is
-    /// time-critical ("never miss calls" beats "never buzzed").
+    /// all call audio so banner + ring never double-play.
+    /// gap-g4: content via OmCallInfo.makeContent (interruption
+    /// .active — Focus/DND suppress by OS policy; the post still
+    /// fires every ring, the OS decides display).
     public func postCall(title: String, body: String, callID: String) {
-        let content = UNMutableNotificationContent()
-        content.title = title
-        content.body = body.isEmpty ? "(incoming call)" : body
-        content.sound = nil
-        content.categoryIdentifier = OmCallInfo.categoryID
-        content.userInfo = OmCallInfo.userInfo(callID: callID)
-        content.threadIdentifier = callID
+        let content = OmCallInfo.makeContent(
+            title: title, body: body, callID: callID)
         let req = UNNotificationRequest(
             identifier: OmCallInfo.requestID(callID: callID),
             content: content,
