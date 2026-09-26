@@ -17,7 +17,7 @@ public enum ChatListState: Equatable, Sendable {
 
 /// Loads the chat list off the main thread and publishes rows + selection.
 ///
-/// Default fetcher calls `RustCore.chats` (blocking FFI + network) on a
+/// Default fetcher calls `RustCore.chats` (blocking network) on a
 /// detached task. Tests inject a mock fetcher. Conforms to ``ChatSelection``
 /// so the conversation lane can share this instance as its selection source.
 /// Also owns the leave/block flows (om-leave-block): leaving calls core

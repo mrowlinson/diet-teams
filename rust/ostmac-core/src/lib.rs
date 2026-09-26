@@ -25,7 +25,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use ost::auth::{AuthConfig, TokenStore};
+use ost::auth::TokenStore;
 use ost::config::Config;
 use serde_json::json;
 
@@ -129,235 +129,14 @@ pub fn profile_set_json(profile: &str) -> String {
     json!({"ok": true, "profile": active}).to_string()
 }
 
-// ---------------------------------------------------------------------------
-// Device-code auth (direct HTTPS, no oauth2 crate: single-shot poll control)
-// ---------------------------------------------------------------------------
+// NOTE (R14 om-later-b18 B18): device-code flow moved to Swift
+// (DeviceAuth); PendingSession map + json fns + exports deleted.
 
-struct PendingSession {
-    device_code: String,
-    token_url: String,
-    client_id: String,
-    created_at: u64,
-    expires_in: u64,
-    interval: u64,
-    /// Account profile the polled tokens land in (add-account signs
-    /// into a fresh profile while another stays active).
-    profile: String,
-}
+// NOTE (R14 om-later-b18 B18): device_start_json{,_for} moved to
+// Swift (DeviceAuth.deviceStart); deleted.
 
-fn sessions() -> &'static Mutex<HashMap<String, PendingSession>> {
-    static S: OnceLock<Mutex<HashMap<String, PendingSession>>> = OnceLock::new();
-    S.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-static SESSION_COUNTER: AtomicU64 = AtomicU64::new(1);
-
-fn new_session_id() -> String {
-    let n = SESSION_COUNTER.fetch_add(1, Ordering::Relaxed);
-    format!("dc-{}-{}", now_secs(), n)
-}
-
-fn lock_sessions() -> std::sync::MutexGuard<'static, HashMap<String, PendingSession>> {
-    sessions().lock().unwrap_or_else(|e| e.into_inner())
-}
-
-/// Start device-code flow. Returns JSON with `session`, `verification_uri`,
-/// `user_code` (and `message`) or `{ok:false,...}`.
-pub fn device_start_json() -> String {
-    device_start_json_for(&ost::config::active_profile())
-}
-
-/// Start device-code flow for one account profile: the session's
-/// polled tokens land in that profile, never the active one.
-pub fn device_start_json_for(profile: &str) -> String {
-    let target = ost::config::normalize_profile(profile);
-    let auth = AuthConfig::default();
-    let device_url = format!(
-        "https://login.microsoftonline.com/{}/oauth2/v2.0/devicecode",
-        auth.tenant
-    );
-    let token_url = format!(
-        "https://login.microsoftonline.com/{}/oauth2/v2.0/token",
-        auth.tenant
-    );
-
-    let run = || -> Result<String, String> {
-        let rt = rt()?;
-        rt.block_on(async {
-            let http = http();
-            let resp = http
-                .post(&device_url)
-                .form(&[("client_id", auth.client_id), ("scope", auth.scope)])
-                .send()
-                .await
-                .map_err(|e| format!("devicecode request: {}", e))?;
-            let status = resp.status();
-            let body: serde_json::Value = resp
-                .json()
-                .await
-                .map_err(|e| format!("devicecode parse: {}", e))?;
-            if !status.is_success() {
-                return Err(format!("devicecode http {}: {}", status, body));
-            }
-            let get = |k: &str| {
-                body.get(k)
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
-                    .ok_or_else(|| format!("devicecode missing {}", k))
-            };
-            let device_code = get("device_code")?;
-            let user_code = get("user_code")?;
-            let verification_uri = get("verification_uri")?;
-            let message = body
-                .get("message")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let expires_in = body.get("expires_in").and_then(|v| v.as_u64()).unwrap_or(900);
-            let interval = body.get("interval").and_then(|v| v.as_u64()).unwrap_or(5);
-
-            let id = new_session_id();
-            lock_sessions().insert(
-                id.clone(),
-                PendingSession {
-                    device_code,
-                    token_url,
-                    client_id: auth.client_id.to_string(),
-                    created_at: now_secs(),
-                    expires_in,
-                    interval,
-                    profile: target.clone(),
-                },
-            );
-            Ok(json!({
-                "ok": true,
-                "session": id,
-                "verification_uri": verification_uri,
-                "user_code": user_code,
-                "message": message,
-                "expires_in": expires_in,
-                "interval": interval,
-            })
-            .to_string())
-        })
-    };
-
-    match run() {
-        Ok(s) => s,
-        Err(e) => err_json("device_start", e),
-    }
-}
-
-/// Single poll attempt for `session`. Returns:
-/// - `{ok:true, status:"pending"}` — keep polling after `interval` secs
-/// - `{ok:true, status:"complete", tokens:{...}}` — tokens saved
-/// - `{ok:false, ...}` — fatal (session dropped)
-pub fn device_poll_json(session: &str) -> String {
-    let (device_code, token_url, client_id, interval, profile) = {
-        let map = lock_sessions();
-        match map.get(session) {
-            Some(s) => {
-                if now_secs() > s.created_at + s.expires_in {
-                    drop(map);
-                    lock_sessions().remove(session);
-                    return err_json("device_expired", "device code expired; start again");
-                }
-                (
-                    s.device_code.clone(),
-                    s.token_url.clone(),
-                    s.client_id.clone(),
-                    s.interval,
-                    s.profile.clone(),
-                )
-            }
-            None => return err_json("no_session", "unknown or finished session"),
-        }
-    };
-
-    let run = || -> Result<serde_json::Value, (bool, String)> {
-        // Ok(value) = complete; Err((retryable, detail))
-        let rt = rt().map_err(|e| (false, e))?;
-        rt.block_on(async {
-            let http = http();
-            let resp = http
-                .post(&token_url)
-                .form(&[
-                    ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
-                    ("device_code", &device_code),
-                    ("client_id", &client_id),
-                ])
-                .send()
-                .await
-                .map_err(|e| (true, format!("token request: {}", e)))?;
-            let body: serde_json::Value = resp
-                .json()
-                .await
-                .map_err(|e| (true, format!("token parse: {}", e)))?;
-            if let Some(tok) = body.get("access_token").and_then(|v| v.as_str()) {
-                let refresh = body
-                    .get("refresh_token")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let expires_in = body.get("expires_in").and_then(|v| v.as_u64());
-                return Ok(json!({
-                    "access_token": tok.to_string(),
-                    "refresh_token": refresh,
-                    "expires_in": expires_in,
-                }));
-            }
-            let code = body
-                .get("error")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown");
-            match code {
-                "authorization_pending" | "slow_down" => {
-                    Err((true, "pending".to_string()))
-                }
-                _ => Err((false, format!("{}: {}", code, body))),
-            }
-        })
-    };
-
-    match run() {
-        Ok(t) => {
-            // Save AAD tokens, then derive Skype/Graph/IC3/Recorder via refresh.
-            let save = (|| -> Result<(), String> {
-                let rt = rt()?;
-                rt.block_on(async {
-                    let mut cfg =
-                        Config::load_cached_for(&profile).map_err(|e| e.to_string())?;
-                    cfg.set_access_token(
-                        t["access_token"].as_str().unwrap_or("").to_string(),
-                        t["expires_in"].as_u64(),
-                    );
-                    let rt_tok = t["refresh_token"].as_str().unwrap_or("");
-                    if !rt_tok.is_empty() {
-                        cfg.set_refresh_token(rt_tok.to_string());
-                    }
-                    cfg.save_to(&profile).map_err(|e| e.to_string())?;
-                    // Best-effort derived tokens (each warns, never fails login).
-                    let _ = ost::auth::oauth::refresh_for(&profile).await;
-                    Ok(())
-                })
-            })();
-            if let Err(e) = save {
-                return err_json("token_save", e);
-            }
-            lock_sessions().remove(session);
-            whoami_cache_clear_for(&profile); // new sign-in may be a different user
-            let tokens = Config::load_cached_for(&profile)
-                .map(|c| token_summary(&c))
-                .unwrap_or(json!({}));
-            json!({"ok": true, "status": "complete", "tokens": tokens}).to_string()
-        }
-        Err((true, _)) => json!({"ok": true, "status": "pending", "interval": interval}).to_string(),
-        Err((false, detail)) => {
-            lock_sessions().remove(session);
-            err_json("device_poll", detail)
-        }
-    }
-}
+// NOTE (R14 om-later-b18 B18): device_poll_json moved to Swift
+// (DeviceAuth.devicePoll); deleted.
 
 // ---------------------------------------------------------------------------
 // Refresh + sign-out (om-authux lane)
@@ -407,7 +186,8 @@ pub fn sign_out_json() -> String {
 /// the profile's whoami cache entry are dropped. Same envelope.
 pub fn sign_out_json_for(profile: &str) -> String {
     let target = ost::config::normalize_profile(profile);
-    lock_sessions().retain(|_, s| s.profile != target);
+    // NOTE (R14 om-later-b18 B18): device sessions live in Swift now;
+    // Swift signOut drops them (RustCore.signOut defer).
     browser_auth::clear_browser_sessions_for(&target);
     whoami_cache_clear_for(&target);
     let run = || -> Result<(), String> {
@@ -519,6 +299,9 @@ pub fn whoami_json_for(profile: &str) -> String {
     }
 }
 
+// NOTE (R14 om-later-b4 B4): whoami exports moved to Swift (CoreReads).
+// whoami_json* + cache + envelope stay (calls.rs display_name_or).
+
 // ---------------------------------------------------------------------------
 // Chats
 // ---------------------------------------------------------------------------
@@ -534,26 +317,8 @@ fn chat_to_json(c: &ost::api::ChatInfo) -> serde_json::Value {
     })
 }
 
-/// Structured chat list as JSON. Requires sign-in; unsigned yields `{ok:false}`.
-pub fn chats_json(limit: usize) -> String {
-    let run = || -> Result<String, String> {
-        let rt = rt()?;
-        rt.block_on(async {
-            let client = ost::api::client::TeamsClient::new()
-                .await
-                .map_err(|e| format!("{:#}", e))?;
-            let chats = ost::api::list_chats_data(&client, limit)
-                .await
-                .map_err(|e| format!("{:#}", e))?;
-            let items: Vec<_> = chats.iter().map(chat_to_json).collect();
-            Ok(json!({"ok": true, "chats": items}).to_string())
-        })
-    };
-    match run() {
-        Ok(s) => s,
-        Err(e) => err_json("chats", e),
-    }
-}
+// NOTE (R14 om-later-b4 B4): chats moved to Swift (CoreReads);
+// backing fn + export deleted. chat_to_json stays (1:1 create).
 
 /// Create (or re-open) a 1:1 chat with `user` (AAD id or UPN).
 /// Requires sign-in; unsigned yields `{ok:false}`. Empty refs are
@@ -605,28 +370,8 @@ fn team_to_json(t: &ost::api::TeamInfo) -> serde_json::Value {
     })
 }
 
-/// Joined teams with their channels as JSON. Requires sign-in; unsigned
-/// yields `{ok:false}`. Channel ids open as conversations through the
-/// same `messages`/`send` path as chat ids (ost TUI parity).
-pub fn teams_json() -> String {
-    let run = || -> Result<String, String> {
-        let rt = rt()?;
-        rt.block_on(async {
-            let client = ost::api::client::TeamsClient::new()
-                .await
-                .map_err(|e| format!("{:#}", e))?;
-            let teams = ost::api::list_teams_data(&client)
-                .await
-                .map_err(|e| format!("{:#}", e))?;
-            let items: Vec<_> = teams.iter().map(team_to_json).collect();
-            Ok(json!({"ok": true, "teams": items}).to_string())
-        })
-    };
-    match run() {
-        Ok(s) => s,
-        Err(e) => err_json("teams", e),
-    }
-}
+// NOTE (R14 om-later-b4 B4): teams moved to Swift (CoreReads);
+// backing fn + export deleted. team_to_json stays (team_create).
 
 /// Create one standard channel in a team. Returns
 /// `{ok:true, channel:{id,name}}` or `{ok:false}`. Bad `team_id` and
@@ -1984,26 +1729,8 @@ fn presence_status_pair(status: &str) -> Option<(&'static str, &'static str)> {
     }
 }
 
-/// Own presence via Graph /me/presence (ost `get_presence_data`).
-/// `{ok:true, availability, activity}` or `{ok:false}`.
-pub fn presence_json() -> String {
-    let run = || -> Result<String, String> {
-        let rt = rt()?;
-        rt.block_on(async {
-            let client = ost::api::client::TeamsClient::new()
-                .await
-                .map_err(|e| format!("{:#}", e))?;
-            let info = ost::api::get_presence_data(&client)
-                .await
-                .map_err(|e| format!("{:#}", e))?;
-            Ok(presence_envelope(&info.availability, &info.activity))
-        })
-    };
-    match run() {
-        Ok(s) => s,
-        Err(e) => err_json("presence", e),
-    }
-}
+// NOTE (R14 om-later-b4 B4): presence read moved to Swift (CoreReads);
+// backing fn + export deleted. presence_envelope stays (set/user).
 
 /// Set own preferred presence (ost `set_presence` table + body, minus the
 /// CLI print). Unknown/empty `status` is rejected before any network.
@@ -2325,43 +2052,9 @@ pub fn reminder_done_json(list_id: &str, task_id: &str) -> String {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Meetings (om-meet-join lane: upcoming via Graph calendarView + join parse)
-// ---------------------------------------------------------------------------
-
-fn meeting_to_json(m: &ost::api::MeetingInfo) -> serde_json::Value {
-    json!({
-        "id": m.id,
-        "subject": m.subject,
-        "start": m.start,
-        "end": m.end,
-        "join_url": m.join_url,
-        "organizer": m.organizer,
-        "is_online": m.is_online,
-    })
-}
-
-/// Upcoming meetings as JSON. Requires sign-in; unsigned yields `{ok:false}`.
-pub fn meetings_json(limit: usize) -> String {
-    let run = || -> Result<String, String> {
-        let rt = rt()?;
-        rt.block_on(async {
-            let client = ost::api::client::TeamsClient::new()
-                .await
-                .map_err(|e| format!("{:#}", e))?;
-            let meetings = ost::api::list_upcoming_meetings_data(&client, limit)
-                .await
-                .map_err(|e| format!("{:#}", e))?;
-            let items: Vec<_> = meetings.iter().map(meeting_to_json).collect();
-            Ok(json!({"ok": true, "meetings": items}).to_string())
-        })
-    };
-    match run() {
-        Ok(s) => s,
-        Err(e) => err_json("meetings", e),
-    }
-}
-
+// NOTE (R14 om-later-b4 B4): meetings + meeting_to_json moved to Swift
+// (CoreReads); backing fn + export deleted. meeting_to_json_shape
+// ported to FfiLaterB4Tests.
 // NOTE (R12 ffi-move-now B1): meeting_join_parse moved to Swift
 // (JoinParse); backing fn + export deleted.
 
@@ -2715,29 +2408,8 @@ pub extern "C" fn ostmac_profile_set(profile: *const c_char) -> *mut c_char {
     }
 }
 
-/// Device-code start JSON (`session`, `verification_uri`, `user_code`).
-#[no_mangle]
-pub extern "C" fn ostmac_device_start() -> *mut c_char {
-    string_to_c(device_start_json())
-}
-
-/// Device-code start for one account profile. See [`device_start_json_for`].
-#[no_mangle]
-pub extern "C" fn ostmac_device_start_for(profile: *const c_char) -> *mut c_char {
-    match cstr_to_string(profile) {
-        Ok(p) => string_to_c(device_start_json_for(&p)),
-        Err(e) => string_to_c(err_json("arg", e)),
-    }
-}
-
-/// Single poll for `session` (NUL-terminated). See [`device_poll_json`].
-#[no_mangle]
-pub extern "C" fn ostmac_device_poll(session: *const c_char) -> *mut c_char {
-    match cstr_to_string(session) {
-        Ok(s) => string_to_c(device_poll_json(&s)),
-        Err(e) => string_to_c(err_json("arg", e)),
-    }
-}
+// NOTE (R14 om-later-b18 B18): ostmac_device_start{,_for} +
+// ostmac_device_poll moved to Swift (DeviceAuth); exports deleted.
 
 /// Browser-capture start JSON (`session`, `authorize_url`, `redirect_uri`).
 /// See [`browser_auth::authcode_start_json`]. No network. Caller frees.
@@ -2782,29 +2454,6 @@ pub extern "C" fn ostmac_authcode_start_for(profile: *const c_char) -> *mut c_ch
     }
 }
 
-/// Current-user JSON (Graph /me, cached). See [`whoami_json`].
-/// Caller frees with [`ostmac_free`].
-#[no_mangle]
-pub extern "C" fn ostmac_whoami() -> *mut c_char {
-    string_to_c(whoami_json())
-}
-
-/// Current-user JSON for one account profile. See [`whoami_json_for`].
-#[no_mangle]
-pub extern "C" fn ostmac_whoami_for(profile: *const c_char) -> *mut c_char {
-    match cstr_to_string(profile) {
-        Ok(p) => string_to_c(whoami_json_for(&p)),
-        Err(e) => string_to_c(err_json("arg", e)),
-    }
-}
-
-/// Chat list JSON. See [`chats_json`].
-#[no_mangle]
-pub extern "C" fn ostmac_chats(limit: c_int) -> *mut c_char {
-    let lim = if limit <= 0 { 20 } else { limit as usize };
-    string_to_c(chats_json(lim))
-}
-
 /// Create a 1:1 chat with one user ref (AAD id or UPN). See
 /// [`chat_create_one_to_one_json`]. Caller frees.
 #[no_mangle]
@@ -2813,12 +2462,6 @@ pub extern "C" fn ostmac_chat_create_one_to_one(user: *const c_char) -> *mut c_c
         Ok(u) => string_to_c(chat_create_one_to_one_json(&u)),
         Err(e) => string_to_c(err_json("arg", e)),
     }
-}
-
-/// Joined-teams JSON (requires sign-in). See [`teams_json`].
-#[no_mangle]
-pub extern "C" fn ostmac_teams() -> *mut c_char {
-    string_to_c(teams_json())
 }
 
 /// Create one channel in a team. `description` may be NULL (no
@@ -3470,13 +3113,6 @@ pub extern "C" fn ostmac_reminder_done(
     }
 }
 
-/// Upcoming meetings JSON (requires sign-in). Caller frees.
-#[no_mangle]
-pub extern "C" fn ostmac_meetings(limit: c_int) -> *mut c_char {
-    let lim = if limit <= 0 { 20 } else { limit as usize };
-    string_to_c(meetings_json(lim))
-}
-
 /// Start background Trouter push. See [`trouter_start`].
 #[no_mangle]
 pub extern "C" fn ostmac_trouter_start() -> c_int {
@@ -3545,13 +3181,6 @@ pub extern "C" fn ostmac_sign_out_for(profile: *const c_char) -> *mut c_char {
         Ok(p) => string_to_c(sign_out_json_for(&p)),
         Err(e) => string_to_c(err_json("arg", e)),
     }
-}
-
-/// Own presence JSON (Graph /me/presence). See [`presence_json`].
-/// Caller frees with [`ostmac_free`].
-#[no_mangle]
-pub extern "C" fn ostmac_presence() -> *mut c_char {
-    string_to_c(presence_json())
 }
 
 /// Set own preferred presence. `status` is one of: available, busy,
@@ -4582,13 +4211,8 @@ mod tests {
         whoami_cache_store(fake.clone());
         // Served from cache: no TeamsClient, no network.
         assert_eq!(whoami_json(), fake);
-        unsafe {
-            let p = ostmac_whoami();
-            assert!(!p.is_null());
-            let s = CStr::from_ptr(p).to_string_lossy().into_owned();
-            ostmac_free(p);
-            assert_eq!(s, fake);
-        }
+        // (R14 B4: ostmac_whoami export deleted; FFI leg moved to
+        // FfiLaterB4Tests.testWhoamiCacheHitServesWithoutNetwork.)
         whoami_cache_clear();
         assert!(whoami_cache()
             .lock()
@@ -4616,13 +4240,8 @@ mod tests {
         assert_eq!(so["ok"], true);
     }
 
-    #[test]
-    fn device_poll_unknown_session_is_error() {
-        let v: serde_json::Value =
-            serde_json::from_str(&device_poll_json("dc-nope")).unwrap();
-        assert_eq!(v["ok"], false);
-        assert_eq!(v["error"], "no_session");
-    }
+    // NOTE (R14 om-later-b18 B18): device_poll unknown-session test
+    // moved to Swift (FfiLaterB18Tests.testPollUnknownSessionIsError).
 
     #[test]
     fn trouter_poll_empty_envelope() {
@@ -5122,26 +4741,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn meeting_to_json_shape() {
-        let m = ost::api::MeetingInfo {
-            id: "E1".to_string(),
-            subject: "Standup".to_string(),
-            start: Some("2026-09-24T09:00:00.0000000".to_string()),
-            end: None,
-            join_url: Some("https://teams.microsoft.com/l/meetup-join/x".to_string()),
-            organizer: Some("Doe, Jane".to_string()),
-            is_online: true,
-        };
-        let v = meeting_to_json(&m);
-        assert_eq!(v["id"], "E1");
-        assert_eq!(v["subject"], "Standup");
-        assert_eq!(v["start"], "2026-09-24T09:00:00.0000000");
-        assert!(v["end"].is_null());
-        assert_eq!(v["join_url"], "https://teams.microsoft.com/l/meetup-join/x");
-        assert_eq!(v["organizer"], "Doe, Jane");
-        assert_eq!(v["is_online"], true);
-    }
+    // NOTE (R14 om-later-b4 B4): meeting_to_json_shape ported to
+    // FfiLaterB4Tests.testMeetingsDecode; helper deleted.
 
     // NOTE (R12 ffi-move-now B1): join-parse matrix + null-arg test
     // moved to Swift (FfiMoveNowTests).

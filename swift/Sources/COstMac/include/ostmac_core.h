@@ -15,17 +15,8 @@
 // Caller frees. No network.
 char *ostmac_profile_set(const char *profile);
 
-// Device-code start JSON: session, verification_uri, user_code, message.
-// Caller frees. Hits network.
-char *ostmac_device_start(void);
-
-// Device-code start for one account profile (polled tokens land there).
-// Caller frees. Hits network.
-char *ostmac_device_start_for(const char *profile);
-
-// Single poll for session (NUL-terminated C string).
-// pending | complete (+tokens saved) | {ok:false}. Caller frees.
-char *ostmac_device_poll(const char *session);
+// NOTE (R14 om-later-b18 B18): device_start/device_start_for/
+// device_poll moved to Swift (DeviceAuth); decls deleted.
 
 // Browser-capture fallback start (auth-code + PKCE, no network):
 // {ok, session, authorize_url, redirect_uri, expires_in}.
@@ -46,26 +37,14 @@ char *ostmac_authcode_cancel(const char *session);
 // there). No network. Caller frees.
 char *ostmac_authcode_start_for(const char *profile);
 
-// Current-user JSON (Graph /me): {ok,id,display_name,mail?}.
-// Requires sign-in. Core caches after the first call; sign-out clears.
-// Caller frees.
-char *ostmac_whoami(void);
-
-// Current-user JSON for one account profile (per-profile cache, no
-// active switch). Caller frees.
-char *ostmac_whoami_for(const char *profile);
-
-// Chat list JSON (requires sign-in). Caller frees.
-char *ostmac_chats(int limit);
+// NOTE (R14 om-later-b4 B4): whoami/teams/chats moved to Swift
+// (CoreReads); decls deleted.
 
 // Create (or re-open) a 1:1 chat with one user ref, AAD id or UPN
 // (Graph POST /me/chats, requires sign-in): {ok,chat:{id,name,
 // is_group,...}} (name empty: Graph sends no 1:1 topic — callers
 // name the thread after the peer). Caller frees.
 char *ostmac_chat_create_one_to_one(const char *user);
-
-// Joined teams + channels JSON (requires sign-in). Caller frees.
-char *ostmac_teams(void);
 
 // Create one standard channel in a team (Graph POST, requires sign-in):
 // {ok,channel:{id,name}}. description may be NULL (no description).
@@ -285,11 +264,8 @@ char *ostmac_planner_done(const char *task_id, const char *etag);
 // Caller frees.
 char *ostmac_planner_reopen(const char *task_id, const char *etag);
 
-// Upcoming meetings JSON (Graph calendarView, next 7 days, requires
-// sign-in): {ok,meetings:[{id,subject,start?,end?,join_url?,
-// organizer?,is_online}]}. Caller frees.
-char *ostmac_meetings(int limit);
-
+// NOTE (R14 om-later-b4 B4): meetings/presence moved to Swift
+// (CoreReads); decls deleted.
 // NOTE (R12 ffi-move-now B1): meeting_join_parse moved to Swift
 // (JoinParse); decl deleted.
 
@@ -358,10 +334,6 @@ char *ostmac_sign_out_for(const char *profile);
 // Refresh one account profile's tokens (no active switch). Same
 // envelope as ostmac_refresh. Caller frees.
 char *ostmac_refresh_for(const char *profile);
-
-// Own presence JSON (Graph /me/presence): {ok,availability,activity}.
-// Requires sign-in. Caller frees. Hits network.
-char *ostmac_presence(void);
 
 // Set own preferred presence. status is one of (case-insensitive):
 // available, busy, dnd (donotdisturb), away, offline.
