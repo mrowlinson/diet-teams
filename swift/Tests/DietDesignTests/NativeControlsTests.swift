@@ -115,6 +115,43 @@ final class NativeControlsTests: XCTestCase {
             "DietComposer send must be a system style")
     }
 
+    func testCallsAvSurfacesRenderNative() throws {
+        // LevelBar is the native Gauge (linear capacity); the meeting
+        // jump pill/jump are bordered system bezels (chat-lane #7
+        // precedent). Static pins: SwiftUI styles are not
+        // runtime-introspectable.
+        let files = try Self.swiftFiles()
+        let av = try XCTUnwrap(
+            files.first(where: { $0.name == "AvPanelView.swift" }),
+            "AvPanelView.swift missing")
+        XCTAssertTrue(
+            av.text.contains("Gauge(value:"),
+            "LevelBar must use the native Gauge")
+        XCTAssertTrue(
+            av.text.contains(".gaugeStyle(.linearCapacity)"),
+            "LevelBar must use the linear capacity style")
+        XCTAssertFalse(
+            av.text.contains("GeometryReader"),
+            "LevelBar must not hand-draw the meter")
+        let meeting = try XCTUnwrap(
+            files.first(where: { $0.name == "MeetingChat.swift" }),
+            "MeetingChat.swift missing")
+        XCTAssertFalse(
+            meeting.text.contains(
+                "background(Color.accentColor, in: Capsule())"),
+            "jump pill must use the native bezel")
+        XCTAssertFalse(
+            meeting.text.contains(
+                "background(DietColor.wellColor, in: Capsule())"),
+            "jump button must use the native bezel")
+        XCTAssertFalse(
+            meeting.text.contains(".plainFocusRing(radius: 14)"),
+            "jump controls must carry the system ring via bordered styles")
+        XCTAssertTrue(
+            meeting.text.contains(".buttonStyle(.borderedProminent)"),
+            "jump pill must be borderedProminent")
+    }
+
     func testButtonComponentsRenderNative() throws {
         // DietButton internals: no custom style structs, icon
         // button on the system borderless style (native hover),
