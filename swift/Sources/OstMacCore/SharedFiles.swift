@@ -814,6 +814,10 @@ public final class SharedFilesStore: ObservableObject {
 /// type-filter controls, Refresh toolbar.
 public struct SharedFilesView: View {
     @ObservedObject public var store: SharedFilesStore
+    /// Pop-out tap (gap-g8): row menu "Pop Out" + double-click route
+    /// here (the host owns openWindow; files only, never folders).
+    /// Nil = no pop-out UI.
+    private let onPopOut: ((SharedFile) -> Void)?
     @State private var renameTarget: SharedFile?
     @State private var renameName = ""
     @State private var moveTarget: SharedFile?
@@ -826,8 +830,9 @@ public struct SharedFilesView: View {
     /// drop hovers the tab.
     @State private var dropTargeted = false
 
-    public init(store: SharedFilesStore) {
+    public init(store: SharedFilesStore, onPopOut: ((SharedFile) -> Void)? = nil) {
         self.store = store
+        self.onPopOut = onPopOut
     }
 
     /// Skeleton gate (om-fix-tabs): spinner only when data is truly
@@ -1104,8 +1109,18 @@ public struct SharedFilesView: View {
                     onDrill: { store.drill(file) },
                     onLink: { store.shareLink(file) }
                 )
+                // Double-click pops the file preview out (gap-g8,
+                // chats precedent); files only, never folders.
+                .simultaneousGesture(TapGesture(count: 2).onEnded {
+                    if !file.isFolder { onPopOut?(file) }
+                })
                 // MARK: - om-i3-manage row context menu
                 .contextMenu {
+                    if !file.isFolder, let onPopOut {
+                        Button("Pop Out", systemImage: "arrow.up.right.square") {
+                            onPopOut(file)
+                        }
+                    }
                     // MARK: om-i3-manage region
                     Button("Rename…") {
                         renameName = file.name
@@ -1158,6 +1173,122 @@ public struct SharedFilesView: View {
         if panel.runModal() == .OK, let url = panel.url {
             store.saveAs(file, to: url.path)
         }
+    }
+}
+
+/// Popped file preview (gap-g8): metadata header + Open/Save/Link
+/// actions + version history. Metadata renders from the cached
+/// `entry` snapshot (live-updated in place via
+/// `FilePopOutStore.refresh`); actions run against `store` (the
+/// main-window Shared store); versions load into an owned
+/// `FileVersionsStore` (per-window, never shared).
+public struct FilePopOutView: View {
+    @ObservedObject public var store: SharedFilesStore
+    public let entry: FilePopoutEntry
+    public let chatName: String?
+    public let isDemo: Bool
+    @StateObject private var versions = FileVersionsStore()
+
+    public init(
+        store: SharedFilesStore, entry: FilePopoutEntry,
+        chatName: String? = nil, isDemo: Bool = false
+    ) {
+        self.store = store
+        self.entry = entry
+        self.chatName = chatName
+        self.isDemo = isDemo
+    }
+
+    public var body: some View {
+        VStack(spacing: 0) {
+            header
+            DietSeamH()
+            if entry.file.drive_id != nil {
+                FileVersionsView(store: versions)
+            } else {
+                DietEmptyState(
+                    systemImage: "clock.arrow.circlepath",
+                    title: "No version history",
+                    message: "History is available for OneDrive files.")
+                    .padding(DietSpace.md)
+            }
+        }
+        .onAppear {
+            guard let drive = entry.file.drive_id else { return }
+            if isDemo {
+                versions.showDemo(
+                    driveID: drive, itemID: entry.file.id,
+                    filename: entry.file.name,
+                    versions: DemoData.fileVersions(for: entry.file.id))
+            } else {
+                versions.open(
+                    driveID: drive, itemID: entry.file.id,
+                    filename: entry.file.name)
+            }
+        }
+    }
+
+    private var header: some View {
+        let file = entry.file
+        return VStack(alignment: .leading, spacing: DietSpace.sm) {
+            HStack(spacing: DietSpace.sm) {
+                Image(systemName: file.iconName)
+                    .font(DietType.title2)
+                    .foregroundStyle(DietColor.textSecondaryColor)
+                    .frame(width: 28)
+                VStack(alignment: .leading, spacing: DietSpace.xxs) {
+                    Text(file.name)
+                        .font(DietType.headline)
+                        .foregroundStyle(DietColor.textPrimaryColor)
+                        .lineLimit(2)
+                        .textSelection(.enabled)
+                    HStack(spacing: DietSpace.xs) {
+                        Text(file.sizeLabel)
+                            .font(DietType.caption1).monospaced()
+                        if let sender = file.sender {
+                            Text("· \(sender)").font(DietType.caption1)
+                        }
+                    }
+                    .foregroundStyle(DietColor.textSecondaryColor)
+                }
+                Spacer()
+            }
+            if let chatName {
+                Text("Shared in \(chatName)")
+                    .font(DietType.caption1)
+                    .foregroundStyle(DietColor.textSecondaryColor)
+                    .lineLimit(1)
+            }
+            HStack(spacing: DietSpace.sm) {
+                if file.web_url != nil {
+                    Button("Open") { _ = store.open(file) }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        .help("Open in SharePoint (browser)")
+                }
+                if file.drive_id != nil || file.download_url != nil {
+                    Button("Save") { store.save(file) }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .help("Save (defaults to ~/Downloads)")
+                }
+                if file.drive_id != nil {
+                    SharedFileLinkButton(
+                        linking: store.linkingIDs.contains(file.id),
+                        linked: store.link(for: file) != nil,
+                        onTap: { store.shareLink(file) })
+                }
+                Spacer()
+            }
+            if let link = store.link(for: file) {
+                Text(link)
+                    .font(DietType.caption1).monospaced()
+                    .foregroundStyle(DietColor.textSecondaryColor)
+                    .lineLimit(1)
+                    .textSelection(.enabled)
+            }
+        }
+        .padding(DietSpace.md)
     }
 }
 

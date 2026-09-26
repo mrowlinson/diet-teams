@@ -18,6 +18,9 @@ public enum AppIdentity {
     public static let meetWindowID = "meetings"
     public static let meetingWindowID = "meeting"
     public static let chatPopoutID = "chat-popout"
+    /// gap-g8: one value-driven window per popped meeting / file.
+    public static let meetingPopoutID = "meeting-popout"
+    public static let filePopoutID = "file-popout"
     /// gap-g2: one value-driven window per open account (value = account id).
     public static let accountWindowID = "account-window"
     public static let quickComposerPanelID = "quick-composer"

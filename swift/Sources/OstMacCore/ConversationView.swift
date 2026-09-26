@@ -80,6 +80,9 @@ public struct ConversationView: View {
     /// Draft tap (e1-popout): fired on every composer change so the host
     /// caches per-chat drafts (pop-out close loses nothing). Nil = unwired.
     private let onDraftChange: ((String) -> Void)?
+    /// File pop-out tap (gap-g8): Shared-tab row "Pop Out" routes here
+    /// with the chat id + file (the host owns openWindow). Nil = no UI.
+    private let onFilePopOut: ((String, SharedFile) -> Void)?
 
     /// - catchUpOpen: open the catch-up sheet at launch (the
     ///   --show-catchup shot hook only).
@@ -109,7 +112,8 @@ public struct ConversationView: View {
         onOpenLink: @escaping (URL) -> Void = { LinkPreviewOpen.default($0) },
         initialDraft: String = "",
         onDraftChange: ((String) -> Void)? = nil,
-        savedContext: @escaping (String) -> (teamID: String?, channelID: String?) = { _ in (nil, nil) }
+        savedContext: @escaping (String) -> (teamID: String?, channelID: String?) = { _ in (nil, nil) },
+        onFilePopOut: ((String, SharedFile) -> Void)? = nil
     ) {
         self.store = store
         self.presence = presence
@@ -145,6 +149,7 @@ public struct ConversationView: View {
         }
         self.onOpenLink = onOpenLink
         self.onDraftChange = onDraftChange
+        self.onFilePopOut = onFilePopOut
     }
 
     public var body: some View {
@@ -192,8 +197,10 @@ public struct ConversationView: View {
                 DietSeamH()
                 sendBox
             } else if tab == 1 {
-                SharedFilesView(store: shared)
-                    .onAppear { syncShared() }
+                SharedFilesView(store: shared) { file in
+                    onFilePopOut?(store.chatID ?? shared.chatID ?? "", file)
+                }
+                .onAppear { syncShared() }
             } else {
                 NotesView(store: notes)
             }

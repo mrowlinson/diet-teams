@@ -644,13 +644,28 @@ struct MeetingBubbleRow: View {
 /// thread after. Native scroll + send box (no counts).
 public struct MeetingChatPanel: View {
     @ObservedObject public var chat: MeetingChatStore
+    /// Pop-out tap (gap-g8): header "Pop Out" pops the live thread
+    /// into its own window (the host owns openWindow). Nil = no UI
+    /// (pop-out content never re-pops itself).
+    private let onPopOut: (() -> Void)?
+    /// Draft tap (gap-g8, e1-popout precedent): fired on every send-box
+    /// change so the host caches per-meeting drafts (pop-out close
+    /// loses nothing). Nil = unwired.
+    private let onDraftChange: ((String) -> Void)?
     @State private var draft = ""
     @StateObject private var scroll = ChatScrollModel()
     /// Reduce Motion (om-a1-motion): scrollToBottom lands instantly.
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    public init(chat: MeetingChatStore) {
+    public init(
+        chat: MeetingChatStore, onPopOut: (() -> Void)? = nil,
+        initialDraft: String = "",
+        onDraftChange: ((String) -> Void)? = nil
+    ) {
         self.chat = chat
+        self.onPopOut = onPopOut
+        self.onDraftChange = onDraftChange
+        _draft = State(initialValue: initialDraft)
     }
 
     public var body: some View {
@@ -675,6 +690,13 @@ public struct MeetingChatPanel: View {
                         .accessibilityElement(children: .combine)
                         .accessibilityLabel(chat.meetingActive ? "Meeting live" : "Meeting ended")
                     Spacer(minLength: DietSpace.sm)
+                    if let onPopOut {
+                        Button("Pop Out", systemImage: "arrow.up.right.square", action: onPopOut)
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .disabled(chat.threadID == nil)
+                            .help("Open this meeting in its own window")
+                    }
                     if chat.loading { ProgressView().controlSize(.small) }
                 }
             }
@@ -768,6 +790,7 @@ public struct MeetingChatPanel: View {
                     .textFieldStyle(.roundedBorder)
                     .font(DietType.body)
                     .onSubmit { submit() }
+                    .onChange(of: draft) { onDraftChange?(draft) }
                     .disabled(chat.threadID == nil)
                 Button("Send", systemImage: "paperplane.fill") { submit() }
                     .buttonStyle(.borderedProminent)
@@ -874,17 +897,33 @@ public struct MeetingChatPanel: View {
 public struct MeetingPanel: View {
     @ObservedObject public var roster: MeetingRosterStore
     @ObservedObject public var chat: MeetingChatStore
+    /// Pop-out tap passthrough (gap-g8): header button → host.
+    private let onPopOut: (() -> Void)?
+    /// Draft tap passthrough (gap-g8): send-box → host cache.
+    private let initialDraft: String
+    private let onDraftChange: ((String) -> Void)?
 
-    public init(roster: MeetingRosterStore, chat: MeetingChatStore) {
+    public init(
+        roster: MeetingRosterStore, chat: MeetingChatStore,
+        onPopOut: (() -> Void)? = nil,
+        initialDraft: String = "",
+        onDraftChange: ((String) -> Void)? = nil
+    ) {
         self.roster = roster
         self.chat = chat
+        self.onPopOut = onPopOut
+        self.initialDraft = initialDraft
+        self.onDraftChange = onDraftChange
     }
 
     public var body: some View {
         HSplitView {
             MeetingRosterView(store: roster)
                 .frame(minWidth: 180, idealWidth: 230, maxWidth: 320)
-            MeetingChatPanel(chat: chat)
+            MeetingChatPanel(
+                chat: chat, onPopOut: onPopOut,
+                initialDraft: initialDraft,
+                onDraftChange: onDraftChange)
                 .frame(minWidth: 320)
         }
         .frame(minWidth: 560, minHeight: 400)

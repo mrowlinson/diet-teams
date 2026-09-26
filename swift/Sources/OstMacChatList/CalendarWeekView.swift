@@ -12,13 +12,19 @@ import SwiftUI
 public struct CalendarWeekBrowser: View {
     @ObservedObject private var week: CalendarWeekStore
     private var meetings: MeetingsViewModel
+    /// Pop-out tap passthrough (gap-g8): browser → host openWindow.
+    private let onPopOut: ((MeetingItem) -> Void)?
     @State private var pendingCancelID: String?
     /// Reduce Motion (om-a1-motion): state changes land instantly.
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    public init(week: CalendarWeekStore, meetings: MeetingsViewModel) {
+    public init(
+        week: CalendarWeekStore, meetings: MeetingsViewModel,
+        onPopOut: ((MeetingItem) -> Void)? = nil
+    ) {
         self.week = week
         self.meetings = meetings
+        self.onPopOut = onPopOut
     }
 
     public var body: some View {
@@ -38,7 +44,7 @@ public struct CalendarWeekBrowser: View {
             }
             DietSeamH()
             joinHeader
-            MeetingsBrowser(model: meetings)
+            MeetingsBrowser(model: meetings, onPopOut: onPopOut)
         }
         .sheet(isPresented: $week.showSchedule) {
             ScheduleSheet(store: week)
