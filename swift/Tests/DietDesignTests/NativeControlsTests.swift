@@ -166,4 +166,50 @@ final class NativeControlsTests: XCTestCase {
             buttons.text.contains(".buttonStyle(.borderless)"),
             "DietIconButton must use the system style")
     }
+
+    func testChatSurfacesRenderNative() throws {
+        // om-chat-convert: composer tool buttons are native .borderless
+        // (no chrome modifier, no hand-rolled hover states); the jump
+        // pill/jump are native bordered styles (no capsule bezel); the
+        // mention + palette fields use the system bezel.
+        // HELD (shot-verified this lane, chat-edit.png): the edit-sheet
+        // multiline field stays bare .plain — .roundedBorder clips it to
+        // one line (text truncated, no growth). The send-box draft field
+        // is HELD on plain+well (pinned above): the rounded bezel will
+        // not stretch to the 2-line 48pt spec (COMPOSER-2LINE-PROOF.md
+        // pixel scan).
+        let files = try Self.swiftFiles()
+        let conv = try XCTUnwrap(
+            files.first(where: { $0.name == "ConversationView.swift" }),
+            "ConversationView.swift missing")
+        XCTAssertFalse(
+            conv.text.contains("composerToolButton"),
+            "composer chrome modifier must be gone")
+        XCTAssertFalse(
+            conv.text.contains("ComposerToolButtonChrome"),
+            "composer chrome type must be gone")
+        XCTAssertFalse(
+            conv.text.contains(".onHover"),
+            "hand-rolled hover states must be gone")
+        XCTAssertTrue(
+            conv.text.contains(".buttonStyle(.borderless)"),
+            "composer tool buttons must use the system style")
+        let timeline = try XCTUnwrap(
+            files.first(where: { $0.name == "ChatTimelineView.swift" }),
+            "ChatTimelineView.swift missing")
+        XCTAssertFalse(
+            timeline.text.contains("Capsule"),
+            "jump pill/jump must not draw a capsule bezel")
+        for name in ["MentionCompose.swift", "JumpPaletteView.swift"] {
+            let file = try XCTUnwrap(
+                files.first(where: { $0.name == name }),
+                "\(name) missing")
+            XCTAssertTrue(
+                file.text.contains(".textFieldStyle(.roundedBorder)"),
+                "\(name) field must use the system bezel")
+            XCTAssertFalse(
+                file.text.contains(".textFieldStyle(.plain)"),
+                "\(name) must not keep a bare field")
+        }
+    }
 }

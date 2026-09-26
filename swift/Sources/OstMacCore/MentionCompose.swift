@@ -76,7 +76,7 @@ public struct MentionPickerView: View {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(DietColor.textSecondaryColor)
                 TextField("Mention…", text: $query)
-                    .textFieldStyle(.plain)
+                    .textFieldStyle(.roundedBorder)
                     .font(DietType.body)
                     .foregroundStyle(DietColor.textPrimaryColor)
                     .focused($fieldFocused)
