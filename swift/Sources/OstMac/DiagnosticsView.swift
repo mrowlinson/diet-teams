@@ -41,8 +41,12 @@ struct DiagnosticsView: View {
                         value: DiagnosticsFormat.sessionLine(
                             isDemo: state.isDemo, signedIn: state.signedIn))
                     LabeledContent("Presence") {
-                        PresencePicker(store: state.presence)
+                        PresencePicker(store: state.presence, truth: state.presenceTruth)
                     }
+                }
+                Section("Presence truth") {
+                    PresenceTruthDiagRows(store: state.presenceTruth)
+                    PresenceDevicesView(store: state.presenceTruth)
                 }
                 Section("Realtime feed") {
                     LabeledContent(

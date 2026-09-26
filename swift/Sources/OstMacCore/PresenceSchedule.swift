@@ -88,6 +88,14 @@ public final class PresenceScheduleStore: ObservableObject {
     /// the applier holds the write (counted) without arming applied
     /// state — the transition re-fires on lift. Nil = live.
     public var ghost: GhostStore?
+    /// Truth-lock gate (top10-presence): when set and true, the applier
+    /// holds the write like ghost (no applied arming, no budget spend —
+    /// the CURRENT window fires when the lock lifts). Nil = live.
+    public var externalHold: (() -> Bool)?
+    /// Fire hook (top10-presence): invoked after each successful
+    /// scheduled set (the truth log's schedule entries + undo offers).
+    /// Failures send nothing (the error row covers them).
+    public var onApplied: ((PresenceStatus) -> Void)?
 
     /// Nonisolated so views can take a default
     /// `PresenceScheduleStore()` in their (nonisolated) inits; all
@@ -151,6 +159,9 @@ public final class PresenceScheduleStore: ObservableObject {
             ghost.noteHeldPresence()
             return
         }
+        // Truth lock (top10-presence): same hold shape as ghost (the
+        // CURRENT window fires on lift — no stale replay, no spend).
+        if externalHold?() == true { return }
         fire(entry: active, now: now)
     }
 
@@ -204,6 +215,7 @@ public final class PresenceScheduleStore: ObservableObject {
                 lastStatus = entry.status
                 error = nil
                 presence?.adoptOwn(resp)
+                onApplied?(entry.status)
             } catch {
                 failures[entry.id, default: 0] += 1
                 self.error = String(describing: error)
