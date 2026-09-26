@@ -140,7 +140,7 @@ public final class ScheduledSendStore: ObservableObject {
         fireAt: Date, now: Date = Date()
     ) -> ScheduledItem? {
         let id = chatID.trimmingCharacters(in: .whitespacesAndNewlines)
-        let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let body = CodeBlocks.sendBody(for: text)
         guard !id.isEmpty, !body.isEmpty, fireAt > now else { return nil }
         let item = ScheduledItem(
             chatID: id, chatName: chatName, text: body,

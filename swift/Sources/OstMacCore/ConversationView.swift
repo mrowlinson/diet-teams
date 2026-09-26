@@ -302,6 +302,7 @@ public struct ConversationView: View {
                 .foregroundStyle(DietColor.textPrimaryColor)
             TextField("Message", text: $editDraft, axis: .vertical)
                 .textFieldStyle(.plain)
+                .plainPasteFallback(into: $editDraft)
                 .font(DietType.body)
                 .lineLimit(3...8)
             HStack {
@@ -590,6 +591,7 @@ public struct ConversationView: View {
                 }
                 TextField("Message", text: $draft, axis: .vertical)
                     .textFieldStyle(.plain)
+                    .plainPasteFallback(into: $draft)
                     .font(DietType.body)
                     .lineLimit(ComposerMetrics.inputMinLines...)
                     .padding(DietSpace.sm)

@@ -547,7 +547,9 @@ public final class ConversationStore: ObservableObject {
     /// block) and disarms; the optimistic bubble already shows the quote.
     /// Core failure marks the bubble failed (per-message state + retry).
     public func send(text: String) {
-        let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Top10-code: line endings normalized, interior bytes (indent)
+        // verbatim — pasted code survives the send path exactly.
+        let body = CodeBlocks.sendBody(for: text)
         guard !body.isEmpty else { return }
         let parent = replyTarget
         replyTarget = nil
@@ -705,7 +707,7 @@ public final class ConversationStore: ObservableObject {
     /// Edit an own bubble via core; optimistic in-place update, rollback on
     /// failure. Demo mode edits locally. Unknown id / empty text are no-ops.
     public func edit(messageID: String, text: String) {
-        let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let body = CodeBlocks.sendBody(for: text)
         guard !body.isEmpty else { return }
         guard let i = messages.firstIndex(where: { $0.id == messageID }) else { return }
         guard messages[i].content != body else { return }
