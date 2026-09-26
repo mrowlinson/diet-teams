@@ -662,14 +662,20 @@ public enum RustCore {
     }
 
     // Take ownership of a Rust-allocated C string, decode, free.
+    // Bytes-direct (om-perf-poll-timers): one length-delimited copy
+    // straight into Data. The old String(cString:)+data(using:.utf8)
+    // round-trip scanned + allocated twice and re-encoded the UTF-8
+    // the core already handed us (measured 28us -> 15us per 300KB,
+    // medians, same-harness both-ways; see PERF-POLL-TIMERS-PROOF).
+    // Invalid UTF-8 now surfaces as a DecodingError from the decoder
+    // instead of trapping in String(cString:); the core only emits
+    // valid UTF-8 (Rust String), so this path is unreachable live.
     static func call<T: Decodable>(
         _ raw: UnsafeMutablePointer<CChar>?, as type: T.Type
     ) throws -> T {
         guard let raw else { throw CoreCallError.failed("null from core") }
         defer { ostmac_free(raw) }
-        guard let data = String(cString: raw).data(using: .utf8) else {
-            throw CoreCallError.badUTF8
-        }
+        let data = Data(bytes: UnsafeRawPointer(raw), count: strlen(raw))
         return try decodeOrThrow(type, from: data)
     }
 }
