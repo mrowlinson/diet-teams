@@ -948,6 +948,21 @@ final class AppState: ObservableObject {
                 }
             }
             .store(in: &cancellables)
+        // gap-g3: incoming rings bell the OS (live only — demo/shots
+        // stay silent and banner-free). The hooks fire on the phase
+        // machine's transitions; Notifier owns the banner itself.
+        if !isDemo {
+            call.ringer = CallRinger()
+            call.onIncomingRing = { info in
+                let peer = info.displayPeer
+                Notifier.shared.postCall(
+                    title: peer.isEmpty ? "Unknown caller" : peer,
+                    body: "Incoming call", callID: info.id)
+            }
+            call.onRingEnded = { id in
+                Notifier.shared.withdrawCall(callID: id)
+            }
+        }
         // om-notif: banner click opens the chat; inline reply sends.
         _ = NotificationCenter.default.addObserver(
             forName: .omNotifOpenChat, object: nil, queue: nil
@@ -965,6 +980,23 @@ final class AppState: ObservableObject {
                   let text = note.userInfo?["text"] as? String
             else { return }
             Task { @MainActor [weak self] in self?.sendFromNotification(chatID: id, text: text) }
+        }
+        // gap-g3: call-banner actions (Accept/Decline/click). Decline is
+        // end() — CallStore counts an ended incoming ring as a decline.
+        _ = NotificationCenter.default.addObserver(
+            forName: .omNotifAcceptCall, object: nil, queue: nil
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.call.accept() }
+        }
+        _ = NotificationCenter.default.addObserver(
+            forName: .omNotifDeclineCall, object: nil, queue: nil
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.call.end() }
+        }
+        _ = NotificationCenter.default.addObserver(
+            forName: .omNotifShowCall, object: nil, queue: nil
+        ) { _ in
+            Task { @MainActor in NSApp.activate(ignoringOtherApps: true) }
         }
         // f1-composer: global hotkey → floating composer; Settings
         // toggle/remap/reset re-registers without a relaunch.
@@ -2199,6 +2231,15 @@ final class AppState: ObservableObject {
             } catch {
                 return .failure(error)
             }
+        }
+        // gap-g3: Notifier-delegate fallback for call banners (same
+        // accept/end as the shared-delegate notes above; only fires if
+        // install order ever flips Notifier's own delegate back on).
+        Notifier.shared.onAcceptCall = { [weak self] _ in
+            await MainActor.run { self?.call.accept() }
+        }
+        Notifier.shared.onDeclineCall = { [weak self] _ in
+            await MainActor.run { self?.call.end() }
         }
         Task { _ = await Notifier.shared.requestAuthorization() }
     }

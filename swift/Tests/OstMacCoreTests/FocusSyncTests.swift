@@ -64,10 +64,11 @@ final class FocusSyncTests: XCTestCase {
 
     // MARK: store — seam + fail-open
 
-    func testDefaultsOff() {
+    /// gap-g5: fresh installs (no stored key) default ON.
+    func testDefaultsOn() {
         let store = FocusSyncStore(defaults: isolatedDefaults(), reader: { true })
         let (enabled, active) = (store.syncEnabled, store.focusActive)
-        XCTAssertFalse(enabled)
+        XCTAssertTrue(enabled)
         XCTAssertFalse(active)
         let quiet = store.quietNow
         XCTAssertFalse(quiet)
@@ -85,6 +86,7 @@ final class FocusSyncTests: XCTestCase {
     func testSyncOffIgnoresFocus() {
         // Sync OFF with Focus active ⇒ identical to today (not quiet).
         let store = FocusSyncStore(defaults: isolatedDefaults(), reader: { true })
+        store.syncEnabled = false // gap-g5: fresh default is ON now
         store.refresh()
         let offQuiet = store.quietNow
         XCTAssertFalse(offQuiet)

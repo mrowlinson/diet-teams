@@ -372,9 +372,9 @@ struct SettingsView: View {
         }
         Section("Focus sync") {
             Toggle("Quiet while a macOS Focus is active", isOn: $focus.syncEnabled)
-                .help("System Focus quiets the app like scheduled quiet hours")
+                .help("On for new installs — system Focus quiets the app like scheduled quiet hours")
             LabeledContent("System Focus", value: focusStatusText)
-            Text("When on, an active Focus mode holds banners and sounds exactly like quiet hours (mentions included; unread pauses; suppressions counted in Diagnostics). When the system state is unreadable the app stays loud — never stuck silent.")
+            Text("When on, an active Focus mode holds banners and sounds exactly like quiet hours (mentions included; unread pauses; suppressions counted in Diagnostics). On by default; turn off to always buzz. When the system state is unreadable the app stays loud — never stuck silent — and Diagnostics names the probe error.")
                 .font(DietType.caption1)
                 .foregroundStyle(DietColor.textSecondaryColor)
         }
@@ -742,9 +742,11 @@ struct SettingsView: View {
     }
 
     /// Focus sync status line (sync state + live reading + probe error).
+    /// gap-g5: the probe error shows even with sync off — a broken
+    /// probe is never hidden behind the toggle.
     private var focusStatusText: String {
-        if !focus.syncEnabled { return "off" }
         if let error = focus.error { return "unreadable (\(error))" }
+        if !focus.syncEnabled { return "off" }
         return focus.focusActive ? "active — quiet" : "inactive"
     }
 }

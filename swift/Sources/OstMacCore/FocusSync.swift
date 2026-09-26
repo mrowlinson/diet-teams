@@ -62,7 +62,7 @@ public final class FocusSyncStore: ObservableObject {
     private let defaults: UserDefaults
     private let reader: FocusReader
 
-    @Published public var syncEnabled = false {
+    @Published public var syncEnabled = true {
         didSet { defaults.set(syncEnabled, forKey: Self.enabledKey) }
     }
     /// Cached Focus reading (session-only; re-polled on tick).
@@ -78,9 +78,11 @@ public final class FocusSyncStore: ObservableObject {
     ) {
         self.defaults = defaults
         self.reader = reader ?? { try FocusRead.live() }
+        // gap-g5: default ON for fresh installs (no stored key). Stored
+        // choice always wins — upgrades keep whatever the user set.
         let enabled = defaults.object(forKey: Self.enabledKey) != nil
             ? defaults.bool(forKey: Self.enabledKey)
-            : false
+            : true
         _syncEnabled = Published(initialValue: enabled)
         _focusActive = Published(initialValue: false)
         _error = Published(initialValue: nil)
@@ -96,16 +98,30 @@ public final class FocusSyncStore: ObservableObject {
     /// Re-poll the reader. Assigns on change only (no per-tick
     /// publishes while idle). Failure fails open: cached state drops
     /// to inactive and the error is recorded (never stuck quiet).
+    /// State flips and probe failures log one [focus-sync] line each
+    /// (gap-g5 live-observation hook; idle ticks stay silent).
     public func refresh() {
         let reader = reader
         do {
             let active = try reader()
-            if active != focusActive { focusActive = active }
-            if error != nil { error = nil }
+            if active != focusActive {
+                focusActive = active
+                print("[focus-sync] focusActive=\(active)")
+            }
+            if error != nil {
+                error = nil
+                print("[focus-sync] probe recovered")
+            }
         } catch {
-            if focusActive { focusActive = false }
+            if focusActive {
+                focusActive = false
+                print("[focus-sync] focusActive=false (probe failed, failing open)")
+            }
             let message = String(describing: error)
-            if self.error != message { self.error = message }
+            if self.error != message {
+                self.error = message
+                print("[focus-sync] probe error: \(message)")
+            }
         }
     }
 }

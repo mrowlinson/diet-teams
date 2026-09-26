@@ -59,6 +59,12 @@ public final class Notifier: NSObject, @unchecked Sendable {
     /// Open-chat handler, wired by the app.
     public var onOpenChat: (@Sendable (String) async -> Void)?
 
+    /// gap-g3: call-banner handlers, wired by the app (call id in).
+    /// Used only when this delegate is installed; the live app routes
+    /// call actions through the shared delegate's .omNotif*Call notes.
+    public var onAcceptCall: (@Sendable (String) async -> Void)?
+    public var onDeclineCall: (@Sendable (String) async -> Void)?
+
     /// Screen-lock probe (om-nc-delivery). Nil = live CGSession read;
     /// tests inject a stub. Locked message banners redact title+body.
     public var lockCheck: (@Sendable () -> Bool)?
@@ -99,7 +105,7 @@ public final class Notifier: NSObject, @unchecked Sendable {
         let mentionNoReply = UNNotificationCategory(
             identifier: MentionAlert.categoryNoReplyID, actions: [open],
             intentIdentifiers: [], options: [])
-        center.setNotificationCategories([message, messageNoReply, mention, mentionNoReply])
+        center.setNotificationCategories([message, messageNoReply, mention, mentionNoReply, OmCallInfo.category])
     }
 
     public func requestAuthorization() async -> Bool {
@@ -158,6 +164,35 @@ public final class Notifier: NSObject, @unchecked Sendable {
     public func postSystem(title: String, body: String) {
         post(title: title, body: body, id: "system-\(title)")
     }
+
+    /// gap-g3: incoming-call banner (Accept/Decline actions, stable id
+    /// per call so re-posts replace). SILENT — the CallRinger loop owns
+    /// all call audio so banner + ring never double-play. Posted for
+    /// every incoming ring regardless of quiet/Focus: a call is
+    /// time-critical ("never miss calls" beats "never buzzed").
+    public func postCall(title: String, body: String, callID: String) {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body.isEmpty ? "(incoming call)" : body
+        content.sound = nil
+        content.categoryIdentifier = OmCallInfo.categoryID
+        content.userInfo = OmCallInfo.userInfo(callID: callID)
+        content.threadIdentifier = callID
+        let req = UNNotificationRequest(
+            identifier: OmCallInfo.requestID(callID: callID),
+            content: content,
+            trigger: nil
+        )
+        center.add(req)
+    }
+
+    /// gap-g3: pull a call banner (answered, declined, dismissed, timed
+    /// out — every ring end withdraws, so no stale Accept lingers).
+    public func withdrawCall(callID: String) {
+        let id = OmCallInfo.requestID(callID: callID)
+        center.removeDeliveredNotifications(withIdentifiers: [id])
+        center.removePendingNotificationRequests(withIdentifiers: [id])
+    }
 }
 
 extension Notifier: UNUserNotificationCenterDelegate {
@@ -179,6 +214,17 @@ extension Notifier: UNUserNotificationCenterDelegate {
             return
         case .open(let chatID):
             await onOpenChat?(chatID)
+            return
+        case .acceptCall(let callID):
+            await onAcceptCall?(callID)
+            return
+        case .declineCall(let callID):
+            await onDeclineCall?(callID)
+            return
+        case .showCall:
+            await MainActor.run {
+                NSApp.activate(ignoringOtherApps: true)
+            }
             return
         case .none:
             break

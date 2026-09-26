@@ -12,6 +12,7 @@
 // in-call controls (mute, camera, speaker select). Phases reduce from
 // trouter CallEvents (TEAMS_MANUAL_CALLS path: the core parks the
 // invite, the UI owns the decision) and slot reconciliation.
+import Combine
 import DietDesign
 import SwiftUI
 
@@ -47,6 +48,19 @@ public final class CallStore: ObservableObject {
     /// the AVCapture session). Nil in tests/headless — the toggle still
     /// flips state so it stays exercisable without hardware.
     public var cameraHook: ((Bool) -> Void)?
+    /// gap-g3: ring loop, installed by the app (live only). Nil =
+    /// silent: headless/tests/demo never make noise.
+    public var ringer: (any CallRinging)?
+    /// gap-g3: fired once per incoming ring (the app posts the system
+    /// banner here). Fires again only for a new call id or a re-ring
+    /// after recall — never twice for one ring.
+    public var onIncomingRing: ((CallInfo) -> Void)?
+    /// gap-g3: fired once when a posted ring ends (answered, declined,
+    /// dismissed, timed out — the app withdraws the banner here).
+    public var onRingEnded: ((String) -> Void)?
+    /// Call id the hooks/ringer currently serve (nil = no live ring).
+    private var rungCallID: String?
+    private var cancellables = Set<AnyCancellable>()
     private var generation = 0
     private var mediaGeneration = 0
     private var mediaPolling = false
@@ -88,6 +102,18 @@ public final class CallStore: ObservableObject {
     public init(demo: Bool = false) {
         self.demo = demo
         self.speaker = UserDefaults.standard.string(forKey: AvPanelModel.speakerKey)
+        // gap-g3: every phase/call change re-decides the ring (answer,
+        // decline, dismiss, timeout, recall, and the feed-beats-read
+        // gap where ingest sets inviting before the slot lands — the
+        // $call arm catches that one). The delivered pair drives the
+        // decision (NEVER a self re-read: @Published emits in willSet,
+        // so self.phase/self.call inside a sink still hold the OLD
+        // values). syncRing writes no @Published state — no recursion.
+        Publishers.CombineLatest($phase, $call)
+            .sink { [weak self] phase, call in
+                self?.syncRing(phase: phase, call: call)
+            }
+            .store(in: &cancellables)
     }
 
     deinit { timeoutTimer?.invalidate() }
@@ -263,6 +289,32 @@ public final class CallStore: ObservableObject {
     private func cancelTimeout() {
         timeoutTimer?.invalidate()
         timeoutTimer = nil
+    }
+
+    /// gap-g3: ring follows the phase machine — an incoming inviting
+    /// phase rings (banner hook + ringer loop), anything else silences.
+    /// Outgoing legs never ring locally; a dismissed ring stays silent
+    /// until recall re-rings it. Answer and the ring-timeout path both
+    /// leave inviting, so both stop the ring by construction.
+    private func syncRing(phase: CallPhase, call: CallInfo?) {
+        if phase == .inviting, let c = call,
+           c.dir == "in", !dismissedIDs.contains(c.id)
+        {
+            ringer?.start()
+            if rungCallID != c.id {
+                // A second ring superseding the first ends the old one
+                // (its banner withdraws; the loop keeps ringing for B).
+                if let old = rungCallID { onRingEnded?(old) }
+                rungCallID = c.id
+                onIncomingRing?(c)
+            }
+            return
+        }
+        ringer?.stop()
+        if let rung = rungCallID {
+            rungCallID = nil
+            onRingEnded?(rung)
+        }
     }
 
     // MARK: - In-call controls

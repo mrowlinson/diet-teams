@@ -21,6 +21,12 @@ public extension Notification.Name {
     static let omNotifOpenChat = Notification.Name("om-notif-open-chat")
     /// userInfo: ["chatID": String, "text": String] — send a reply.
     static let omNotifReply = Notification.Name("om-notif-reply")
+    /// userInfo: ["callID": String] — accept the ringing call (gap-g3).
+    static let omNotifAcceptCall = Notification.Name("om-notif-accept-call")
+    /// userInfo: ["callID": String] — decline the ringing call (gap-g3).
+    static let omNotifDeclineCall = Notification.Name("om-notif-decline-call")
+    /// userInfo: ["callID": String] — foreground the app on the call.
+    static let omNotifShowCall = Notification.Name("om-notif-show-call")
 }
 
 /// One posted chat notification (backend record + delivered log entry).
@@ -89,6 +95,10 @@ public final class SystemNotificationCenter: NotificationPosting, @unchecked Sen
             UNNotificationCategory(
                 identifier: MentionAlert.categoryID, actions: [reply],
                 intentIdentifiers: [], options: []),
+            // gap-g3: this set REPLACES all categories every message
+            // post — the call category must ride along or call banners
+            // posted after any message lose their Accept/Decline buttons.
+            OmCallInfo.category,
         ])
         let content = UNMutableNotificationContent()
         content.title = note.title
@@ -148,6 +158,10 @@ public actor FakeNotificationCenter: NotificationPosting {
 public enum NotificationRoute: Sendable, Equatable {
     case open(chatID: String)
     case reply(chatID: String, text: String)
+    /// gap-g3: incoming-call banner actions (Accept / Decline / click).
+    case acceptCall(callID: String)
+    case declineCall(callID: String)
+    case showCall(callID: String)
     case none
 }
 
@@ -309,6 +323,18 @@ public final class MessageNotifications: ObservableObject {
             NotificationCenter.default.post(
                 name: .omNotifOpenChat, object: nil, userInfo: ["chatID": chat])
             return .open(chatID: chat)
+        case .acceptCall(let call):
+            NotificationCenter.default.post(
+                name: .omNotifAcceptCall, object: nil, userInfo: ["callID": call])
+            return .acceptCall(callID: call)
+        case .declineCall(let call):
+            NotificationCenter.default.post(
+                name: .omNotifDeclineCall, object: nil, userInfo: ["callID": call])
+            return .declineCall(callID: call)
+        case .showCall(let call):
+            NotificationCenter.default.post(
+                name: .omNotifShowCall, object: nil, userInfo: ["callID": call])
+            return .showCall(callID: call)
         case .none:
             return .none
         }

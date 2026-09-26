@@ -436,9 +436,11 @@ struct QuietHoursDiagRow: View {
         return "idle (\(enabled.count) windows)"
     }
 
+    /// gap-g5: the probe error shows even with sync off — a broken
+    /// probe is never hidden behind the toggle.
     private var focusText: String {
-        if !focus.syncEnabled { return "sync off" }
         if let error = focus.error { return "unreadable (\(error))" }
+        if !focus.syncEnabled { return "sync off" }
         return focus.focusActive ? "active — quiet" : "inactive"
     }
 

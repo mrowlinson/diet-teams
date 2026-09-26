@@ -109,12 +109,35 @@ public enum NcDelivery {
         return nil
     }
 
+    /// Call id from an incoming-call banner (gap-g3 OMCallID key).
+    /// Blank/missing = nil. Disjoint from the chat keys above.
+    public static func callID(from userInfo: [AnyHashable: Any]) -> String? {
+        if let id = userInfo[OmCallInfo.callIDKey] as? String, !id.isEmpty {
+            return id
+        }
+        return nil
+    }
+
     /// Pure action->route map shared by both center delegates:
     /// Reply (+ non-empty text) sends, banner click / Open-chat opens,
+    /// call Accept/Decline answer the call, call click shows the app,
     /// dismiss and unknown actions route nowhere.
     public static func route(
         actionID: String, userInfo: [AnyHashable: Any], replyText: String? = nil
     ) -> NotificationRoute {
+        // gap-g3: call banners route before the chat map (disjoint keys).
+        if let call = callID(from: userInfo) {
+            if actionID == OmCallInfo.acceptActionID {
+                return .acceptCall(callID: call)
+            }
+            if actionID == OmCallInfo.declineActionID {
+                return .declineCall(callID: call)
+            }
+            if actionID == UNNotificationDefaultActionIdentifier {
+                return .showCall(callID: call)
+            }
+            return .none
+        }
         guard let chat = chatID(from: userInfo) else { return .none }
         if actionID == SystemNotificationCenter.replyActionID,
            let text = replyText, !text.isEmpty
