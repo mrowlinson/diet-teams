@@ -127,7 +127,8 @@ public struct SidebarColumn: View {
                     initialFilter: initialFilter,
                     channelCreateOpen: channelCreateOpen,
                     teamCreateOpen: teamCreateOpen,
-                    onOpen: onOpenChannel)
+                    onOpen: onOpenChannel,
+                    onPopOut: onPopOut)
                     .transition(.opacity)
             case .files:
                 UnifiedFilesView(store: files)
@@ -201,6 +202,7 @@ public extension SidebarSection {
         if args.contains("--show-teams") { return .teams }
         if args.contains("--show-channel-create") { return .teams }
         if args.contains("--show-team-create") { return .teams }
+        if args.contains("--show-channel-popout") { return .teams }
         return .chats
     }
 }

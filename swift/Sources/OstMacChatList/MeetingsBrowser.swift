@@ -9,11 +9,15 @@ import SwiftUI
 /// states; errors are `DietEmptyState` / `DietBanner`.
 public struct MeetingsBrowser: View {
     @ObservedObject private var model: MeetingsViewModel
+    /// Pop-out tap (gap-g8): row menu "Pop Out" + double-click route
+    /// here (the host owns openWindow). Nil = no pop-out UI.
+    private let onPopOut: ((MeetingItem) -> Void)?
     /// Reduce Motion (om-a1-motion): state changes land instantly.
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    public init(model: MeetingsViewModel) {
+    public init(model: MeetingsViewModel, onPopOut: ((MeetingItem) -> Void)? = nil) {
         self.model = model
+        self.onPopOut = onPopOut
     }
 
     public var body: some View {
@@ -122,7 +126,13 @@ public struct MeetingsBrowser: View {
 
     private var meetingList: some View {
         List(model.meetings) { meeting in
-            HStack(spacing: DietSpace.sm) {
+            meetingRow(meeting)
+        }
+        .listStyle(.plain)
+    }
+
+    private func meetingRow(_ meeting: MeetingItem) -> some View {
+        HStack(spacing: DietSpace.sm) {
                 VStack(alignment: .leading, spacing: DietSpace.xxs) {
                     Text(meeting.subject)
                         .font(DietType.callout).bold()
@@ -154,8 +164,18 @@ public struct MeetingsBrowser: View {
                 }
             }
             .padding(.vertical, DietSpace.xxs)
-        }
-        .listStyle(.plain)
+            // Double-click pops the meeting out (gap-g8, chats
+            // precedent); simultaneous so Join still lands.
+            .simultaneousGesture(TapGesture(count: 2).onEnded {
+                onPopOut?(meeting)
+            })
+            .contextMenu {
+                if let onPopOut {
+                    Button("Pop Out", systemImage: "arrow.up.right.square") {
+                        onPopOut(meeting)
+                    }
+                }
+            }
     }
 }
 

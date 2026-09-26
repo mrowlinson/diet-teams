@@ -15,6 +15,10 @@ public struct TeamsBrowser: View {
     @ObservedObject private var unread: UnreadStore
     private let openChatID: String?
     private let onOpen: (String, String) -> Void
+    /// Pop-out tap (gap-g8): row menu "Pop Out" + double-click route
+    /// here (the host owns openWindow — channels pop through the same
+    /// chat pop-out path, channel ids are conversation ids). Nil = no UI.
+    private let onPopOut: ((String) -> Void)?
     @State private var searchText = ""
     /// Collapsed team ids. Empty = all expanded (new teams arrive open).
     @State private var collapsedTeamIDs: Set<String> = []
@@ -34,7 +38,8 @@ public struct TeamsBrowser: View {
         initialFilter: String = "",
         channelCreateOpen: Bool = false,
         teamCreateOpen: Bool = false,
-        onOpen: @escaping (String, String) -> Void
+        onOpen: @escaping (String, String) -> Void,
+        onPopOut: ((String) -> Void)? = nil
     ) {
         self.model = model
         self.unread = unread
@@ -43,6 +48,7 @@ public struct TeamsBrowser: View {
         _showCreate = State(initialValue: channelCreateOpen)
         _showTeamCreate = State(initialValue: teamCreateOpen)
         self.onOpen = onOpen
+        self.onPopOut = onPopOut
     }
 
     /// "Team > #channel" display name for an opened channel.
@@ -188,11 +194,23 @@ public struct TeamsBrowser: View {
                                             isOpen: channel.id == openChatID,
                                             onOpen: onOpen)
                                             .unreadBadge(unread.count(for: channel.id))
+                                            // Double-click pops the channel
+                                            // out (gap-g8, chats precedent);
+                                            // simultaneous so the open tap
+                                            // still lands.
+                                            .simultaneousGesture(TapGesture(count: 2).onEnded {
+                                                onPopOut?(channel.id)
+                                            })
                                             // om-markunread: same native row
                                             // menu as the chats list (top-level
                                             // only). Badge updates in place; the
                                             // browser never refetches.
                                             .contextMenu {
+                                                if let onPopOut {
+                                                    Button("Pop Out", systemImage: "arrow.up.right.square") {
+                                                        onPopOut(channel.id)
+                                                    }
+                                                }
                                                 if unread.count(for: channel.id) > 0 {
                                                     Button("Mark as Read") {
                                                         unread.markRead(chatID: channel.id)

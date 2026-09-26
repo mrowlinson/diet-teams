@@ -249,16 +249,11 @@ struct OstMacAppMain: App {
         }
         .defaultSize(width: 440, height: 480)
         Window("Meetings", id: AppIdentity.meetWindowID) {
-            CalendarWeekBrowser(week: state.calWeek, meetings: state.meetings)
-                .frame(minWidth: 380, minHeight: 480)
-                .task {
-                    await state.calWeek.load()
-                    state.meetings.refresh()
-                }
+            MeetingsWindowView(state: state)
         }
         .defaultSize(width: 420, height: 560)
         Window("Meeting", id: AppIdentity.meetingWindowID) {
-            MeetingPanel(roster: state.meeting, chat: state.meetingChat)
+            MeetingWindowView(state: state)
         }
         .defaultSize(width: 720, height: 480)
         // teams-frame FULL: registry + switcher + yanked escapes + SSO
@@ -301,6 +296,29 @@ struct OstMacAppMain: App {
             }
         }
         .defaultSize(width: 900, height: 620)
+        // gap-g8: one value-driven window per popped meeting (typed
+        // value routes past the String scenes — re-pop of the same
+        // key focuses the existing window, never dups).
+        WindowGroup(Text("Meeting"), id: AppIdentity.meetingPopoutID, for: MeetingPopoutValue.self) { value in
+            if let key = value.wrappedValue?.key {
+                MeetingPopOutRootView(state: state, popKey: key)
+            } else {
+                // Stale restored window (value lost): close itself.
+                PopOutEmptyView()
+            }
+        }
+        .defaultSize(width: 720, height: 480)
+        // gap-g8: one value-driven window per popped file preview
+        // (same typed-value routing + focus-on-repop semantics).
+        WindowGroup(Text("File"), id: AppIdentity.filePopoutID, for: FilePopoutValue.self) { value in
+            if let key = value.wrappedValue?.key {
+                FilePopOutRootView(state: state, popKey: key)
+            } else {
+                // Stale restored window (value lost): close itself.
+                PopOutEmptyView()
+            }
+        }
+        .defaultSize(width: 480, height: 600)
         // top10-menubar: menu-bar extra (presence dot + unread count;
         // popover = quick-chat triage). The chats VM is passed by
         // source (AppState rebuilds it on account switch).
@@ -450,7 +468,14 @@ final class AppState: ObservableObject {
     let conv = ConversationStore()
     /// Pop-out registry (e1-popout): visible chat ids + per-chat stores +
     /// draft cache, bound to the main store for send mirroring.
+    /// Channels pop through this same registry (channel ids are
+    /// conversation ids — gap-g8 entry only, no new store).
     let popouts = PopOutStore()
+    /// gap-g8: per-meeting pop-outs (visible keys + cached chat/roster
+    /// stores + names + drafts).
+    let meetingPopouts = MeetingPopOutStore()
+    /// gap-g8: file-preview pop-outs (visible keys + snapshot cache).
+    let filePopouts = FilePopOutStore()
     /// Message search (om-ja-search): the jump palette's Messages scope
     /// searches through this store. Demo runs substring-over-fixtures
     /// (offline); live hits Graph via core.
@@ -591,6 +616,19 @@ final class AppState: ObservableObject {
     /// Armed pop-out request (RootView opens the window for it, then
     /// clears it — openWindow lives in the view layer only).
     @Published var pendingPopoutID: String?
+    /// --show-channel-popout: pop the first demo channel beside the
+    /// main selection (gap-g8 shot hook, offline with --demo).
+    let showChannelPopout: Bool
+    /// --show-meeting-popout: pop the first demo meeting at launch
+    /// (gap-g8 shot hook, offline with --demo).
+    let showMeetingPopout: Bool
+    /// --show-file-popout: pop the first demo shared file at launch
+    /// (gap-g8 shot hook, offline with --demo).
+    let showFilePopout: Bool
+    /// Armed meeting/file pop-out requests (RootView opens the window
+    /// for them, then clears them — same rule as pendingPopoutID).
+    @Published var pendingMeetingPopoutKey: String?
+    @Published var pendingFilePopoutKey: String?
     /// --show-sidebarchurn: churn dataset + post-load beacon burst.
     let showSidebarChurn: Bool
     /// --show-history-error: demo history thread, empty + canned fetch error.
@@ -896,6 +934,9 @@ final class AppState: ObservableObject {
             popoutShotID = nil
         }
         showPopout = args.contains("--show-popout")
+        showChannelPopout = args.contains("--show-channel-popout")
+        showMeetingPopout = args.contains("--show-meeting-popout")
+        showFilePopout = args.contains("--show-file-popout")
         let initialBlocked = isDemo ? BlockedStore(defaults: nil) : BlockedStore()
         blocked = initialBlocked
         messageSearch = isDemo
@@ -1061,6 +1102,18 @@ final class AppState: ObservableObject {
         wireChats()
         wireSearchIndex() // gap-g6g7: history + delete → offline index
         popouts.bind(main: conv) // e1-popout: send mirroring both ways
+        // gap-g8: Shared-list changes push into popped file previews
+        // (rename/move land in place; the preview never refetches).
+        shared.$files
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] files in
+                Task { @MainActor [weak self] in
+                    guard let self, let chat = self.shared.chatID else { return }
+                    _ = self.filePopouts.refresh(chatID: chat, files: files)
+                }
+            }
+            .store(in: &cancellables)
         // e2-attention: manual picker sets pause the schedule until
         // the next window boundary (contract (i)). top10-presence chains
         // the truth note (echo labeled manual, idle disarmed). Weak.
@@ -1558,6 +1611,28 @@ final class AppState: ObservableObject {
                 ?? chats.chats.first?.id
             pendingPopoutID = popoutShotID ?? fallback ?? DemoData.avaID
         }
+        if showChannelPopout, pendingPopoutID == nil {
+            // Shot hook: pop the first channel beside the main
+            // selection (channels ride the chat pop-out scene).
+            pendingPopoutID = teams.teams.first?.channels.first?.id
+                ?? DemoData.teams.first?.channels.first?.id
+        }
+        if showMeetingPopout, pendingMeetingPopoutKey == nil {
+            // Shot hook: pop the first upcoming meeting (demo seeds
+            // the canned thread at open; subject resolves from the
+            // meetings list at title time).
+            pendingMeetingPopoutKey = meetings.meetings.first?.meetingId
+                ?? DemoData.meetings.first?.meetingId
+        }
+        if showFilePopout, pendingFilePopoutKey == nil {
+            // Shot hook: pop the first shared file of the demo thread
+            // (the open resolves the snapshot from fixtures).
+            let files = DemoData.sharedFiles(for: DemoData.demoID)
+            if let first = files.first {
+                pendingFilePopoutKey = FilePopOutStore.key(
+                    chatID: DemoData.demoID, fileID: first.id)
+            }
+        }
         if !isDemo {
             presence.refreshOwnSoon() // own dot; non-critical on failure
             setupNotifier() // om-rules: banners for filtered live events
@@ -1985,6 +2060,123 @@ final class AppState: ObservableObject {
         }
     }
 
+    // MARK: - Meeting pop-outs (gap-g8)
+
+    /// Pop a meeting: registers the key and returns the window value
+    /// (re-pop refocuses — the registry enforces one window per key,
+    /// and `openWindow(value:)` focuses the existing typed window).
+    /// Nil for blank keys only.
+    func popOutMeeting(key: String, subject: String?) -> MeetingPopoutValue? {
+        let k = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !k.isEmpty else { return nil }
+        meetingPopouts.pop(key: k, subject: subject)
+        return MeetingPopoutValue(key: k)
+    }
+
+    /// Pop-out window name: pop-time subject, else the upcoming-row
+    /// subject, else the live panel title (same thread), else the key
+    /// itself (missing-from-list precedent).
+    func meetingPopoutName(for key: String) -> String {
+        let cached = meetingPopouts.name(for: key)
+        if cached != key { return cached }
+        if let row = meetings.meetings.first(where: { $0.meetingId == key }) {
+            return row.subject
+        }
+        if isDemo,
+           let row = DemoData.meetings.first(where: { $0.meetingId == key })
+        {
+            return row.subject
+        }
+        if meetingChat.threadID == key { return meetingChat.headerTitle }
+        return key
+    }
+
+    /// Open (once) a meeting pop-out's backing stores: demo seeds the
+    /// canned thread + roster, live opens thread keys through core
+    /// (calendar-id keys adopt their thread on first sight). Cached
+    /// per key for the session — re-pop restores with no reload.
+    func openMeetingPopout(key: String) {
+        let chat = meetingPopouts.chatStore(for: key)
+        let roster = meetingPopouts.rosterStore(for: key)
+        if roster.meetingID == nil {
+            // Attribute roster frames to this key (exact-match
+            // fan-out; harmless when core's meeting id differs — the
+            // key match still routes).
+            roster.adopt([], meetingID: key)
+        }
+        guard chat.threadID == nil else { return }
+        if isDemo {
+            chat.showDemo(
+                threadID: MeetingSignal.isMeetingThread(key)
+                    ? key : MeetingDemo.threadID,
+                chatName: meetingPopoutName(for: key),
+                messages: MeetingDemo.messages)
+            chat.adoptIdentity(displayName: "Me")
+            roster.seedDemo()
+        } else if MeetingSignal.isMeetingThread(key) {
+            chat.open(threadID: key, chatName: meetingPopoutName(for: key))
+        }
+        // Live calendar-id keys stay unclaimed until the first live
+        // meeting-thread event adopts them (registry fan-out).
+    }
+
+    // MARK: - File pop-outs (gap-g8)
+
+    /// Pop a file: registers the snapshot and returns the window value
+    /// (re-pop refocuses — the registry refuses the dup and the typed
+    /// value focuses the existing window). Nil for blank file ids only.
+    func popOutFile(chatID: String, file: SharedFile) -> FilePopoutValue? {
+        if let v = filePopouts.pop(chatID: chatID, file: file) { return v }
+        let fileID = file.id.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !fileID.isEmpty else { return nil }
+        let chat = chatID.trimmingCharacters(in: .whitespacesAndNewlines)
+        return FilePopoutValue(key: FilePopOutStore.key(chatID: chat, fileID: fileID))
+    }
+
+    /// Pop by composite key (shot-hook path): rebuilds the snapshot
+    /// from the live list or demo fixtures when the cache misses
+    /// (restored windows), then returns the window value. Nil for
+    /// blank keys or when no snapshot source resolves.
+    func popOutFileKey(_ key: String) -> FilePopoutValue? {
+        let k = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !k.isEmpty else { return nil }
+        openFilePopout(key: k)
+        guard filePopouts.entry(for: k) != nil else { return nil }
+        return FilePopoutValue(key: k)
+    }
+
+    /// Open (once) a file pop-out's snapshot: the live Shared list
+    /// wins when it shows the same chat, else demo fixtures resolve
+    /// it (restored windows), else the pop-time snapshot stands —
+    /// the preview never blanks under a refresh.
+    func openFilePopout(key: String) {
+        let (chatID, fileID) = FilePopOutStore.split(key)
+        guard !fileID.isEmpty else { return }
+        if filePopouts.entry(for: key) == nil {
+            let fresh: SharedFile?
+            if shared.chatID == chatID, !chatID.isEmpty {
+                fresh = shared.files.first { $0.id == fileID }
+            } else if isDemo {
+                fresh = DemoData.sharedFiles(for: chatID).first {
+                    $0.id == fileID
+                }
+            } else {
+                fresh = nil
+            }
+            if let fresh {
+                _ = filePopouts.pop(chatID: chatID, file: fresh)
+                return
+            }
+        }
+        if shared.chatID == chatID, !chatID.isEmpty {
+            _ = filePopouts.refresh(chatID: chatID, files: shared.files)
+        } else if isDemo {
+            _ = filePopouts.refresh(
+                chatID: chatID,
+                files: DemoData.sharedFiles(for: chatID))
+        }
+    }
+
     // MARK: - Account windows (gap-g2)
 
     /// Flip-flop runner: one blocking core op under an inactive
@@ -2332,6 +2524,8 @@ final class AppState: ObservableObject {
     private func handleRoster(_ ev: MeetingRosterEvent) {
         feedRoster += 1
         meeting.ingest(ev)
+        // gap-g8: popped meetings take their own roster frames.
+        _ = meetingPopouts.ingest(roster: ev)
     }
 
     /// Call events land in the call slot; a remote end also closes the
@@ -2509,6 +2703,11 @@ final class AppState: ObservableObject {
             }
         }
         if popouts.ingest(realtime: msg), seenWorthy {
+            receipts.refresh(threadID: msg.chatID)
+        }
+        // gap-g8: every popped meeting takes its own thread — the main
+        // panel and the main selection never move for pop-out traffic.
+        if meetingPopouts.ingest(realtime: msg), seenWorthy {
             receipts.refresh(threadID: msg.chatID)
         }
         // gap-g2 fan-out (live leg): a window open on the event's
@@ -3117,6 +3316,7 @@ struct PopOutRootView: View {
     let chatID: String
     @StateObject private var shared = SharedFilesStore()
     @StateObject private var notes = NotesStore()
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         DensityHost(density: state.density) {
@@ -3132,7 +3332,13 @@ struct PopOutRootView: View {
                 isGroup: state.chats.chat(id: chatID)?.is_group ?? true,
                 onForward: { state.beginForward($0) },
                 initialDraft: state.popouts.draft(for: chatID),
-                onDraftChange: { state.popouts.saveDraft($0, for: chatID) })
+                onDraftChange: { state.popouts.saveDraft($0, for: chatID) },
+                onFilePopOut: { fileChatID, file in
+                    // gap-g8: chat pop-outs pop file previews too.
+                    if let value = state.popOutFile(chatID: fileChatID, file: file) {
+                        openWindow(value: value)
+                    }
+                })
             .popoutWindowTitle(state.popoutName(for: chatID))
             .onAppear {
                 state.openPopout(chatID: chatID)
@@ -3147,6 +3353,111 @@ struct PopOutRootView: View {
             }
             .onDisappear { state.popouts.close(chatID: chatID) }
         }
+    }
+}
+
+/// Popped meeting window (gap-g8): the full MeetingPanel (roster +
+/// chat) on the registry's cached per-meeting stores; live events fan
+/// out from the feed, drafts save continuously, close keeps the
+/// stores — re-pop restores with no reload.
+struct MeetingPopOutRootView: View {
+    @ObservedObject var state: AppState
+    let popKey: String
+
+    var body: some View {
+        DensityHost(density: state.density) {
+            MeetingPanel(
+                roster: state.meetingPopouts.rosterStore(for: popKey),
+                chat: state.meetingPopouts.chatStore(for: popKey),
+                initialDraft: state.meetingPopouts.draft(for: popKey),
+                onDraftChange: { state.meetingPopouts.saveDraft($0, for: popKey) })
+            .popoutWindowTitle(state.meetingPopoutName(for: popKey))
+            .onAppear { state.openMeetingPopout(key: popKey) }
+            .onDisappear { state.meetingPopouts.close(key: popKey) }
+        }
+    }
+}
+
+/// Popped file preview window (gap-g8): metadata + actions + version
+/// history from the cached snapshot (live-updated in place). Keys the
+/// registry never saw (restored post-relaunch with no source) render
+/// "no longer available" instead of invented metadata.
+struct FilePopOutRootView: View {
+    @ObservedObject var state: AppState
+    let popKey: String
+
+    var body: some View {
+        DensityHost(density: state.density) {
+            FilePopOutBody(state: state, pops: state.filePopouts, popKey: popKey)
+        }
+    }
+}
+
+/// Meetings window content (gap-g8): the calendar browser with the
+/// meeting-row pop-out entry (rows pop by calendar id; the popped
+/// panel adopts its thread when the meeting goes live).
+private struct MeetingsWindowView: View {
+    @ObservedObject var state: AppState
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        CalendarWeekBrowser(week: state.calWeek, meetings: state.meetings) { meeting in
+            if let value = state.popOutMeeting(
+                key: meeting.meetingId, subject: meeting.subject)
+            {
+                openWindow(value: value)
+            }
+        }
+        .frame(minWidth: 380, minHeight: 480)
+        .task {
+            await state.calWeek.load()
+            state.meetings.refresh()
+        }
+    }
+}
+
+/// Meeting window content (gap-g8): the live panel with the header
+/// pop-out entry (pops the current thread by id).
+private struct MeetingWindowView: View {
+    @ObservedObject var state: AppState
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        MeetingPanel(roster: state.meeting, chat: state.meetingChat) {
+            if let thread = state.meetingChat.threadID,
+               let value = state.popOutMeeting(
+                   key: thread,
+                   subject: state.meetingChat.headerTitle)
+            {
+                openWindow(value: value)
+            }
+        }
+    }
+}
+
+private struct FilePopOutBody: View {
+    @ObservedObject var state: AppState
+    @ObservedObject var pops: FilePopOutStore
+    let popKey: String
+
+    var body: some View {
+        Group {
+            if let entry = pops.entry(for: popKey) {
+                FilePopOutView(
+                    store: state.shared, entry: entry,
+                    chatName: state.popoutName(for: entry.chatID),
+                    isDemo: state.isDemo)
+            } else {
+                DietEmptyState(
+                    systemImage: "doc",
+                    title: "File no longer available",
+                    message: "This preview was restored without its file. Re-pop it from the Shared tab.")
+                    .padding(DietSpace.md)
+            }
+        }
+        .popoutWindowTitle(pops.entry(for: popKey)?.file.name ?? "File")
+        .onAppear { state.openFilePopout(key: popKey) }
+        .onDisappear { state.filePopouts.close(key: popKey) }
     }
 }
 
@@ -3186,6 +3497,7 @@ private struct AccountWindowContent: View {
     @ObservedObject var graph: AccountWindowGraph
     @ObservedObject var shared: SharedFilesStore
     @ObservedObject var notes: NotesStore
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         DensityHost(density: state.density) {
@@ -3209,6 +3521,12 @@ private struct AccountWindowContent: View {
                         initialDraft: state.popouts.draft(for: openID),
                         onDraftChange: {
                             state.popouts.saveDraft($0, for: openID)
+                        },
+                        onFilePopOut: { fileChatID, file in
+                            // gap-g8: account windows pop previews too.
+                            if let value = state.popOutFile(chatID: fileChatID, file: file) {
+                                openWindow(value: value)
+                            }
                         })
                 } else {
                     VStack(spacing: 8) {
@@ -3427,6 +3745,26 @@ struct RootView: View {
                 }
             }
         }
+        // gap-g8: open the armed meeting pop-out (cleared even when
+        // the key is stale, so a dead arm never sticks).
+        .onChange(of: state.pendingMeetingPopoutKey) {
+            if let key = state.pendingMeetingPopoutKey {
+                state.pendingMeetingPopoutKey = nil
+                if let value = state.popOutMeeting(key: key, subject: nil) {
+                    openWindow(value: value)
+                }
+            }
+        }
+        // gap-g8: open the armed file pop-out (same dead-arm rule;
+        // unresolvable keys open nothing).
+        .onChange(of: state.pendingFilePopoutKey) {
+            if let key = state.pendingFilePopoutKey {
+                state.pendingFilePopoutKey = nil
+                if let value = state.popOutFileKey(key) {
+                    openWindow(value: value)
+                }
+            }
+        }
         .sheet(isPresented: $state.showJump) {
             JumpPaletteSheet(
                 chats: state.chats, teams: state.teams,
@@ -3581,7 +3919,13 @@ struct RootView: View {
                     scheduledListOpen: CommandLine.arguments.contains("--show-scheduled"),
                     initialDraft: state.popouts.draft(for: state.openChatID ?? ""),
                     onDraftChange: { state.popouts.saveDraft($0, for: state.openChatID ?? "") },
-                    savedContext: { state.savedContext(for: $0) })
+                    savedContext: { state.savedContext(for: $0) },
+                    onFilePopOut: { chatID, file in
+                        // gap-g8: Shared-tab rows pop file previews.
+                        if let value = state.popOutFile(chatID: chatID, file: file) {
+                            openWindow(value: value)
+                        }
+                    })
                     // Per-chat composer (e1-popout): drafts restore
                     // per thread instead of leaking across switches.
                     .id(state.openChatID)

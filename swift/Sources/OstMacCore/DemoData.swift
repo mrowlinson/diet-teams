@@ -486,6 +486,28 @@ public enum DemoData {
         TeamMember(id: "demo-u-megan", displayName: "Megan Harper", userId: "demo-u-megan", email: "megan@example.com"),
     ]
 
+    /// Canned version history for `--demo` file pop-outs (gap-g8).
+    /// Unknown ids stay empty (the preview shows "no history").
+    public static func fileVersions(for fileID: String) -> [FileVersion] {
+        switch fileID {
+        case "demo-f1": return [
+            FileVersion(
+                id: "3", size: 48211,
+                modified: "2026-09-22T08:41:02Z",
+                modified_by: "Ava Lindqvist"),
+            FileVersion(
+                id: "2", size: 47102,
+                modified: "2026-09-21T14:12:44Z",
+                modified_by: "Tom Becker"),
+            FileVersion(
+                id: "1", size: 44001,
+                modified: "2026-09-21T10:02:11Z",
+                modified_by: "Tom Becker"),
+        ]
+        default: return []
+        }
+    }
+
     public static func name(for chatID: String) -> String? {
         if let chat = chats.first(where: { $0.id == chatID }) { return chat.name }
         for team in teams {
