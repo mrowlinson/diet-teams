@@ -221,4 +221,23 @@ final class SharedFilesTests: XCTestCase {
             try RustCore.sharedCopy(driveID: "d", itemID: "", destFolderID: "f", newName: nil))
         XCTAssertThrowsError(try RustCore.sharedDelete(driveID: "d", itemID: "  "))
     }
+
+    /// showsindicators: filter scroller uses the modern scrollIndicators API
+    /// (SwiftUI styles are not runtime-introspectable, so the
+    /// conversion is pinned statically per NativeControlsTests).
+    func testFilterScrollerUsesModernAPI() throws {
+        // .../swift/Tests/OstMacCoreTests/SharedFilesTests.swift.
+        var url = URL(fileURLWithPath: #filePath, isDirectory: false)
+        url.deleteLastPathComponent() // file
+        url.deleteLastPathComponent() // OstMacCoreTests
+        url.deleteLastPathComponent() // Tests
+        url.appendPathComponent("Sources/OstMacCore/SharedFiles.swift")
+        let text = try String(contentsOf: url, encoding: .utf8)
+        XCTAssertTrue(
+            text.contains(".scrollIndicators(.hidden)"),
+            "filter scroller must use the modern scrollIndicators API")
+        XCTAssertFalse(
+            text.contains("showsIndicators:"),
+            "legacy showsIndicators init arg must be gone")
+    }
 }
