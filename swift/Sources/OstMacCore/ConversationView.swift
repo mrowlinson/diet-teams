@@ -471,9 +471,8 @@ public struct ConversationView: View {
                                 .font(.system(size: DietSize.iconMD))
                                 .foregroundStyle(DietColor.textTertiaryColor)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.borderless)
                         .accessibilityLabel("Cancel reply")
-                        .plainFocusRing()
                         .help("Cancel reply")
                     }
                     .padding(.horizontal, DietSpace.md)
@@ -867,9 +866,8 @@ public struct ConversationView: View {
                         .font(.system(size: DietSize.iconMD))
                         .foregroundStyle(DietColor.textTertiaryColor)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.borderless)
                 .accessibilityLabel("Remove attachment")
-                .plainFocusRing()
                 .help("Remove attachment")
             }
         }
