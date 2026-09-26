@@ -756,6 +756,19 @@ needing maintainer buy-in. Minor PRs stand alone; majors are separate PRs.
     folders-skipped parse).
     Upstream: UNFILED (small feature; file with minors).
 
+60. [minor] `src/api/chat.rs` + re-exports in `src/api/mod.rs` —
+    **`<pre>` for fenced code blocks on the wire (wire-pre lane)**.
+    New `build_message_html` (fence parser mirroring Swift
+    `CodeBlocks`: ```/~~~, ≥3 run, info w/o fence char, closer ≥
+    opener length, unclosed runs to end, 50-block cap) + `send_message_body`
+    captured-body seam. Send/edit/reply bodies route through it:
+    fenced blocks go out as `<pre>` (byte-exact code, fences/info
+    consumed) so other clients keep indents; fence-less prose keeps
+    the legacy single-`<p>` shape bit-identical. 6 tests (prose
+    regression, byte-exact `<pre>`, mixed segments, unclosed fence,
+    block cap, reply/edit carry).
+    Upstream: UNFILED (behavior fix; file with minors).
+
 ## Upstream PRs (2026-09-22, base 0892144; main red on sdp E0308 until #5)
 
 Minor (standalone modulo #5-first; merge in any order after):
