@@ -66,6 +66,18 @@ struct ChatTimelineView: View {
                     onJump: { jumpToPin(proxy, id: $0) },
                     onUnpin: { pins.unpin(chatID: store.chatID, messageID: $0) })
                 DietSeamH()
+                // Jump-miss notice (gap-g9): the seek id never loaded —
+                // banner, never a silent plain open.
+                if store.jumpMissedID != nil {
+                    DietBanner(
+                        .warning,
+                        message: "Message no longer available",
+                        onDismiss: { store.clearJumpMissed() })
+                        .padding(
+                            [.top, .leading, .trailing],
+                            density.metrics.timelineEdge)
+                        .padding(.bottom, DietSpace.xs)
+                }
                 ZStack(alignment: .bottom) {
                     ScrollView {
                     LazyVStack(alignment: .leading, spacing: density.metrics.rowGap) {
@@ -183,13 +195,17 @@ struct ChatTimelineView: View {
                 .defaultScrollAnchor(.bottom)
                 .onChange(of: store.messages.count) { handleMessagesChanged(proxy) }
                 .onChange(of: store.loading) { handleLoadingChanged(proxy) }
-                // Jump-to-message (om-ja-search): the armed bubble id lands
-                // the scroll, then consumes so later mail never yanks.
+                // Jump-to-message (om-ja-search; gap-g9 deferred): the
+                // armed bubble id lands the scroll, then consumes so
+                // later mail never yanks. Deferred like every other
+                // scroll site (pin/quote/bottom all post async).
                 .onChange(of: store.jumpTargetID) {
                     guard let target = store.jumpTargetID else { return }
                     scroll.cancelSettle()
-                    jumpScroll(proxy, target: target, anchor: .center)
                     store.clearJumpTarget()
+                    DispatchQueue.main.async {
+                        self.jumpScroll(proxy, target: target, anchor: .center)
+                    }
                 }
                 .onAppear {
                     store.openIfNeeded()
@@ -197,6 +213,16 @@ struct ChatTimelineView: View {
                     scroll.lastReadID = store.messages.last?.id
                     if let target = Self.scrollTarget(args: CommandLine.arguments) {
                         scrollTo(proxy, id: target)
+                    } else if let jump = store.jumpTargetID {
+                        // Pre-armed jump (gap-g9): a sync open+seek
+                        // (demo pending-seek) arms before the onChange
+                        // attaches, so land it here (same funnel,
+                        // deferred). Live arms post-appear via onChange.
+                        scroll.cancelSettle()
+                        store.clearJumpTarget()
+                        DispatchQueue.main.async {
+                            self.jumpScroll(proxy, target: jump, anchor: .center)
+                        }
                     } else {
                         settleToBottom(proxy)
                     }

@@ -153,15 +153,19 @@ final class MessageSearchTests: XCTestCase {
         XCTAssertNil(store.jumpTargetID)
     }
 
-    func testSeekMissingWithoutCursorStaysNil() {
+    func testSeekMissingWithoutCursorArmsMiss() {
         let store = ConversationStore()
         store.showDemo(
             chatID: DemoData.repliesID, chatName: "Replies",
             messages: DemoData.messages(for: DemoData.repliesID))
+        // Gap-g9: definitive miss (demo has no page token: no fetch)
+        // banners instead of a silent no-op.
         store.seek(messageID: "no-such-bubble")
-        XCTAssertNil(store.jumpTargetID) // demo has no page token: no fetch
+        XCTAssertNil(store.jumpTargetID)
+        XCTAssertEqual(store.jumpMissedID, "no-such-bubble")
         store.seek(messageID: "   ")
         XCTAssertNil(store.jumpTargetID)
+        XCTAssertNil(store.jumpMissedID)
     }
 
     // MARK: - Demo fixture

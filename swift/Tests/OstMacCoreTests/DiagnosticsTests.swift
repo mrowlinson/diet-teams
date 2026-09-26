@@ -73,4 +73,17 @@ final class DiagnosticsTests: XCTestCase {
         XCTAssertEqual(DiagnosticsFormat.pinsLine(count: 0), "0 pinned")
         XCTAssertEqual(DiagnosticsFormat.pinsLine(count: 2), "2 pinned")
     }
+
+    func testSeekLine() {
+        XCTAssertEqual(
+            DiagnosticsFormat.seekLine(attempted: 0, landed: 0, missed: 0),
+            "no jumps yet")
+        XCTAssertEqual(
+            DiagnosticsFormat.seekLine(attempted: 4, landed: 3, missed: 1),
+            "4 attempts · 3 landed · 1 missed (25%)")
+        // Page-error attempts count with neither landed nor missed.
+        XCTAssertEqual(
+            DiagnosticsFormat.seekLine(attempted: 3, landed: 1, missed: 1),
+            "3 attempts · 1 landed · 1 missed (33%)")
+    }
 }

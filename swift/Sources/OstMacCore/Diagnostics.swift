@@ -153,6 +153,17 @@ public enum DiagnosticsFormat {
         "\(leaves) left · \(blocks) blocked · \(failed) failed"
     }
 
+    /// Jump-to-message verdicts (gap-g9): seek attempts, landed jumps,
+    /// and id misses with the miss rate. The miss rate is the live
+    /// signal for Graph-hit-id vs native-history-id divergence: a
+    /// climbing rate means the mapping needs a fix, not more paging.
+    /// Diagnostics window only — the timeline banners the miss itself.
+    public static func seekLine(attempted: Int, landed: Int, missed: Int) -> String {
+        guard attempted > 0 else { return "no jumps yet" }
+        let pct = Int((Double(missed) / Double(attempted) * 100).rounded())
+        return "\(attempted) attempts · \(landed) landed · \(missed) missed (\(pct)%)"
+    }
+
     /// Ghost-mode state (f1-ghost): which signals are suppressed plus
     /// session suppressed/held counts. Diagnostics window only — the
     /// counters appear nowhere else (no sidebar, no Settings). Master
