@@ -1,6 +1,7 @@
-// TeamsFrameTests.swift — teams-frame PROTOTYPE: URL allowlist,
-// launch-flag parsing, and keep-alive/destroy seams. No live login,
-// no network — pure config + store lifecycle only.
+// TeamsFrameTests.swift — teams-frame FULL: URL allowlist, launch-flag
+// parsing, keep-alive/destroy seams, registry, escape matrix, popup /
+// download seams, suspend/footprint lifecycle. No live login, no network,
+// no live WKWebView — pure config + store lifecycle only.
 import XCTest
 
 @testable import OstMacCore
@@ -98,7 +99,10 @@ final class TeamsFrameTests: XCTestCase {
     }
 
     override func tearDown() {
-        freshDefaults().removeObject(forKey: TeamsFrameConfig.keepAliveMinutesKey)
+        let defaults = freshDefaults()
+        defaults.removeObject(forKey: TeamsFrameConfig.keepAliveMinutesKey)
+        defaults.removeObject(forKey: TeamsFrameRegistry.appsKey)
+        defaults.removeObject(forKey: TeamsFrameRegistry.selectedAppKey)
         super.tearDown()
     }
 
@@ -181,5 +185,207 @@ final class TeamsFrameTests: XCTestCase {
         XCTAssertGreaterThan(TeamsFrameCrop.v0.left, 0)
         XCTAssertGreaterThan(TeamsFrameCrop.v0.top, 0)
         XCTAssertEqual(TeamsFrameCrop.none, TeamsFrameCrop(left: 0, top: 0))
+    }
+
+    // MARK: - Registry
+
+    func testRegistrySeedsPlaceholderWhenMissing() {
+        let defaults = freshDefaults()
+        defaults.removeObject(forKey: TeamsFrameRegistry.appsKey)
+        let apps = TeamsFrameRegistry.loadApps(defaults: defaults)
+        XCTAssertEqual(apps.count, 1)
+        XCTAssertEqual(apps[0].id, "sample-app")
+        // No real org URLs in the seed — placeholder entity only.
+        XCTAssertTrue(apps[0].entityURL.contains("APP_ENTITY_ID"))
+        XCTAssertFalse(apps[0].entityURL.contains("contoso"))
+    }
+
+    func testRegistryRoundTrip() {
+        let defaults = freshDefaults()
+        let apps = [
+            TeamsFrameApp(
+                id: "a", label: "A",
+                entityURL: "https://teams.microsoft.com/l/entity/a",
+                crop: TeamsFrameCrop(left: 10, top: 20)),
+            TeamsFrameApp(
+                id: "b", label: "B",
+                entityURL: "https://teams.microsoft.com/l/entity/b"),
+        ]
+        TeamsFrameRegistry.saveApps(apps, defaults: defaults)
+        XCTAssertEqual(TeamsFrameRegistry.loadApps(defaults: defaults), apps)
+    }
+
+    func testRegistryCorruptFallsBackToSeed() {
+        let defaults = freshDefaults()
+        defaults.set(Data([0x00, 0x01, 0x02]), forKey: TeamsFrameRegistry.appsKey)
+        XCTAssertEqual(
+            TeamsFrameRegistry.loadApps(defaults: defaults),
+            TeamsFrameRegistry.seedApps)
+    }
+
+    func testRegistryEmptyFallsBackToSeed() {
+        let defaults = freshDefaults()
+        TeamsFrameRegistry.saveApps([], defaults: defaults)
+        XCTAssertEqual(
+            TeamsFrameRegistry.loadApps(defaults: defaults),
+            TeamsFrameRegistry.seedApps)
+    }
+
+    func testCropDefaultsToV0WhenNil() {
+        // Missing crop key decodes to nil → v0 default.
+        let json = #"{"id":"a","label":"A","entityURL":"https://x"}"#
+        let app = try! JSONDecoder().decode(
+            TeamsFrameApp.self, from: Data(json.utf8))
+        XCTAssertNil(app.crop)
+        XCTAssertEqual(app.effectiveCrop, .v0)
+        XCTAssertEqual(
+            TeamsFrameApp(id: "a", label: "A", entityURL: "https://x").effectiveCrop,
+            .v0)
+    }
+
+    func testSelectAppPersistsAndClearsCustom() {
+        let defaults = freshDefaults()
+        TeamsFrameRegistry.saveApps(
+            [
+                TeamsFrameApp(id: "a", label: "A", entityURL: "https://teams.microsoft.com/a"),
+                TeamsFrameApp(
+                    id: "b", label: "B", entityURL: "https://teams.microsoft.com/b",
+                    crop: TeamsFrameCrop(left: 5, top: 6)),
+            ],
+            defaults: defaults)
+        let store = TeamsFrameStore(defaults: defaults)
+        store.loadCustomURL("https://teams.microsoft.com/custom")
+        XCTAssertEqual(store.currentURLString, "https://teams.microsoft.com/custom")
+        XCTAssertEqual(store.currentCrop, .v0)
+        store.selectApp(id: "b")
+        XCTAssertNil(store.customURLString)
+        XCTAssertEqual(store.currentURLString, "https://teams.microsoft.com/b")
+        XCTAssertEqual(store.currentCrop, TeamsFrameCrop(left: 5, top: 6))
+        XCTAssertEqual(TeamsFrameRegistry.loadSelectedID(defaults: defaults), "b")
+        // Fresh store picks up the persisted selection.
+        let store2 = TeamsFrameStore(defaults: defaults)
+        XCTAssertEqual(store2.selectedApp?.id, "b")
+        store.destroy()
+        store2.destroy()
+    }
+
+    func testLoadCustomURLRejectsGarbage() {
+        let store = TeamsFrameStore(defaults: freshDefaults())
+        store.loadCustomURL("   ")
+        XCTAssertNil(store.customURLString)
+        XCTAssertEqual(store.currentURLString, store.selectedApp?.entityURL)
+        store.destroy()
+    }
+
+    // MARK: - Escape matrix
+
+    func testEscapeDecisionMatrix() {
+        let teams = URL(string: "https://teams.microsoft.com/l/entity/x")!
+        let evil = URL(string: "https://evil.com/teams.microsoft.com")!
+        XCTAssertEqual(TeamsFrameConfig.escapeDecision(url: teams, isMainFrame: true), .allow)
+        XCTAssertEqual(TeamsFrameConfig.escapeDecision(url: teams, isMainFrame: false), .allow)
+        XCTAssertEqual(TeamsFrameConfig.escapeDecision(url: evil, isMainFrame: true), .yank)
+        XCTAssertEqual(
+            TeamsFrameConfig.escapeDecision(url: evil, isMainFrame: false), .allowLogged)
+        XCTAssertEqual(
+            TeamsFrameConfig.escapeDecision(url: URL(string: "about:blank")!, isMainFrame: true),
+            .allow)
+    }
+
+    // MARK: - Popup / download seams
+
+    func testPopupInterceptDecision() {
+        XCTAssertTrue(TeamsFrameConfig.interceptsPopup(targetFrameIsNil: true))
+        XCTAssertFalse(TeamsFrameConfig.interceptsPopup(targetFrameIsNil: false))
+    }
+
+    func testStorePopupOpenClose() {
+        let store = TeamsFrameStore(defaults: freshDefaults())
+        XCTAssertNil(store.popup)
+        store.presentPopup(TeamsFramePopup(url: URL(string: "https://login.microsoftonline.com/")))
+        XCTAssertNotNil(store.popup)
+        XCTAssertEqual(store.popup?.url?.host, "login.microsoftonline.com")
+        store.closePopup()
+        XCTAssertNil(store.popup)
+        store.destroy()
+    }
+
+    func testDownloadsDefaultDirectoryIsDownloads() {
+        let dir = TeamsFrameDownloads.defaultDirectory()
+        XCTAssertEqual(dir.lastPathComponent, "Downloads")
+        XCTAssertTrue(dir.path.hasPrefix(FileManager.default.homeDirectoryForCurrentUser.path))
+    }
+
+    func testSanitizedFilename() {
+        XCTAssertEqual(TeamsFrameDownloads.sanitizedFilename("report.pdf"), "report.pdf")
+        XCTAssertEqual(TeamsFrameDownloads.sanitizedFilename("../../etc/passwd"), ".._.._etc_passwd")
+        XCTAssertEqual(TeamsFrameDownloads.sanitizedFilename("   "), "download")
+    }
+
+    // MARK: - Lifecycle (lazy / suspend / footprint)
+
+    func testLazyNoWebObjectsUntilActivate() {
+        let store = TeamsFrameStore(defaults: freshDefaults())
+        XCTAssertNil(store.pool)
+        XCTAssertNil(store.dataStore)
+        XCTAssertNil(store.activeWebView)
+        XCTAssertFalse(store.suspended)
+        store.activate()
+        XCTAssertNotNil(store.pool)
+        XCTAssertNotNil(store.dataStore)
+        store.destroy()
+    }
+
+    func testSuspendTransitions() {
+        let defaults = freshDefaults()
+        defaults.set(15, forKey: TeamsFrameConfig.keepAliveMinutesKey)
+        let store = TeamsFrameStore(defaults: defaults)
+        store.activate()
+        XCTAssertFalse(store.suspended)
+        store.deactivate()
+        XCTAssertTrue(store.suspended)
+        XCTAssertTrue(store.keepAliveArmed)
+        store.activate()
+        XCTAssertFalse(store.suspended)
+        XCTAssertFalse(store.keepAliveArmed)
+        store.destroy()
+        XCTAssertFalse(store.suspended)
+    }
+
+    func testFootprintBestEffort() {
+        // Never crashes; nil (unknown) or a positive resident size.
+        let mb = TeamsFrameFootprint.residentMB()
+        XCTAssertTrue(mb == nil || (mb ?? 0) > 0)
+    }
+
+    func testActivateAppliesLaunchURLOnce() {
+        let defaults = freshDefaults()
+        let deep = "https://teams.microsoft.com/l/entity/abc123?label=App"
+        let store = TeamsFrameStore(defaults: defaults)
+        store.activate(launchURL: deep)
+        XCTAssertEqual(store.customURLString, deep)
+        XCTAssertEqual(store.currentURLString, deep)
+        // User picks an app; a later appear must not clobber the pick.
+        store.selectApp(id: store.apps.first?.id)
+        store.activate(launchURL: deep)
+        XCTAssertNil(store.customURLString)
+        XCTAssertEqual(store.currentURLString, store.selectedApp?.entityURL)
+        store.destroy()
+    }
+
+    func testPlaceholderURLDetection() {
+        XCTAssertTrue(TeamsFrameConfig.isPlaceholderURL(
+            TeamsFrameRegistry.seedApps[0].entityURL))
+        XCTAssertTrue(TeamsFrameConfig.isPlaceholderURL("https://x/<THING>"))
+        XCTAssertFalse(TeamsFrameConfig.isPlaceholderURL("https://teams.microsoft.com"))
+        XCTAssertFalse(TeamsFrameConfig.isPlaceholderURL(
+            "https://teams.microsoft.com/l/entity/abc123?label=App"))
+    }
+
+    // MARK: - Calibrate flag
+
+    func testCalibrateFlag() {
+        XCTAssertFalse(TeamsFrameConfig.calibrate(args: ["Better Teams"]))
+        XCTAssertTrue(TeamsFrameConfig.calibrate(args: ["Better Teams", "--teams-frame-calibrate"]))
     }
 }

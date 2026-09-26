@@ -106,10 +106,11 @@
 // --show-popout pops a second chat beside the main selection at launch
 // (e1-popout shot hook, offline with --demo); --popout-chat <id> picks
 // which chat (else the first row that is not the main selection).
-// --teams-frame-url <url> opens the prototype App Frame on that Teams
-// deep link (default https://teams.microsoft.com); --show-teams-frame
-// opens it at the default URL; --teams-frame-full skips the rail/header
-// crop. DISPLAY ONLY — owner completes login live (see proof doc).
+// --teams-frame-url <url> opens the App Frame on that Teams deep link
+// (default https://teams.microsoft.com); --show-teams-frame opens it at
+// the default URL; --teams-frame-full skips the rail/header crop;
+// --teams-frame-calibrate overlays draggable crop guides. DISPLAY ONLY —
+// owner completes login live (see proof doc).
 // --auth-state <name> opens the Auth window with a canned state, never
 // touching core/network (names: signed-out, starting, code, polling,
 // browser, browser-working, signed-in, expired, refreshing,
@@ -248,16 +249,18 @@ struct OstMacAppMain: App {
             MeetingPanel(roster: state.meeting, chat: state.meetingChat)
         }
         .defaultSize(width: 720, height: 480)
-        // teams-frame PROTOTYPE: Teams web surface for third-party apps.
-        // --teams-frame-url <deep-link> opens it (default teams.microsoft.com);
-        // --show-teams-frame opens it at the default URL; --teams-frame-full
-        // bypasses the rail/header crop. DISPLAY ONLY — see TeamsFrame.swift.
+        // teams-frame FULL: registry + switcher + yanked escapes + SSO
+        // popups + downloads. --teams-frame-url <deep-link> opens it
+        // (default teams.microsoft.com); --show-teams-frame opens it at
+        // the default URL; --teams-frame-full bypasses the rail/header
+        // crop; --teams-frame-calibrate overlays draggable crop guides.
+        // DISPLAY ONLY — see TeamsFrame.swift.
         Window("App Frame", id: AppIdentity.teamsFrameWindowID) {
             TeamsFrameWindow(
                 store: state.teamsFrame,
-                urlString: TeamsFrameConfig.launchURL(args: CommandLine.arguments),
-                crop: TeamsFrameConfig.fullFrame(args: CommandLine.arguments)
-                    ? .none : .v0)
+                launchURL: TeamsFrameConfig.launchURL(args: CommandLine.arguments),
+                fullFrame: TeamsFrameConfig.fullFrame(args: CommandLine.arguments),
+                calibrate: TeamsFrameConfig.calibrate(args: CommandLine.arguments))
         }
         .defaultSize(width: 1100, height: 750)
         // e1-popout: one value-driven window per popped chat (re-pop of
@@ -346,7 +349,7 @@ private struct OstMacCommands: Commands {
         CommandGroup(after: .windowList) {
             Button("Diagnostics") { openWindow(id: AppIdentity.diagWindowID) }
         }
-        // teams-frame PROTOTYPE: instant destroy of the app frame.
+        // teams-frame FULL: instant destroy of the app frame.
         CommandMenu("View") {
             Button("Kill App Frame") {
                 NotificationCenter.default.post(name: .killTeamsFrame, object: nil)
@@ -447,7 +450,7 @@ final class AppState: ObservableObject {
     /// presence writes while on (injected into receipts/presence/
     /// presenceSchedule below; toggles persist, counters clear out).
     let ghost = GhostStore()
-    /// teams-frame PROTOTYPE lifecycle (pool + keep-alive + kill).
+    /// teams-frame FULL lifecycle (registry + pool + keep-alive + kill).
     let teamsFrame = TeamsFrameStore()
     /// Message density (f2-density): Comfortable/Compact spacing.
     /// Published into the environment via DensityHost (RootView +
