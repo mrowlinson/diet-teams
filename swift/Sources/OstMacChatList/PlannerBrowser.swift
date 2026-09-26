@@ -207,11 +207,10 @@ struct PlannerTaskRow: View {
                             ? Color(nsColor: DietColor.success)
                             : DietColor.textSecondaryColor)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.borderless)
             .accessibilityLabel(
                 task.completed
                     ? "Reopen \(task.title)" : "Complete \(task.title)")
-            .plainFocusRing(radius: 14)
             .help(task.completed ? "Reopen" : "Mark done")
             VStack(alignment: .leading, spacing: DietSpace.xxs) {
                 Text(task.title)

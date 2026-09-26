@@ -145,37 +145,40 @@ public struct CalendarWeekBrowser: View {
     private func dayColumn(key: String, meetings: [MeetingItem]) -> some View {
         let selected = week.selectedDayKey == key
             || (week.selectedDayKey == nil && Self.isToday(key))
-        return VStack(alignment: .leading, spacing: DietSpace.xxs) {
-            VStack(alignment: .leading, spacing: 0) {
-                Text(Self.weekdayLabel(key))
-                    .font(DietType.caption1)
-                    .foregroundStyle(DietColor.textSecondaryColor)
-                Text(Self.dayNumber(key))
-                    .font(DietType.callout).bold()
-                    .foregroundStyle(DietColor.textPrimaryColor)
+        return Button {
+            week.selectedDayKey = key
+        } label: {
+            VStack(alignment: .leading, spacing: DietSpace.xxs) {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(Self.weekdayLabel(key))
+                        .font(DietType.caption1)
+                        .foregroundStyle(DietColor.textSecondaryColor)
+                    Text(Self.dayNumber(key))
+                        .font(DietType.callout).bold()
+                        .foregroundStyle(DietColor.textPrimaryColor)
+                }
+                ForEach(meetings.prefix(3)) { meeting in
+                    eventChip(meeting)
+                }
+                if meetings.count > 3 {
+                    Text("+\(meetings.count - 3) more")
+                        .font(DietType.caption1)
+                        .foregroundStyle(DietColor.textSecondaryColor)
+                }
+                Spacer(minLength: 0)
             }
-            ForEach(meetings.prefix(3)) { meeting in
-                eventChip(meeting)
-            }
-            if meetings.count > 3 {
-                Text("+\(meetings.count - 3) more")
-                    .font(DietType.caption1)
-                    .foregroundStyle(DietColor.textSecondaryColor)
-            }
-            Spacer(minLength: 0)
+            .padding(DietSpace.xs)
+            .frame(maxWidth: .infinity, minHeight: 96, alignment: .topLeading)
+            .background(
+                RoundedRectangle(cornerRadius: DietRadius.control)
+                    .fill(selected
+                        ? DietColor.wellColor
+                        : Color(nsColor: .controlBackgroundColor).opacity(0.4)))
+            .overlay(
+                RoundedRectangle(cornerRadius: DietRadius.control)
+                    .stroke(DietColor.dividerColor))
         }
-        .padding(DietSpace.xs)
-        .frame(maxWidth: .infinity, minHeight: 96, alignment: .topLeading)
-        .background(
-            RoundedRectangle(cornerRadius: DietRadius.control)
-                .fill(selected
-                    ? DietColor.wellColor
-                    : Color(nsColor: .controlBackgroundColor).opacity(0.4)))
-        .overlay(
-            RoundedRectangle(cornerRadius: DietRadius.control)
-                .stroke(DietColor.dividerColor))
-        .contentShape(Rectangle())
-        .onTapGesture { week.selectedDayKey = key }
+        .buttonStyle(.plain)
         .accessibilityLabel("\(key), \(meetings.count) meetings")
     }
 
