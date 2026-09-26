@@ -53,6 +53,17 @@ impl TeamsRegion {
         }
     }
 
+    /// Region from `TEAMS_PARTITION`/`TEAMS_REGION`/`TEAMS_RING` env
+    /// vars, falling back to the AMER default per field. For entry
+    /// points with no config in scope (ostmac-core calls).
+    pub fn from_env_or_default() -> Self {
+        Self::with_overrides(
+            std::env::var("TEAMS_PARTITION").ok(),
+            std::env::var("TEAMS_REGION").ok(),
+            std::env::var("TEAMS_RING").ok(),
+        )
+    }
+
     /// Region from the config file's `teams_partition`/`teams_region`/
     /// `teams_ring` fields, falling back to the AMER default per field.
     ///

@@ -736,6 +736,15 @@ needing maintainer buy-in. Minor PRs stand alone; majors are separate PRs.
     signaling generalization, not OstMac-specific.
     Upstream: UNFILED (stacks after §53 region-headers).
 
+58. [minor] `src/calling/signaling.rs` — **restore
+    `TeamsRegion::from_env_or_default` (perf-harness-build lane)**.
+    Base e87c64f red: §57 removed it as superseded but two
+    ostmac-core calls.rs sites (recorder + call-place, no config
+    in scope) still call it (E0599 x2). Thin wrapper over
+    `with_overrides` (env > AMER default per field); no behavior
+    change elsewhere.
+    Upstream: UNFILED (bugfix; file separately from majors).
+
 ## Upstream PRs (2026-09-22, base 0892144; main red on sdp E0308 until #5)
 
 Minor (standalone modulo #5-first; merge in any order after):

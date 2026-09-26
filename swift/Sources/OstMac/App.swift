@@ -524,6 +524,13 @@ final class AppState: ObservableObject {
     private let preselectID: String?
     private let preselectName: String?
     private let autoSay: String?
+    /// --demo-arrive-after value (perf-harness delay hook: secs after
+    /// content open to inject a peer arrival through handleRealtime).
+    private let arriveAfter: Double?
+    /// --demo-arrive-text value (arrival bubble text; default below).
+    private let arriveText: String?
+    /// --demo-arrive-edit flag (arrival retexts its own bubble +2s).
+    private let arriveEdit: Bool
     /// --popout-chat value (e1-popout shot hook: which chat to pop).
     private let popoutShotID: String?
     private var cancellables = Set<AnyCancellable>()
@@ -715,6 +722,17 @@ final class AppState: ObservableObject {
         } else {
             autoSay = nil
         }
+        if let i = args.firstIndex(of: "--demo-arrive-after"), i + 1 < args.count {
+            arriveAfter = Double(args[i + 1])
+        } else {
+            arriveAfter = nil
+        }
+        if let i = args.firstIndex(of: "--demo-arrive-text"), i + 1 < args.count {
+            arriveText = args[i + 1]
+        } else {
+            arriveText = nil
+        }
+        arriveEdit = args.contains("--demo-arrive-edit")
         if let i = args.firstIndex(of: "--popout-chat"), i + 1 < args.count {
             popoutShotID = args[i + 1]
         } else {
@@ -1273,6 +1291,15 @@ final class AppState: ObservableObject {
         if showNotifLive, isDemo {
             Task { await runNotifLiveProof() }
         }
+        if isDemo, let secs = arriveAfter {
+            // Perf-harness delay hook (demo-only): peer arrival AFTER
+            // settle through the REAL live path (handleRealtime), into
+            // the OPEN chat so frames show the bubble delta.
+            Task { [weak self] in
+                try? await Task.sleep(nanoseconds: UInt64(secs * 1_000_000_000))
+                await MainActor.run { self?.injectArrival() }
+            }
+        }
         // The 2s tick runs in demo too (d2-send: the scheduled queue and
         // the snooze sweep are client-side in both modes; the tick
         // publishes nothing while idle, so demo stays still). Starts
@@ -1341,6 +1368,65 @@ final class AppState: ObservableObject {
         print("NOTIFLIVE \(line)")
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("om-notif-live-proof.jsonl")
+        let entry = "{\"t\":\"\(Date().timeIntervalSince1970)\",\"line\":\"\(line.replacingOccurrences(of: "\"", with: "'"))\"}\n"
+        if let data = entry.data(using: .utf8),
+           let fh = try? FileHandle(forWritingTo: url)
+        {
+            try? fh.seekToEnd()
+            try? fh.write(contentsOf: data)
+            try? fh.close()
+        } else if let data = entry.data(using: .utf8) {
+            try? data.write(to: url)
+        }
+    }
+
+    /// Delayed peer arrival (perf-harness hook): like runNotifLiveProof
+    /// but targets the OPEN chat so capture frames show the bubble
+    /// delta. Logs ARRIVE lines (stdout + temp JSONL, logNotifLive
+    /// pattern). --demo-arrive-edit retexts the bubble +2s.
+    private func injectArrival() {
+        let target = openChatID ?? preselectID ?? DemoData.demoID
+        let sender = "Ava Lindqvist"
+        guard sender != conv.ownDisplayName else {
+            logArrive("skip own-name sender=\(sender)")
+            return
+        }
+        let msg = RealtimeMessage(
+            chatID: target, msgId: "arrive-1",
+            sender: sender,
+            text: arriveText ?? "Sounds good — see you at 10",
+            time: "2026-09-26T00:00:00Z",
+            isEdit: false, messageType: "Text")
+        logArrive("inject chatID=\(msg.chatID) msgId=\(msg.msgId) open=\(openChatID ?? "nil")")
+        handleRealtime(msg)
+        logArrive("done posted=\(notifPosted) skipped=\(notifSkipped) last=\(notifLastReason)")
+        if arriveEdit {
+            Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                await MainActor.run {
+                    self?.injectArrivalEdit(target: target, sender: sender)
+                }
+            }
+        }
+    }
+
+    /// Arrival-edit follow-up: in-place retext of the injected bubble.
+    private func injectArrivalEdit(target: String, sender: String) {
+        let msg = RealtimeMessage(
+            chatID: target, msgId: "arrive-1-edit",
+            sender: sender,
+            text: (arriveText ?? "Sounds good — see you at 10") + " (edited)",
+            time: "2026-09-26T00:00:02Z",
+            isEdit: true, editedID: "arrive-1", messageType: "Text")
+        logArrive("inject-edit chatID=\(msg.chatID) editedID=arrive-1 open=\(openChatID ?? "nil")")
+        handleRealtime(msg)
+    }
+
+    /// ARRIVE proof line: stdout + temp JSONL (logNotifLive pattern).
+    private func logArrive(_ line: String) {
+        print("ARRIVE \(line)")
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("om-arrive-proof.jsonl")
         let entry = "{\"t\":\"\(Date().timeIntervalSince1970)\",\"line\":\"\(line.replacingOccurrences(of: "\"", with: "'"))\"}\n"
         if let data = entry.data(using: .utf8),
            let fh = try? FileHandle(forWritingTo: url)
