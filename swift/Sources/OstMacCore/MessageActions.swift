@@ -17,10 +17,12 @@ public enum MessageActions {
     /// no link parsed). Plain messages are unchanged (no rows).
     public static func copyText(for message: ChatMessage) -> String {
         let body = MessageRender.bubbleText(for: message)
-        let cards = MessageBubbleState.cards(for: message).flatMap(\.copyLines)
+        let parsedCards = MessageBubbleState.cards(for: message)
+        let cards = parsedCards.flatMap(\.copyLines)
+        let posts = MessageRender.botPosts(fromRaw: message.raw ?? message.content)
         let rows: [String]
-        if MessageBubbleState.shouldShowFallbackRows(for: message) {
-            rows = MessageRender.botPosts(fromRaw: message.raw ?? message.content).map { post in
+        if MessageBubbleState.shouldShowFallbackRows(posts: posts, cards: parsedCards) {
+            rows = posts.map { post in
                 if let url = post.url { return "\(post.title) — \(url)" }
                 return post.title
             }

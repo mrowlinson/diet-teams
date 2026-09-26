@@ -112,13 +112,47 @@ public struct AdaptiveCard: Sendable, Equatable {
 
     /// Cards for one message: envelope shapes unwrapped to bare card
     /// objects, each parsed shallow. Anything else yields no cards.
+    /// Memoized per raw payload (om-perf-swift-render): the bubble
+    /// parses each message once per content change instead of 2-3x
+    /// per body-eval (cards + fallback gating + placeholder check).
     public static func cards(fromRaw raw: String?) -> [AdaptiveCard] {
-        guard let raw,
-              MessageRender.looksLikeJSONObject(raw),
+        guard let raw else { return [] }
+        cardsLock.lock()
+        if let hit = cardsCache[raw] {
+            cardsLock.unlock()
+            return hit
+        }
+        cardsLock.unlock()
+        let out = cardsUncached(fromRaw: raw)
+        cardsLock.lock()
+        cardsComputes += 1
+        if cardsCache.count >= maxCardCacheEntries { cardsCache.removeAll() }
+        cardsCache[raw] = out
+        cardsLock.unlock()
+        return out
+    }
+
+    static func cardsUncached(fromRaw raw: String) -> [AdaptiveCard] {
+        guard MessageRender.looksLikeJSONObject(raw),
               let data = raw.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data)
         else { return [] }
         return cardObjects(from: json).compactMap(parse(card:)).prefix(10).map { $0 }
+    }
+
+    static let maxCardCacheEntries = 1000
+    private static let cardsLock = NSLock()
+    private static var cardsCache: [String: [AdaptiveCard]] = [:]
+
+    /// Actual parses, excluding cache hits (perf-guard tests only).
+    static var cardsComputes = 0
+
+    /// Drop the cached parses + zero the counter (tests only).
+    static func resetCardsCache() {
+        cardsLock.lock()
+        defer { cardsLock.unlock() }
+        cardsCache.removeAll()
+        cardsComputes = 0
     }
 
     /// Bare card dicts from any envelope shape: message envelope
@@ -331,9 +365,16 @@ public enum MessageBubbleState {
     }
 
     public static func shouldShowFallbackRows(for message: ChatMessage) -> Bool {
-        let posts = MessageRender.botPosts(fromRaw: message.raw ?? message.content)
+        shouldShowFallbackRows(
+            posts: MessageRender.botPosts(fromRaw: message.raw ?? message.content),
+            cards: cards(for: message))
+    }
+
+    /// Gating over precomputed parses (om-perf-swift-render): callers
+    /// that already hold `posts` + `cards` skip the re-parse entirely.
+    /// Same truth table as `shouldShowFallbackRows(for:)`.
+    public static func shouldShowFallbackRows(posts: [MessageRender.BotPost], cards: [AdaptiveCard]) -> Bool {
         guard !posts.isEmpty else { return false }
-        let cards = cards(for: message)
         return cards.isEmpty || cards.contains(where: \.needsFallback)
     }
 }

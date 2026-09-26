@@ -1052,7 +1052,7 @@ struct MessageBubble: View {
                                 chatID: chatID)
                         }
                     }
-                    if !posts.isEmpty, MessageBubbleState.shouldShowFallbackRows(for: message) {
+                    if !posts.isEmpty, MessageBubbleState.shouldShowFallbackRows(posts: posts, cards: cards) {
                         BotPostRows(posts: posts)
                     }
                     // Card actions (om-jd-cardactions): rendered cards own

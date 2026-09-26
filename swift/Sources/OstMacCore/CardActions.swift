@@ -58,8 +58,27 @@ public enum CardActions {
     /// Mine one message's card actions. `raw` is the server payload
     /// (`message.raw ?? message.content`); non-JSON input (attachment
     /// HTML, prose) yields `.empty` — bot-post rows already cover links.
+    /// Memoized per raw payload (om-perf-swift-render): one JSON parse
+    /// per content change instead of one per body-eval.
     public static func actions(fromRaw raw: String?) -> CardActionSet {
-        guard let raw, MessageRender.looksLikeJSONObject(raw),
+        guard let raw else { return .empty }
+        actionsLock.lock()
+        if let hit = actionsCache[raw] {
+            actionsLock.unlock()
+            return hit
+        }
+        actionsLock.unlock()
+        let out = actionsUncached(fromRaw: raw)
+        actionsLock.lock()
+        actionsComputes += 1
+        if actionsCache.count >= maxActionsCacheEntries { actionsCache.removeAll() }
+        actionsCache[raw] = out
+        actionsLock.unlock()
+        return out
+    }
+
+    static func actionsUncached(fromRaw raw: String) -> CardActionSet {
+        guard MessageRender.looksLikeJSONObject(raw),
               let data = raw.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data)
         else { return .empty }
@@ -72,6 +91,21 @@ public enum CardActions {
         return CardActionSet(
             openURLs: Array(buttons.prefix(maxButtons)),
             needsTeamsFallback: fallback)
+    }
+
+    static let maxActionsCacheEntries = 1000
+    private static let actionsLock = NSLock()
+    private static var actionsCache: [String: CardActionSet] = [:]
+
+    /// Actual mines, excluding cache hits (perf-guard tests only).
+    static var actionsComputes = 0
+
+    /// Drop the cached mines + zero the counter (tests only).
+    static func resetActionsCache() {
+        actionsLock.lock()
+        defer { actionsLock.unlock() }
+        actionsCache.removeAll()
+        actionsComputes = 0
     }
 
     /// Top object plus each `attachments[]` element's `content`
