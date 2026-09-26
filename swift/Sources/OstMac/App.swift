@@ -403,6 +403,21 @@ final class AppState: ObservableObject {
     /// searches through this store. Demo runs substring-over-fixtures
     /// (offline); live hits Graph via core.
     let messageSearch: MessageSearchStore
+    /// Offline message index (gap-g6g7): attached to `messageSearch`
+    /// for offline-first merge. Fed by history fetches (`conv`
+    /// onHistory) + realtime ingest; persists per-account OMIX.
+    let localSearch = LocalSearchStore()
+    /// Sticky palette search memory (gap-g6g7): scope chip + last
+    /// query + 5 recents. Device-scoped (global, like picker flags).
+    let searchRecents = SearchRecentsStore()
+    /// Indexed doc count (Diagnostics; updated on every index write).
+    @Published var searchIndexDocs = 0
+    /// Last index load/save failure (Diagnostics; nil when clear).
+    @Published var searchIndexError: String?
+    /// Account whose file backs `localSearch` right now.
+    private var searchIndexAccountID = AccountProfile.defaultID
+    /// Debounced OMIX save (2s quiet window after each index write).
+    private var searchIndexSaveTask: Task<Void, Never>?
     /// File + people search (om-jb-filesearch): the jump palette's
     /// Files/People sections search through this store. Demo runs
     /// substring-over-fixtures (offline); live hits Graph via core.
@@ -773,6 +788,19 @@ final class AppState: ObservableObject {
                 DemoData.messageSearchResponse(for: query)
             })
             : MessageSearchStore()
+        // gap-g6g7: offline-first merge + index writer hooks. Demo
+        // attaches too (demo threads index via showDemo; fixtures
+        // merge above local extras the same way).
+        messageSearch.local = localSearch
+        searchIndexAccountID = accounts.activeID ?? AccountProfile.defaultID
+        do {
+            try localSearch.loadDefault(for: searchIndexAccountID)
+            searchIndexDocs = localSearch.docCount
+        } catch {
+            searchIndexError = "index load: \(error)"
+        }
+        // (conv.onHistory/onDelete wire in wireSearchIndex below —
+        // closures capture self, which isn't ready this early.)
         filePeople = isDemo
             ? FilePeopleSearchStore(
                 fileSearcher: { query, _ in DemoData.fileSearchResponse(for: query) },
@@ -912,6 +940,7 @@ final class AppState: ObservableObject {
             history.seedDemo() // canned recents (in-memory, offline)
         }
         wireChats()
+        wireSearchIndex() // gap-g6g7: history + delete → offline index
         popouts.bind(main: conv) // e1-popout: send mirroring both ways
         // e2-attention: manual picker sets pause the schedule until
         // the next window boundary (contract (i)). Weak — no cycle.
@@ -1048,6 +1077,22 @@ final class AppState: ObservableObject {
             .store(in: &chatsCancellables)
     }
 
+    /// Offline-index writer wiring (gap-g6g7): fetched history
+    /// batches + confirmed deletes flow into `localSearch`. The
+    /// closures hop to MainActor (ConversationStore is unisolated).
+    private func wireSearchIndex() {
+        conv.onHistory = { [weak self] chatID, msgs in
+            Task { @MainActor [weak self] in
+                self?.indexHistory(chatID: chatID, messages: msgs)
+            }
+        }
+        conv.onDelete = { [weak self] chatID, id in
+            Task { @MainActor [weak self] in
+                self?.dropIndexed(chatID: chatID, messageID: id)
+            }
+        }
+    }
+
     /// Call-history redial wiring (re-run after rebuild).
     private func wireHistory() {
         history.onRedial = { [weak self] record in
@@ -1104,6 +1149,8 @@ final class AppState: ObservableObject {
         history = CallHistoryStore(key: CallHistoryStore.key(for: id))
         wireHistory()
         meetingChat = makeMeetingChat(accountID: id)
+        switchSearchIndex(to: id) // gap-g6g7: per-account offline index
+        messageSearch.clear() // gap-g6g7: stale hits never cross accounts
         teams.resetForAccount()
         presence.clear()
         presenceSchedule.clearApplied() // e2-attention: drop applied state
@@ -1978,6 +2025,60 @@ final class AppState: ObservableObject {
         }
     }
 
+    // MARK: - Offline search index (gap-g6g7)
+
+    /// Index one history batch (conv.onHistory: open/seek/loadMore/demo).
+    private func indexHistory(chatID: String, messages: [ChatMessage]) {
+        guard !messages.isEmpty else { return }
+        localSearch.index(chatID: chatID, messages: messages)
+        searchIndexDocs = localSearch.docCount
+        searchIndexError = nil
+        scheduleSearchIndexSave()
+    }
+
+    /// Drop one doc after a confirmed delete (conv.onDelete).
+    private func dropIndexed(chatID: String, messageID: String) {
+        localSearch.remove(chatID: chatID, messageID: messageID)
+        searchIndexDocs = localSearch.docCount
+        scheduleSearchIndexSave()
+    }
+
+    /// Debounced OMIX persist (2s quiet window; cancels superseded).
+    private func scheduleSearchIndexSave() {
+        searchIndexSaveTask?.cancel()
+        let accountID = searchIndexAccountID
+        searchIndexSaveTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            guard !Task.isCancelled else { return }
+            do {
+                try self?.localSearch.saveDefault(for: accountID)
+            } catch {
+                self?.searchIndexError = "index save: \(error)"
+            }
+        }
+    }
+
+    /// Flush the old account's index, then point the store at the new
+    /// account's file (empty when the account never indexed).
+    private func switchSearchIndex(to accountID: String) {
+        searchIndexSaveTask?.cancel()
+        searchIndexSaveTask = nil
+        do {
+            try localSearch.saveDefault(for: searchIndexAccountID)
+        } catch {
+            searchIndexError = "index save: \(error)"
+        }
+        searchIndexAccountID = accountID
+        localSearch.removeAll()
+        do {
+            try localSearch.loadDefault(for: accountID)
+            searchIndexError = nil
+        } catch {
+            searchIndexError = "index load: \(error)"
+        }
+        searchIndexDocs = localSearch.docCount
+    }
+
     private func handleRealtime(_ msg: RealtimeMessage) {
         feedEvents += 1
         refreshFeedStatus()
@@ -1994,6 +2095,12 @@ final class AppState: ObservableObject {
         typing.noteMessage(
             chatID: msg.chatID, sender: msg.sender, senderID: msg.senderID)
         chats.ingest(realtime: msg)
+        // gap-g6g7: realtime → offline index (edits re-index onto the
+        // same doc; reaction-only events carry no text — never index
+        // an empty body over real content).
+        if !msg.text.isEmpty {
+            indexHistory(chatID: msg.chatID, messages: [msg.asChatMessage])
+        }
         // om-nc-delivery: the rules decision below owns the single banner
         // (maybeNotify); no second post here — one event, one banner max.
         // om-quiet-hours: snapshot quiet ONCE per event; the banner path
@@ -2674,6 +2781,7 @@ struct RootView: View {
                 chats: state.chats, teams: state.teams,
                 search: state.messageSearch,
                 filePeople: state.filePeople,
+                recents: state.searchRecents,
                 initialQuery: OstMacAppMain.jumpQuery(args: CommandLine.arguments),
                 chatNameFor: { state.chatNameOrNil(for: $0) },
                 onPickMessage: { state.jumpToMessage($0) },
@@ -2887,6 +2995,7 @@ struct JumpPaletteSheet: View {
     @ObservedObject var teams: TeamsViewModel
     @ObservedObject var search: MessageSearchStore
     @ObservedObject var filePeople: FilePeopleSearchStore
+    @ObservedObject var recents: SearchRecentsStore
     let initialQuery: String
     let chatNameFor: (String) -> String?
     let onPickMessage: (SearchHit) -> Void
@@ -2904,6 +3013,7 @@ struct JumpPaletteSheet: View {
             onPickMessage: onPickMessage,
             filePeople: filePeople,
             onPickFile: onPickFile, onPickPerson: onPickPerson,
+            recents: recents,
             onPick: onPick)
     }
 }

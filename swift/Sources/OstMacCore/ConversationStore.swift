@@ -52,6 +52,16 @@ public final class ConversationStore: ObservableObject {
     /// every `send` (demo + live optimistic paths). The pop-out registry
     /// mirrors through it so an own-bubble appears in both windows.
     public var onLocalSend: ((ChatMessage) -> Void)?
+    /// History tap (gap-g6g7): fired with each stamped batch that lands
+    /// from a fetch (`open` pages, `seek` pages, `loadMore` pages,
+    /// `showDemo`). AppState indexes batches into the offline search
+    /// store. Fires on the caller's context; hop actors as needed.
+    public var onHistory: ((String, [ChatMessage]) -> Void)?
+    /// Delete tap (gap-g6g7): fired with (chatID, messageID) once a
+    /// delete lands (demo path + confirmed core deletes; optimistic
+    /// removals that restore never fire). AppState drops the offline
+    /// index doc.
+    public var onDelete: ((String, String) -> Void)?
     private var openGeneration = 0
 
     /// Opaque cursor for the next older page; nil = end of history.
@@ -171,7 +181,9 @@ public final class ConversationStore: ObservableObject {
                     try RustCore.messages(chatID: chatID, limit: limit)
                 }.value
                 guard gen == self.openGeneration else { return }
-                self.messages = Self.stampOwnership(resp.messages, ownName: self.ownDisplayName)
+                let stamped = Self.stampOwnership(resp.messages, ownName: self.ownDisplayName)
+                self.messages = stamped
+                self.onHistory?(chatID, stamped)
                 self.pageToken = resp.page_token
                 self.didLoad = true
                 // Chain older pages until the window is covered.
@@ -187,9 +199,9 @@ public final class ConversationStore: ObservableObject {
                             try RustCore.messagesPage(chatID: chatID, pageToken: tok, limit: limit)
                         }.value
                         guard gen == self.openGeneration else { return }
-                        self.messages = Self.prepend(
-                            Self.stampOwnership(next.messages, ownName: self.ownDisplayName),
-                            to: self.messages)
+                        let stamped = Self.stampOwnership(next.messages, ownName: self.ownDisplayName)
+                        self.messages = Self.prepend(stamped, to: self.messages)
+                        self.onHistory?(chatID, stamped)
                         self.pageToken = next.page_token
                         pages += 1
                     } catch {
@@ -216,9 +228,9 @@ public final class ConversationStore: ObservableObject {
                                 try RustCore.messagesPage(chatID: chatID, pageToken: tok, limit: limit)
                             }.value
                             guard gen == self.openGeneration else { return }
-                            self.messages = Self.prepend(
-                                Self.stampOwnership(next.messages, ownName: self.ownDisplayName),
-                                to: self.messages)
+                            let stamped = Self.stampOwnership(next.messages, ownName: self.ownDisplayName)
+                            self.messages = Self.prepend(stamped, to: self.messages)
+                            self.onHistory?(chatID, stamped)
                             self.pageToken = next.page_token
                             extra += 1
                         } catch {
@@ -297,9 +309,9 @@ public final class ConversationStore: ObservableObject {
                         try RustCore.messagesPage(chatID: chat, pageToken: tok, limit: limit)
                     }.value
                     guard gen == self.openGeneration else { return } // superseded
-                    self.messages = Self.prepend(
-                        Self.stampOwnership(resp.messages, ownName: self.ownDisplayName),
-                        to: self.messages)
+                    let stamped = Self.stampOwnership(resp.messages, ownName: self.ownDisplayName)
+                    self.messages = Self.prepend(stamped, to: self.messages)
+                    if let chat = self.chatID { self.onHistory?(chat, stamped) }
                     self.pageToken = resp.page_token
                     pages += 1
                     if self.messages.contains(where: { $0.id == id }) { break }
@@ -403,9 +415,9 @@ public final class ConversationStore: ObservableObject {
                         try RustCore.messagesPage(chatID: id, pageToken: tok, limit: limit)
                     }.value
                     guard gen == self.openGeneration else { return } // superseded
-                    self.messages = Self.prepend(
-                        Self.stampOwnership(resp.messages, ownName: self.ownDisplayName),
-                        to: self.messages)
+                    let stamped = Self.stampOwnership(resp.messages, ownName: self.ownDisplayName)
+                    self.messages = Self.prepend(stamped, to: self.messages)
+                    self.onHistory?(id, stamped)
                     self.pageToken = resp.page_token
                     pages += 1
                     if Self.dayChunkDone(startDayKey: startDay, messages: self.messages) { break }
@@ -493,6 +505,7 @@ public final class ConversationStore: ObservableObject {
         loading = false
         error = nil
         didLoad = true
+        onHistory?(chatID, messages)
     }
 
     /// Arm a quote reply to `message` (bubble Reply action / shot hook).
@@ -801,6 +814,7 @@ public final class ConversationStore: ObservableObject {
         guard let i = messages.firstIndex(where: { $0.id == id }) else { return }
         if isDemo {
             messages = Self.removing(id: id, from: messages)
+            if let chat = chatID { onDelete?(chat, id) }
             return
         }
         guard let chat = chatID else { return }
@@ -812,6 +826,7 @@ public final class ConversationStore: ObservableObject {
                 _ = try await Task.detached {
                     try RustCore.deleteMessage(chatID: chat, messageID: id)
                 }.value
+                self.onDelete?(chat, id)
             } catch {
                 // Restore at the original index (clamped to the tail).
                 var cur = self.messages
