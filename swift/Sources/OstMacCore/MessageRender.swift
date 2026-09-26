@@ -369,6 +369,12 @@ public enum MessageRender {
         types: NSTextCheckingResult.CheckingType.link.rawValue)
 
     static func attributedBodyUncached(text: String, raw: String?, highlighting ownName: String? = nil) -> AttributedString {
+        // Fenced blocks (top10-code): fence-less messages keep the legacy
+        // path below bit-identical; fenced ones split into prose/code
+        // segments (fences stripped like backticks, code highlighted).
+        if CodeBlocks.containsFence(in: text) {
+            return attributedBodyFenced(text: text, raw: raw, highlighting: ownName)
+        }
         // Backticks are markup, not content: every miner below runs on
         // the tick-stripped text, so `code` renders mono without ticks.
         let stripped = stripBackticks(text)
@@ -390,11 +396,14 @@ public enum MessageRender {
                 if mine { a[ar].backgroundColor = mineHighlight }
             }
         }
-        // Code blocks from <pre> + backtick spans.
+        // Code blocks from <pre> + backtick spans. Server snippets get
+        // auto-detected token colors too (top10-code; foreground only,
+        // so font/wash pins never shift).
         for b in codeBlocks(fromRaw: raw) {
             for r in ranges(of: b, in: clean) {
                 guard let ar = convert(r) else { continue }
                 a[ar].font = .body.monospaced()
+                applyHighlight(code: String(clean[r]), language: nil, to: &a, base: r, clean: clean)
             }
         }
         for r in stripped.spans {
@@ -414,6 +423,112 @@ public enum MessageRender {
             }
         }
         return a
+    }
+
+    // MARK: - Fenced code styling (top10-code lane)
+
+    /// Styled body for messages holding ``` fences: prose segments get the
+    /// legacy styling (mentions, `<pre>` mono, `ticks`, links); code
+    /// segments get mono + syntax colors and NOTHING else (no mention
+    /// bolds, no link underlines, no shortcode expansion — code is
+    /// literal). Concatenated in order; fence lines never display (the
+    /// content keeps them, so Copy/forward stay faithful).
+    static func attributedBodyFenced(text: String, raw: String?, highlighting ownName: String?) -> AttributedString {
+        var out = AttributedString("")
+        for seg in CodeBlocks.segments(in: text) {
+            switch seg.kind {
+            case .prose:
+                out += attributedProseSegment(seg.text, raw: raw, highlighting: ownName)
+            case .code:
+                out += attributedCodeSegment(seg.text, language: seg.language)
+            }
+        }
+        return out
+    }
+
+    /// Legacy styling over one prose segment (same miners as the
+    /// fence-less path, scoped to the segment).
+    static func attributedProseSegment(_ text: String, raw: String?, highlighting ownName: String?) -> AttributedString {
+        let stripped = stripBackticks(text)
+        let clean = stripped.clean
+        var a = AttributedString(clean)
+        func convert(_ r: Range<String.Index>) -> Range<AttributedString.Index>? {
+            Range(r, in: a)
+        }
+        var names = mentions(fromRaw: raw)
+        if names.isEmpty {
+            names = mentionTokens(in: clean)
+        }
+        for n in names {
+            let mine = isOwnerMention(n, ownName: ownName)
+            for r in ranges(of: n, in: clean) {
+                guard let ar = convert(r) else { continue }
+                a[ar].font = .body.bold()
+                if mine { a[ar].backgroundColor = mineHighlight }
+            }
+        }
+        // Server `<pre>` snippets: same mono as the fence-less path,
+        // plus auto-detected token colors (foreground only).
+        for b in codeBlocks(fromRaw: raw) {
+            for r in ranges(of: b, in: clean) {
+                guard let ar = convert(r) else { continue }
+                a[ar].font = .body.monospaced()
+                applyHighlight(code: String(clean[r]), language: nil, to: &a, base: r, clean: clean)
+            }
+        }
+        for r in stripped.spans {
+            guard let ar = convert(r) else { continue }
+            a[ar].font = .body.monospaced()
+        }
+        if let det = Self.sharedLinkDetector {
+            let ns = clean as NSString
+            for m in det.matches(in: clean, range: NSRange(location: 0, length: ns.length)) {
+                guard let url = m.url,
+                      let r = Range(m.range, in: clean),
+                      let ar = convert(r)
+                else { continue }
+                a[ar].link = url
+                a[ar].underlineStyle = .single
+            }
+        }
+        return a
+    }
+
+    /// One fenced code block: whole-range mono + highlight token colors
+    /// (foreground only — no wash, so mention-wash counts never shift).
+    /// Empty code → empty string.
+    static func attributedCodeSegment(_ code: String, language: String?) -> AttributedString {
+        var a = AttributedString(code)
+        guard !code.isEmpty else { return a }
+        guard let whole = Range(code.startIndex ..< code.endIndex, in: a) else { return a }
+        a[whole].font = .body.monospaced()
+        applyHighlight(code: code, language: language, to: &a, base: code.startIndex ..< code.endIndex, clean: code)
+        return a
+    }
+
+    /// Paint `CodeHighlight` token colors for `code` onto `target`. `base`
+    /// is `code`'s range inside `clean` (same string for code segments, a
+    /// `<pre>`-matched subrange for prose). Runs concatenate to `code`
+    /// exactly, so walking by run length never misaligns; any failure
+    /// inside the engine degrades to `.plain` (mono, uncolored).
+    static func applyHighlight(
+        code: String, language: String?,
+        to target: inout AttributedString,
+        base: Range<String.Index>, clean: String
+    ) {
+        guard !code.isEmpty else { return }
+        var cursor = base.lowerBound
+        for run in CodeHighlight.runs(code: code, language: language) {
+            guard !run.text.isEmpty else { continue }
+            let next = clean.index(cursor, offsetBy: run.text.count, limitedBy: base.upperBound)
+                ?? base.upperBound
+            if let color = CodeHighlight.color(for: run.token),
+               let ar = Range(cursor ..< next, in: target)
+            {
+                target[ar].foregroundColor = color
+            }
+            cursor = next
+        }
     }
 
     // MARK: - Rich media (om-richmedia lane)
@@ -581,10 +696,14 @@ public enum MessageRender {
     }
 
     public static func expandShortcodes(_ text: String) -> String {
-        // Exclusion ranges: backtick spans widened to swallow the ticks.
-        let excl: [Range<String.Index>] = backtickSpans(in: text).map { r in
-            text.index(before: r.lowerBound) ..< text.index(after: r.upperBound)
-        }
+        // Exclusion ranges: backtick spans widened to swallow the ticks,
+        // plus fenced code blocks (top10-code: `(code)` inside code stays
+        // literal). Sorted, non-overlapping; fences win overlaps.
+        let excl = mergeExclusions(
+            fences: CodeBlocks.codeRanges(in: text),
+            ticks: backtickSpans(in: text).map { r in
+                text.index(before: r.lowerBound) ..< text.index(after: r.upperBound)
+            })
         var out = ""
         out.reserveCapacity(text.count)
         var cursor = text.startIndex
@@ -595,6 +714,17 @@ public enum MessageRender {
         }
         out += expandSegment(String(text[cursor...]))
         return out
+    }
+
+    /// Merge two sorted non-overlapping exclusion lists; fence ranges
+    /// win (tick spans inside code are redundant — the fence already
+    /// excludes them).
+    static func mergeExclusions(
+        fences: [Range<String.Index>], ticks: [Range<String.Index>]
+    ) -> [Range<String.Index>] {
+        guard !fences.isEmpty else { return ticks }
+        let kept = ticks.filter { t in !fences.contains { $0.overlaps(t) } }
+        return (fences + kept).sorted { $0.lowerBound < $1.lowerBound }
     }
 
     /// One `(code)` pass over code-free text. Case-insensitive lookup.

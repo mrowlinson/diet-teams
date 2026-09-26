@@ -225,6 +225,7 @@ public struct QuickComposerView: View {
         HStack(spacing: DietSpace.sm) {
             TextField("Message", text: $message)
                 .textFieldStyle(.roundedBorder)
+                .plainPasteFallback(into: $message)
                 .font(DietType.body)
                 .foregroundStyle(DietColor.textPrimaryColor)
                 .focused($focus, equals: .message)

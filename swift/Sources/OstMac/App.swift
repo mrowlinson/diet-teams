@@ -19,6 +19,8 @@
 // (RSS digest rows, card row, unparseable placeholder — shot hook).
 // --demo-showcase is --demo preselected on the showcase thread (every
 // rich feature in one conversation + two seeded pins — shot hook).
+// --show-code is --demo-rich plus two seeded fenced-code bubbles at the
+// tail (received python + sent swift — top10-code shot hook).
 // --chat preselects (or opens directly when absent from the list).
 // --say auto-sends once into the open chat. In live mode that is a REAL
 // send via core — never use it on shared chats for testing.
@@ -651,7 +653,7 @@ final class AppState: ObservableObject {
             || args.contains("--demo-botposts") || args.contains("--show-pins")
             || args.contains("--demo-showcase")
             || args.contains("--show-folders") || args.contains("--show-folders-manage")
-            || args.contains("--show-saved")
+            || args.contains("--show-saved") || args.contains("--show-code")
         showNotes = args.contains("--show-notes")
         showJump = args.contains("--show-jump") // shot hook: palette open at launch
         showQuickComposerShot = args.contains("--show-quickcompose") // shot hook: composer open at launch
@@ -747,6 +749,8 @@ final class AppState: ObservableObject {
         }
         if let i = args.firstIndex(of: "--chat"), i + 1 < args.count {
             preselectID = args[i + 1]
+        } else if args.contains("--show-code") {
+            preselectID = DemoData.richID
         } else if showHistory {
             preselectID = DemoData.historyID
         } else if args.contains("--show-reply") {
@@ -1642,7 +1646,7 @@ final class AppState: ObservableObject {
     /// off-screen target → direct core send (demo records locally).
     /// Never changes the selection, never refetches — zero-refresh.
     func quickSend(targetID: String, targetName: String, text: String) {
-        let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let body = CodeBlocks.sendBody(for: text)
         guard !body.isEmpty else { return }
         if QuickComposerRouting.sendThroughOpenStore(
             targetID: targetID, openChatID: conv.chatID)
@@ -1890,6 +1894,11 @@ final class AppState: ObservableObject {
             let name = chatName ?? DemoData.name(for: id) ?? "Conversation"
             var msgs = DemoData.messages(for: id)
             if showCatchUp || showActionItems { msgs = Self.longThread(from: msgs) }
+            // Shot hook: --show-code appends fenced-code bubbles to the
+            // open thread (top10-code; demo only, DemoData untouched).
+            if CommandLine.arguments.contains("--show-code") {
+                msgs += Self.codeShotMessages(stamp: msgs.last?.timestamp ?? "2026-09-26T09:00:00Z")
+            }
             // Shot hook: empty thread + canned fetch failure (offline).
             if showHistoryError {
                 msgs = []
@@ -1964,6 +1973,21 @@ final class AppState: ObservableObject {
             n += 1
         }
         return out
+    }
+
+    /// Seeded fenced-code bubbles for the --show-code shot (top10-code):
+    /// a received python block + a sent swift block, stamped with the
+    /// thread tail so they land in the tail day section.
+    private static func codeShotMessages(stamp: String) -> [ChatMessage] {
+        [
+            ChatMessage(
+                id: "shot-code-1", sender: "Tom Becker", timestamp: stamp,
+                content: "Repro from the traceback:\n```python\ndef retry(fn):\n    for i in range(3):\n        try:\n            return fn()\n        except IOError:  # transient\n            continue\n```"),
+            ChatMessage(
+                id: "shot-code-2", sender: "Me", timestamp: stamp,
+                content: "Shipping the fix:\n```swift\nfunc greet(name: String) -> String {\n    // indent kept: 4sp\n    let line = \"hi \\(name)\"\n    return line\n}\n```",
+                isOwn: true),
+        ]
     }
 
     /// Seeded saves for the --show-saved shot (offline, throwaway
