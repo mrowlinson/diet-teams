@@ -226,6 +226,9 @@ public final class ScreenShareModel: NSObject, ObservableObject {
 
     override public init() {
         super.init()
+        // top10-menubar: the app holds this lazily — a note here while
+        // the launch log still shows zero proves the deferral held.
+        ColdStart.noteMediaInit("screenshare.model")
         // --share-denied shot hook: seed + hold the denial state.
         if CommandLine.arguments.contains("--share-denied") {
             permission = .denied
