@@ -115,6 +115,39 @@ final class NativeControlsTests: XCTestCase {
             "DietComposer send must be a system style")
     }
 
+    func testSharedComponentsRenderNative() throws {
+        // om-shared-diet: single-point converts. Shared bodies
+        // must compose native APIs; call sites stay untouched.
+        let files = try Self.swiftFiles()
+        let divider = try XCTUnwrap(
+            files.first(where: { $0.name == "DietDivider.swift" }),
+            "DietDivider.swift missing")
+        XCTAssertTrue(
+            divider.text.contains("Divider()"),
+            "DietDividerH/V + DietSeamH must render Divider()")
+        XCTAssertFalse(
+            divider.text.contains("DietColor.dividerColor.frame"),
+            "dividers must not paint custom 1px rects")
+        let states = try XCTUnwrap(
+            files.first(where: { $0.name == "DietStates.swift" }),
+            "DietStates.swift missing")
+        XCTAssertTrue(
+            states.text.contains("ContentUnavailableView"),
+            "DietEmptyState must render ContentUnavailableView")
+        let layout = try XCTUnwrap(
+            files.first(where: { $0.name == "DietLayout.swift" }),
+            "DietLayout.swift missing")
+        XCTAssertTrue(
+            layout.text.contains("GroupBox"),
+            "DietCard/DietSectionCard must render GroupBox")
+        XCTAssertTrue(
+            layout.text.contains("NavigationSplitView"),
+            "DietColumns must render NavigationSplitView")
+        XCTAssertFalse(
+            layout.text.contains("RoundedRectangle(cornerRadius: DietRadius.card)"),
+            "cards must not draw custom chrome")
+    }
+
     func testButtonComponentsRenderNative() throws {
         // DietButton internals: no custom style structs, icon
         // button on the system borderless style (native hover),

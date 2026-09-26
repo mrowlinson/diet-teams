@@ -1,6 +1,6 @@
-// DietLayout.swift — window/sidebar materials + seam alignment.
-// Every multi-column surface uses DietColumns so toolbar, sidebar,
-// and content seams share one divider row and pixel-align.
+// DietLayout.swift — window/sidebar materials + native containers.
+// Multi-column surfaces use NavigationSplitView; grouped content
+// uses GroupBox; per-column header alignment stays DietHeaderBar.
 import AppKit
 import SwiftUI
 
@@ -20,11 +20,8 @@ public struct DietSidebarMaterial: NSViewRepresentable {
     public func updateNSView(_: NSVisualEffectView, context _: Context) {}
 }
 
-/// Two-column app frame: sidebar + content with a shared toolbar
-/// seam. Sidebar gets .sidebar material; content gets window bg.
-/// The vertical seam and the horizontal toolbar seam are both
-/// DietDivider (1px), drawn in the same coordinate pass so they
-/// meet exactly — no double lines, no gaps.
+/// Two-column app frame: native NavigationSplitView (sidebar +
+/// detail, system material, collapsible sidebar).
 public struct DietColumns<Sidebar: View, Content: View>: View {
     private let sidebar: Sidebar
     private let content: Content
@@ -40,14 +37,11 @@ public struct DietColumns<Sidebar: View, Content: View>: View {
     }
 
     public var body: some View {
-        HStack(spacing: 0) {
+        NavigationSplitView {
             sidebar
-                .frame(minWidth: 220, idealWidth: 260, maxWidth: 320)
-                .background(DietSidebarMaterial())
-            DietDividerV()
+        } detail: {
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(DietColor.windowColor)
         }
         .navigationTitle(title)
     }
@@ -73,8 +67,7 @@ public struct DietHeaderBar<Content: View>: View {
     }
 }
 
-/// Section card: grouped content on window bg. 12pt radius,
-/// 1px border in divider color, 16pt padding.
+/// Section card: native GroupBox for grouped content.
 public struct DietCard<Content: View>: View {
     private let content: Content
 
@@ -83,18 +76,13 @@ public struct DietCard<Content: View>: View {
     }
 
     public var body: some View {
-        content
-            .padding(DietSpace.md)
-            .background(DietColor.cardColor)
-            .clipShape(RoundedRectangle(cornerRadius: DietRadius.card))
-            .overlay(
-                RoundedRectangle(cornerRadius: DietRadius.card)
-                    .stroke(DietColor.dividerColor, lineWidth: 1)
-            )
+        GroupBox {
+            content
+        }
     }
 }
 
-/// Card with a title row: caption header + divider + body.
+/// Card with a title row: native GroupBox with label.
 public struct DietSectionCard<Content: View>: View {
     private let title: String
     private let systemImage: String?
@@ -110,28 +98,14 @@ public struct DietSectionCard<Content: View>: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: DietSpace.xs) {
-                if let systemImage {
-                    Image(systemName: systemImage)
-                        .font(.system(size: DietSize.iconSM))
-                        .foregroundStyle(DietColor.textSecondaryColor)
-                }
-                Text(title.uppercased())
-                    .font(DietType.caption1)
-                    .foregroundStyle(DietColor.textSecondaryColor)
+        GroupBox {
+            content
+        } label: {
+            if let systemImage {
+                Label(title, systemImage: systemImage)
+            } else {
+                Text(title)
             }
-            .padding(.horizontal, DietSpace.md)
-            .padding(.top, DietSpace.sm + DietSpace.xs)
-            .padding(.bottom, DietSpace.sm)
-            DietDividerH()
-            content.padding(DietSpace.md)
         }
-        .background(DietColor.cardColor)
-        .clipShape(RoundedRectangle(cornerRadius: DietRadius.card))
-        .overlay(
-            RoundedRectangle(cornerRadius: DietRadius.card)
-                .stroke(DietColor.dividerColor, lineWidth: 1)
-        )
     }
 }
