@@ -1037,7 +1037,7 @@ public struct SharedFilesView: View {
             .pickerStyle(.segmented)
             .frame(maxWidth: 210)
             .help("Sort shared files")
-            ScrollView(.horizontal, showsIndicators: false) {
+            ScrollView(.horizontal) {
                 HStack(spacing: DietSpace.sm) {
                     ForEach(SharedFilesTypeFilter.allCases, id: \.self) { kind in
                         Button(kind.label) { store.filter = kind }
@@ -1048,6 +1048,7 @@ public struct SharedFilesView: View {
                     }
                 }
             }
+            .scrollIndicators(.hidden)
             Spacer()
         }
         .padding(.horizontal)
