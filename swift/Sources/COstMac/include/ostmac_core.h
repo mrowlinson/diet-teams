@@ -15,17 +15,8 @@
 // Caller frees. No network.
 char *ostmac_profile_set(const char *profile);
 
-// Device-code start JSON: session, verification_uri, user_code, message.
-// Caller frees. Hits network.
-char *ostmac_device_start(void);
-
-// Device-code start for one account profile (polled tokens land there).
-// Caller frees. Hits network.
-char *ostmac_device_start_for(const char *profile);
-
-// Single poll for session (NUL-terminated C string).
-// pending | complete (+tokens saved) | {ok:false}. Caller frees.
-char *ostmac_device_poll(const char *session);
+// NOTE (R14 om-later-b18 B18): device_start/device_start_for/
+// device_poll moved to Swift (DeviceAuth); decls deleted.
 
 // Browser-capture fallback start (auth-code + PKCE, no network):
 // {ok, session, authorize_url, redirect_uri, expires_in}.

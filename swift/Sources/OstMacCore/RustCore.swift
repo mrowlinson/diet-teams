@@ -39,9 +39,13 @@ public enum RustCore {
     }
 
     /// Device-code start for one account profile (polled tokens land there).
+    /// Swift-native (R14 om-later-b18 B18; was `ostmac_device_start_for`).
     public static func deviceStart(profile: String) throws -> DeviceStart {
-        try profile.withCString { ptr in
-            try call(ostmac_device_start_for(ptr), as: DeviceStart.self)
+        try SyncBridge.run {
+            try await DeviceAuth.deviceStart(
+                profile: profile, store: DeviceAuth.productionStore(),
+                fetcher: URLSessionTokenFetcher()
+            )
         }
     }
 
@@ -70,21 +74,32 @@ public enum RustCore {
     public static func signOut(profile: String) throws -> SignOutResponse {
         // Swift whoami slot follows the Rust clear (success or fail: the
         // FFI always ran the core clear first).
-        defer { CoreReads.whoamiCacheClear(profile: profile) }
+        defer {
+            CoreReads.whoamiCacheClear(profile: profile)
+            // B18: pending device sessions lived in Rust (`retain` in
+            // `sign_out_json_for`); they live in Swift now. B19 must
+            // preserve this line when sign-out itself moves.
+            DeviceAuth.Sessions.drop(profile: profile)
+        }
         return try profile.withCString { ptr in
             try call(ostmac_sign_out_for(ptr), as: SignOutResponse.self)
         }
     }
 
+    /// Swift-native (R14 om-later-b18 B18; was `ostmac_device_start`).
     public static func deviceStart() throws -> DeviceStart {
-        try call(ostmac_device_start(), as: DeviceStart.self)
+        try deviceStart(profile: CoreLocal.activeProfileID())
     }
 
+    /// Swift-native (R14 om-later-b18 B18; was `ostmac_device_poll`).
     public static func devicePoll(session: String) throws -> DevicePoll {
         // Tokens may land (profile untracked here): drop all Swift slots.
         defer { CoreReads.whoamiCacheClearAll() }
-        return try session.withCString { ptr in
-            try call(ostmac_device_poll(ptr), as: DevicePoll.self)
+        return try SyncBridge.run {
+            try await DeviceAuth.devicePoll(
+                session: session, store: DeviceAuth.productionStore(),
+                fetcher: URLSessionTokenFetcher()
+            )
         }
     }
 
@@ -93,7 +108,10 @@ public enum RustCore {
     }
 
     public static func signOut() throws -> SignOutResponse {
-        defer { CoreReads.whoamiCacheClear(profile: CoreLocal.activeProfileID()) }
+        defer {
+            CoreReads.whoamiCacheClear(profile: CoreLocal.activeProfileID())
+            DeviceAuth.Sessions.drop(profile: CoreLocal.activeProfileID())
+        }
         return try call(ostmac_sign_out(), as: SignOutResponse.self)
     }
 
