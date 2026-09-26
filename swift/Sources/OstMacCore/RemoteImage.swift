@@ -36,16 +36,19 @@ public final class RemoteImageModel: ObservableObject {
     public private(set) var messageID: String
     private let cache: RichMediaCache
     private let fetcher: RichMediaCache.Fetcher
+    private let decodedCache: DecodedImageCache
 
     public init(
         url: String, messageID: String,
         cache: RichMediaCache = .shared,
-        fetcher: RichMediaCache.Fetcher? = nil
+        fetcher: RichMediaCache.Fetcher? = nil,
+        decodedCache: DecodedImageCache = .shared
     ) {
         self.url = url
         self.messageID = messageID
         self.cache = cache
         self.fetcher = fetcher ?? RichMediaCache.defaultFetch
+        self.decodedCache = decodedCache
     }
 
     /// Load once; no-op while loaded or already loading the same key.
@@ -60,26 +63,21 @@ public final class RemoteImageModel: ObservableObject {
         gif = nil
         do {
             let data = try await cache.data(url: url, messageID: messageID, fetcher: fetcher)
-            if GifProbe.isAnimated(data) {
-                let clip = await Task.detached(priority: .userInitiated) {
-                    GifClip.decode(data: data, maxPixels: ImageDecode.bubbleMaxPixels)
-                }.value
-                guard let clip, let first = clip.frames.first else {
-                    phase = .failed("not an image")
-                    return
-                }
-                image = first
-                gif = clip
-                phase = .loaded
-                return
-            }
-            guard let img = await ImageDecode.decodeOffMain(
+            // Memoized one-source decode (scroll churn + duplicates
+            // reuse the stored image instead of re-decoding per appear).
+            guard let result = await decodedCache.decoded(
                 data: data, maxPixels: ImageDecode.bubbleMaxPixels)
             else {
                 phase = .failed("not an image")
                 return
             }
-            image = img
+            switch result {
+            case let .still(img):
+                image = img
+            case let .animated(clip):
+                image = clip.frames.first
+                gif = clip
+            }
             phase = .loaded
         } catch {
             phase = .failed(String(describing: error))

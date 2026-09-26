@@ -342,8 +342,12 @@ extension CameraCapture: AVCaptureVideoDataOutputSampleBufferDelegate {
         var packed = packPool.checkout(need: w * h * 4)
         packed.withUnsafeMutableBytes { (dst: UnsafeMutableRawBufferPointer) in
             let d = dst.baseAddress!
-            for row in 0 ..< h {
-                memcpy(d + row * w * 4, base + row * stride, w * 4)
+            if stride == w * 4 {
+                memcpy(d, base, w * h * 4) // tight rows: one copy
+            } else {
+                for row in 0 ..< h {
+                    memcpy(d + row * w * 4, base + row * stride, w * 4)
+                }
             }
         }
         // The core push + VT encode run off the callback (serial worker
