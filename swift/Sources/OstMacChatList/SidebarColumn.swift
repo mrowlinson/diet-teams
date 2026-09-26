@@ -4,10 +4,10 @@ import OstMacCore
 import SwiftUI
 
 /// Sidebar column hosting the chats list, the teams/channels browser,
-/// the contacts browser, the reminders browser, the planner boards
-/// browser, the recordings browser, the transcripts browser, and the
-/// shifts week grid behind the Teams-like `AppNavRail` (fixed 72pt,
-/// native buttons).
+/// the unified files browser, the contacts browser, the reminders
+/// browser, the planner boards browser, the recordings browser, the
+/// transcripts browser, and the shifts week grid behind the Teams-like
+/// `AppNavRail` (fixed 72pt, native buttons).
 /// Channel taps open as conversations via
 /// `onOpenChannel` (channel id + "Team > #channel" display name).
 ///
@@ -23,6 +23,7 @@ import SwiftUI
 public struct SidebarColumn: View {
     @ObservedObject private var chats: ChatListViewModel
     @ObservedObject private var teams: TeamsViewModel
+    @ObservedObject private var files: UnifiedFilesStore
     @ObservedObject private var reminders: RemindersViewModel
     @ObservedObject private var planner: PlannerViewModel
     @ObservedObject private var recordings: RecordingsViewModel
@@ -59,6 +60,7 @@ public struct SidebarColumn: View {
 
     public init(
         chats: ChatListViewModel, teams: TeamsViewModel,
+        files: UnifiedFilesStore = UnifiedFilesStore(),
         reminders: RemindersViewModel, planner: PlannerViewModel,
         recordings: RecordingsViewModel,
         transcripts: TranscriptsViewModel, shifts: ShiftsStore,
@@ -84,6 +86,7 @@ public struct SidebarColumn: View {
     ) {
         self.chats = chats
         self.teams = teams
+        self.files = files
         self.reminders = reminders
         self.planner = planner
         self.recordings = recordings
@@ -126,6 +129,9 @@ public struct SidebarColumn: View {
                     teamCreateOpen: teamCreateOpen,
                     onOpen: onOpenChannel)
                     .transition(.opacity)
+            case .files:
+                UnifiedFilesView(store: files)
+                    .transition(.opacity)
             case .contacts:
                 ContactsBrowser(model: contacts, presence: presence) { person in
                     onPickContact?(person)
@@ -158,6 +164,7 @@ public struct SidebarColumn: View {
 public enum SidebarSection: String, CaseIterable {
     case chats = "Chats"
     case teams = "Teams"
+    case files = "Files"
     case contacts = "Contacts"
     case reminders = "Reminders"
     case planner = "Planner"
@@ -180,6 +187,8 @@ public extension SidebarSection {
     /// --show-reminders wins over --show-teams; the create-sheet
     /// hooks land on teams (the sheets hang there).
     static func initialSection(args: [String]) -> SidebarSection {
+        if args.contains("--show-files-preview") { return .files }
+        if args.contains("--show-files") { return .files }
         if args.contains("--show-shifts") { return .shifts }
         if args.contains("--show-contacts") { return .contacts }
         if args.contains("--show-recordings") { return .recordings }

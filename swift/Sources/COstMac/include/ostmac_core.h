@@ -145,6 +145,11 @@ char *ostmac_files_opts(const char *chat_id, int limit, int include_folders);
 // Caller frees.
 char *ostmac_files_children(const char *drive_id, const char *item_id, int limit);
 
+// Recently accessed files across OneDrive + SharePoint (top10-files,
+// requires sign-in). limit<=0 means 25. Returns {ok, files:[...]}
+// (Shared-tab row shape, files only). Caller frees.
+char *ostmac_files_recents(int limit);
+
 // Upload a local file to a chat/channel + post reference message
 // (<=4 MB one PUT, larger via a resumable upload session).
 // Returns {ok, file}. Caller frees.

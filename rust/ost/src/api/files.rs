@@ -429,6 +429,39 @@ pub async fn list_folder_children_data(
         .collect())
 }
 
+// -- Drive recents (top10-files: OneDrive/SharePoint recent files) --
+
+/// Graph path for the signed-in user's recently accessed driveItems.
+/// Files-only callers filter folders out (same stable list shape as
+/// [`list_chat_files_data`]); shared items arrive as remoteItem facets
+/// but parse as plain driveItems (id/name/size present).
+pub fn drive_recents_path(limit: usize) -> String {
+    format!("/me/drive/recent?$top={}", limit.max(1))
+}
+
+/// List recently accessed files across OneDrive + SharePoint (the
+/// unified Files surface's third leg: catches drive uploads that no
+/// conversation list shows yet, e.g. Q&A exports). Files only;
+/// folders are skipped. Server orders by recency; callers re-sort
+/// after merging with the chat/channel legs.
+pub async fn list_drive_recents_data(
+    client: &TeamsClient,
+    limit: usize,
+) -> Result<Vec<SharedFile>> {
+    let path = drive_recents_path(limit);
+    let resp = client.graph_get(&path).await?;
+    let recent: DriveChildrenResponse = resp
+        .json()
+        .await
+        .context("Failed to parse drive recent response")?;
+    Ok(recent
+        .value
+        .into_iter()
+        .filter(|it| keep_item(it, false))
+        .map(|it| shared_from_item(it, None))
+        .collect())
+}
+
 async fn find_team_for_channel(client: &TeamsClient, channel_id: &str) -> Result<String> {
     let teams = crate::api::list_teams_data(client).await?;
     for team in &teams {
@@ -1099,6 +1132,38 @@ mod tests {
             folder_children_path("D1", "abc", 0),
             "/drives/D1/items/abc/children?$top=1"
         );
+    }
+
+    #[test]
+    fn drive_recents_path_shape() {
+        assert_eq!(drive_recents_path(20), "/me/drive/recent?$top=20");
+        assert_eq!(drive_recents_path(0), "/me/drive/recent?$top=1");
+    }
+
+    #[test]
+    fn drive_recents_parse_skips_folders() {
+        // Recent endpoint shape: same driveItem collection; folders
+        // (recently touched dirs) drop so the list stays files-only.
+        let body: DriveChildrenResponse = serde_json::from_str(
+            r#"{"value":[
+                {"id":"r1","name":"qna-export.csv","size":99,
+                 "file":{"mimeType":"text/csv"},
+                 "lastModifiedDateTime":"2026-09-25T10:00:00Z",
+                 "parentReference":{"driveId":"D9"}},
+                {"id":"dir9","name":"touched-dir","folder":{}}
+            ]}"#,
+        )
+        .unwrap();
+        let files: Vec<SharedFile> = body
+            .value
+            .into_iter()
+            .filter(|it| keep_item(it, false))
+            .map(|it| shared_from_item(it, None))
+            .collect();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].id, "r1");
+        assert_eq!(files[0].drive_id.as_deref(), Some("D9"));
+        assert!(!files[0].is_folder);
     }
 
     #[test]

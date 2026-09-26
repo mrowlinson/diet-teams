@@ -403,6 +403,13 @@ public enum RustCore {
         }
     }
 
+    /// Recently accessed files across OneDrive + SharePoint, one $top
+    /// window (top10-files: unified Files surface's drive leg). Blocking
+    /// FFI (network): call off the main thread.
+    public static func driveRecents(limit: Int32 = 25) throws -> DriveRecentsResponse {
+        try call(ostmac_files_recents(limit), as: DriveRecentsResponse.self)
+    }
+
     public static func sharedUpload(chatID: String, path: String) throws -> SharedFileUploadResponse {
         try chatID.withCString { idPtr in
             try path.withCString { pathPtr in

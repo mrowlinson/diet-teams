@@ -409,6 +409,62 @@ public enum DemoData {
         drive_id: "demo-drive-2",
         created: "2026-09-22T09:10:44Z", sender: "Tom Becker")
 
+    /// Canned unified Files surface for `--show-files` (top10-files
+    /// lane): two conversation legs (chat + channel) plus drive recents.
+    public static let unifiedDemoSpecs: [UnifiedSourceSpec] = [
+        UnifiedSourceSpec(kind: .chat, id: demoID, name: "Demo — Design Sync"),
+        UnifiedSourceSpec(
+            kind: .channel, id: "demo-chan-general",
+            name: "Engineering > #General"),
+    ]
+
+    /// Canned merged rows: a chat pdf, a channel sheet, a second chat
+    /// image, and a drive-only Q&A export (no conversation list shows
+    /// it — the recents leg's reason to exist). Modified dates pin the
+    /// recents order (drive csv newest, chat pdf oldest).
+    public static func unifiedDemoRows() -> [UnifiedFileRow] {
+        [
+            UnifiedFileRow(
+                file: SharedFile(
+                    id: "demo-u-chat1", name: "onboarding-mocks.pdf", size: 48211,
+                    mime: "application/pdf",
+                    web_url: "https://example.sharepoint.com/onboarding-mocks.pdf",
+                    download_url: "https://example.sharepoint.com/download/onboarding-mocks.pdf",
+                    drive_id: "demo-drive-1",
+                    created: "2026-09-21T10:02:11Z",
+                    modified: "2026-09-21T10:02:11Z", sender: "Tom Becker"),
+                source: .chat, sourceName: "Demo — Design Sync"),
+            UnifiedFileRow(
+                file: SharedFile(
+                    id: "demo-u-chat2", name: "empty-states.png", size: 184320,
+                    mime: "image/png",
+                    web_url: "https://example.sharepoint.com/empty-states.png",
+                    download_url: "https://example.sharepoint.com/download/empty-states.png",
+                    drive_id: "demo-drive-1",
+                    created: "2026-09-22T08:41:02Z",
+                    modified: "2026-09-22T08:41:02Z", sender: "Ava Lindqvist"),
+                source: .chat, sourceName: "Demo — Design Sync"),
+            UnifiedFileRow(
+                file: SharedFile(
+                    id: "demo-u-chan1", name: "launch-checklist.xlsx", size: 9216,
+                    mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    web_url: "https://example.sharepoint.com/launch-checklist.xlsx",
+                    drive_id: "demo-drive-3",
+                    created: "2026-09-20T16:20:11Z",
+                    modified: "2026-09-24T14:11:00Z"),
+                source: .channel, sourceName: "Engineering > #General"),
+            UnifiedFileRow(
+                file: SharedFile(
+                    id: "demo-u-drive1", name: "qna-export-sept.csv", size: 12288,
+                    mime: "text/csv",
+                    web_url: "https://example.sharepoint.com/qna-export-sept.csv",
+                    drive_id: "demo-drive-9",
+                    created: "2026-09-25T09:58:00Z",
+                    modified: "2026-09-25T09:58:00Z"),
+                source: .drive, sourceName: "OneDrive"),
+        ]
+    }
+
     /// Canned people-search index for `--demo` (om-jb-filesearch lane):
     /// literal roster rows (roles empty, like directory hits). Substring
     /// match on display name + email; blank returns every row.

@@ -1264,6 +1264,32 @@ pub fn files_children_json(drive_id: &str, item_id: &str, limit: usize) -> Strin
     }
 }
 
+/// Recently accessed files across OneDrive + SharePoint (top10-files).
+/// One `$top` window (limit clamped 1..=25); rows reuse the Shared tab
+/// projection (folders already filtered, sender None). No args to
+/// validate; unsigned yields `{ok:false}`.
+/// Returns `{ok:true, files:[...]}`.
+pub fn files_recents_json(limit: usize) -> String {
+    let limit = ost::api::clamp_limit(limit);
+    let run = || -> Result<String, String> {
+        let rt = rt()?;
+        rt.block_on(async {
+            let client = ost::api::client::TeamsClient::new()
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let files = ost::api::list_drive_recents_data(&client, limit)
+                .await
+                .map_err(|e| format!("{:#}", e))?;
+            let items: Vec<_> = files.iter().map(shared_file_to_json).collect();
+            Ok(json!({"ok": true, "files": items}).to_string())
+        })
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => err_json("files_recents", e),
+    }
+}
+
 /// Search the signed-in user's OneDrive by name/content (om-jb-filesearch).
 /// One `$top` window (limit clamped 1..=25); rows reuse the Shared tab
 /// projection. Empty queries are rejected before any network.
@@ -2817,6 +2843,14 @@ pub extern "C" fn ostmac_files_children(
         Err(e) => return string_to_c(err_json("arg", e)),
     };
     string_to_c(files_children_json(&drive, &item, lim))
+}
+
+/// Drive recents, one `$top` window. See [`files_recents_json`].
+/// Non-positive `limit` means 25.
+#[no_mangle]
+pub extern "C" fn ostmac_files_recents(limit: c_int) -> *mut c_char {
+    let lim = if limit <= 0 { 25 } else { limit as usize };
+    string_to_c(files_recents_json(lim))
 }
 
 /// OneDrive file search, one `$top` window. See [`file_search_json`].

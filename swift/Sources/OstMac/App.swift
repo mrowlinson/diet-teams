@@ -21,6 +21,10 @@
 // rich feature in one conversation + two seeded pins — shot hook).
 // --show-code is --demo-rich plus two seeded fenced-code bubbles at the
 // tail (received python + sent swift — top10-code shot hook).
+// --show-files lands on the unified Files surface with canned chat +
+// channel + drive rows (top10-files shot hook, offline).
+// --show-files-preview is --show-files plus a QuickLook panel over the
+// first row's demo copy (top10-files shot hook, offline).
 // --chat preselects (or opens directly when absent from the list).
 // --say auto-sends once into the open chat. In live mode that is a REAL
 // send via core — never use it on shared chats for testing.
@@ -429,6 +433,10 @@ final class AppState: ObservableObject {
     let planner: PlannerViewModel
     let recordings: RecordingsViewModel
     let transcripts: TranscriptsViewModel
+    /// Unified Files surface (top10-files): chats + channels + drive
+    /// recents in one list. Demo seeds canned rows; live loads from
+    /// the chats/teams lists in openContentIfAllowed.
+    let unifiedFiles: UnifiedFilesStore
     let meetings: MeetingsViewModel
     /// Calendar week grid backing the Meetings window (B1 merge).
     let calWeek: CalendarWeekStore
@@ -741,6 +749,7 @@ final class AppState: ObservableObject {
             || args.contains("--demo-showcase")
             || args.contains("--show-folders") || args.contains("--show-folders-manage")
             || args.contains("--show-saved") || args.contains("--show-code")
+            || args.contains("--show-files") || args.contains("--show-files-preview")
         showNotes = args.contains("--show-notes")
         showJump = args.contains("--show-jump") // shot hook: palette open at launch
         showQuickComposerShot = args.contains("--show-quickcompose") // shot hook: composer open at launch
@@ -1008,6 +1017,9 @@ final class AppState: ObservableObject {
                         runner: OnDeviceMockRunner(stub: Self.actionItemsTranscriptStub),
                         availability: { .available })
                     : nil)
+            // Unified files seed offline in openContentIfAllowed
+            // (showDemo: no fetchers run in demo).
+            unifiedFiles = UnifiedFilesStore()
             // Parse stays real (pure core, no network); the join runner
             // echoes an accepted signaling leg so the lobby flow runs.
             meetings = MeetingsViewModel(
@@ -1037,6 +1049,7 @@ final class AppState: ObservableObject {
             transcripts = TranscriptsViewModel(recordingLookup: { [weak liveRecordings] stem in
                 liveRecordings?.items.first { TranscriptItem.stem(of: $0.name) == stem }
             })
+            unifiedFiles = UnifiedFilesStore()
             meetings = MeetingsViewModel()
             calWeek = CalendarWeekStore()
             shifts = ShiftsStore()
@@ -1397,6 +1410,7 @@ final class AppState: ObservableObject {
             planner.refresh()
             recordings.refresh()
             transcripts.refresh()
+            unifiedFiles.refresh()
             meetings.refresh()
             calWeek.refresh()
             if shifts.selectedTeamID == nil {
@@ -1480,6 +1494,23 @@ final class AppState: ObservableObject {
             transcripts.autoExtractActionItems =
                 CommandLine.arguments.contains("--show-transcripts-actions")
             transcripts.selectAndShowFirst()
+        }
+        // top10-files: unified Files surface. Demo seeds canned rows
+        // offline; live fans out over recent chats + channels + drive
+        // recents (specs capped in UnifiedFilesStore.specsFor).
+        if isDemo {
+            unifiedFiles.showDemo(
+                specs: DemoData.unifiedDemoSpecs, rows: DemoData.unifiedDemoRows())
+            if CommandLine.arguments.contains("--show-files-preview"),
+               let first = unifiedFiles.displayedRows.first
+            {
+                unifiedFiles.preview(first) // demo save fabricates, then QL
+            }
+        } else {
+            let fileSpecs = UnifiedFilesStore.specsFor(chats: chats.chats, teams: teams.teams)
+            unifiedFiles.load(
+                chats: fileSpecs.filter { $0.kind == .chat }.map { ($0.id, $0.name) },
+                channels: fileSpecs.filter { $0.kind == .channel }.map { ($0.id, $0.name) })
         }
         // top10-menubar: the meeting list loads on first Meetings-window
         // open (that scene already refresh()es on appear) — never on the
@@ -3037,6 +3068,7 @@ final class AppState: ObservableObject {
                 planner.refresh()
                 recordings.refresh()
                 transcripts.refresh()
+                unifiedFiles.refresh()
                 meetings.refresh()
                 calWeek.refresh()
                 if shifts.selectedTeamID == nil {
@@ -3491,6 +3523,7 @@ struct RootView: View {
         NavigationSplitView {
             SidebarColumn(
                 chats: state.chats, teams: state.teams,
+                files: state.unifiedFiles,
                 reminders: state.reminders, planner: state.planner,
                 recordings: state.recordings,
                 transcripts: state.transcripts, shifts: state.shifts,

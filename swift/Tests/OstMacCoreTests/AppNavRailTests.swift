@@ -8,11 +8,12 @@ import OstMacChatList
 /// Rail layout math + section catalog. Failing-first for the section-bar
 /// → rail replacement (R8 app-nav lane).
 final class AppNavRailTests: XCTestCase {
-    /// All 8 sections ship in the rail, in stable order.
+    /// All 9 sections ship in the rail, in stable order (Files after
+    /// Teams, mirroring the Teams app).
     func testRailHostsAllEightSections() {
         XCTAssertEqual(
             SidebarSection.allCases.map(\.rawValue),
-            ["Chats", "Teams", "Contacts", "Reminders", "Planner",
+            ["Chats", "Teams", "Files", "Contacts", "Reminders", "Planner",
              "Recordings", "Transcripts", "Shifts"])
     }
 

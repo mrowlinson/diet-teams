@@ -1146,6 +1146,23 @@ public struct SharedFileLinkResponse: Decodable, Sendable {
     }
 }
 
+// MARK: - Drive recents (top10-files lane)
+
+/// One drive-recents window from core `ostmac_files_recents`:
+/// `{"ok","files":[...]}`. Rows reuse ``SharedFile`` (the Shared tab
+/// shape), files only, sender None — the unified Files surface's
+/// OneDrive/SharePoint leg.
+public struct DriveRecentsResponse: Decodable, Sendable {
+    public let ok: Bool
+    public let files: [SharedFile]
+
+    /// Host-side construction (demo data, mock fetchers).
+    public init(ok: Bool, files: [SharedFile]) {
+        self.ok = ok
+        self.files = files
+    }
+}
+
 // MARK: - File + people search (om-jb-filesearch lane)
 
 /// One OneDrive search window from core `ostmac_file_search`:

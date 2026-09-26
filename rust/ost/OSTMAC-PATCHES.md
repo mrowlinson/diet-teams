@@ -745,6 +745,17 @@ needing maintainer buy-in. Minor PRs stand alone; majors are separate PRs.
     change elsewhere.
     Upstream: UNFILED (bugfix; file separately from majors).
 
+59. [minor] `src/api/files.rs` + re-exports in `src/api/mod.rs` —
+    **drive recents (top10-files lane)**. New `drive_recents_path`
+    (`/me/drive/recent?$top=N`, clamped ≥1) + async
+    `list_drive_recents_data` (same driveItem-collection parse as
+    the children path, folders filtered for the stable files-only
+    list shape, sender None). Feeds the unified Files surface's
+    OneDrive/SharePoint leg: catches drive uploads no conversation
+    list shows yet (e.g. Q&A exports). 2 tests (path shape +
+    folders-skipped parse).
+    Upstream: UNFILED (small feature; file with minors).
+
 ## Upstream PRs (2026-09-22, base 0892144; main red on sdp E0308 until #5)
 
 Minor (standalone modulo #5-first; merge in any order after):
