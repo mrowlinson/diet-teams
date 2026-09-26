@@ -96,6 +96,9 @@ struct DiagnosticsView: View {
                         }
                     }
                 }
+                Section("Message jump") {
+                    JumpDiagRow(store: state.conv)
+                }
                 Section("Read receipts") {
                     ReceiptsDiagRow(store: state.receipts)
                 }
@@ -158,6 +161,30 @@ struct ReceiptsDiagRow: View {
                 Text(err)
                     .font(DietType.caption1)
                     .foregroundStyle(Color(nsColor: DietColor.danger))
+                    .textSelection(.enabled)
+            }
+        }
+    }
+}
+
+/// Jump-verdict row (gap-g9): observes the conversation directly so
+/// the seek counters tick without an AppState forward. The ONLY
+/// surface for the id-mismatch rate.
+struct JumpDiagRow: View {
+    @ObservedObject var store: ConversationStore
+
+    var body: some View {
+        LabeledContent(
+            "Jumps",
+            value: DiagnosticsFormat.seekLine(
+                attempted: store.seekAttempts,
+                landed: store.seekLanded,
+                missed: store.seekMissed))
+            .textSelection(.enabled)
+        if let miss = store.lastMissedID {
+            LabeledContent("Last miss") {
+                Text(miss)
+                    .font(DietType.caption1)
                     .textSelection(.enabled)
             }
         }

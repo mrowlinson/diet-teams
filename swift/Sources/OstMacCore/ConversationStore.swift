@@ -34,6 +34,21 @@ public final class ConversationStore: ObservableObject {
     /// `open(seekMessageID:)` / `seek(messageID:)` once the id is
     /// loaded; cleared by open/close/chat-switch.
     @Published public private(set) var jumpTargetID: String?
+    /// Armed jump miss (gap-g9): the id a seek could not find after
+    /// exhausting its page budget (or with no cursor left). The
+    /// timeline banners "message no longer available" until dismissed
+    /// via `clearJumpMissed`; cleared by open/close/seek/chat-switch.
+    @Published public private(set) var jumpMissedID: String?
+    /// Last missed seek id this session (Diagnostics; survives the
+    /// banner dismiss, cleared on account switch only).
+    @Published public private(set) var lastMissedID: String?
+    /// Session seek counters (Diagnostics jump-rate source). Every
+    /// valid-id seek that runs to a verdict counts one attempt; page
+    /// errors count as attempts with neither landed nor missed (a
+    /// network failure is not an id mismatch).
+    @Published public private(set) var seekAttempts = 0
+    @Published public private(set) var seekLanded = 0
+    @Published public private(set) var seekMissed = 0
     public private(set) var chatID: String?
     public private(set) var chatName: String?
     /// Header title: the resolved chat name, else the generic label —
@@ -184,6 +199,7 @@ public final class ConversationStore: ObservableObject {
         error = nil
         replyTarget = nil
         jumpTargetID = nil
+        jumpMissedID = nil
         openGeneration += 1
         let gen = openGeneration
         let seek: String? = {
@@ -233,11 +249,13 @@ public final class ConversationStore: ObservableObject {
                         break
                     }
                 }
-                // Seek-to-message (om-ja-search): page back past the
-                // window until the target bubble loads (bounded).
-                // Unfound targets simply leave the window in place
-                // (plain open, no jump).
+                // Seek-to-message (om-ja-search; gap-g9 verdict): page
+                // back past the window until the target bubble loads
+                // (bounded). Unfound targets arm the miss notice (never
+                // a silent plain open); page errors surface `error`
+                // with no miss (network failure ≠ id mismatch).
                 var seekFound = false
+                var seekPageError = false
                 if let seek, gen == self.openGeneration {
                     var extra = 0
                     while gen == self.openGeneration,
@@ -259,6 +277,7 @@ public final class ConversationStore: ObservableObject {
                         } catch {
                             guard gen == self.openGeneration else { return }
                             self.error = String(describing: error)
+                            seekPageError = true
                             break
                         }
                     }
@@ -269,8 +288,16 @@ public final class ConversationStore: ObservableObject {
                 // Arm after the loading flip: the loading-change tail
                 // land runs first, then the jump owns the viewport (its
                 // onChange cancels the settle + scrolls to the bubble).
-                if let seek, seekFound, gen == self.openGeneration {
-                    self.jumpTargetID = seek
+                if let seek, gen == self.openGeneration {
+                    self.seekAttempts += 1
+                    if seekFound {
+                        self.seekLanded += 1
+                        self.jumpTargetID = seek
+                    } else if !seekPageError {
+                        self.seekMissed += 1
+                        self.jumpMissedID = seek
+                        self.lastMissedID = seek
+                    }
                 }
             } catch {
                 guard gen == self.openGeneration else { return }
@@ -304,21 +331,34 @@ public final class ConversationStore: ObservableObject {
         failedIDs = []
         replyTarget = nil
         jumpTargetID = nil
+        jumpMissedID = nil
     }
 
-    /// Jump to one bubble in the OPEN chat (om-ja-search): when the id is
-    /// already loaded, arm the timeline jump immediately; otherwise page
-    /// back (bounded by `seekMaxPages`) until it loads. Blank ids, no
-    /// open chat, and unfound ids with no cursor are a silent no-op; a
-    /// mid-seek failure surfaces `error` like `loadMore`.
+    /// Jump to one bubble in the OPEN chat (om-ja-search; gap-g9
+    /// verdict): when the id is already loaded, arm the timeline jump
+    /// immediately; otherwise page back (bounded by `seekMaxPages`)
+    /// until it loads. Unfound ids arm the miss notice (never a silent
+    /// no-op); blank ids and no open chat stay a no-op with no count.
+    /// A mid-seek failure surfaces `error` like `loadMore`.
     public func seek(messageID: String, limit: Int32 = 50) {
         let id = messageID.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Every seek supersedes the armed miss (even a blank no-op).
+        jumpMissedID = nil
         guard !id.isEmpty, chatID != nil else { return }
         if messages.contains(where: { $0.id == id }) {
+            seekAttempts += 1
+            seekLanded += 1
             jumpTargetID = id
             return
         }
-        guard canLoadMore, let chat = chatID else { return }
+        guard canLoadMore, let chat = chatID else {
+            // Definitive miss: id absent with no older page left.
+            seekAttempts += 1
+            seekMissed += 1
+            jumpMissedID = id
+            lastMissedID = id
+            return
+        }
         loadingMore = true
         error = nil
         let gen = openGeneration
@@ -347,10 +387,16 @@ public final class ConversationStore: ObservableObject {
             }
             guard gen == self.openGeneration else { return } // superseded
             self.loadingMore = false
+            self.seekAttempts += 1
             if let e = lastError {
                 self.error = String(describing: e)
             } else if self.messages.contains(where: { $0.id == id }) {
+                self.seekLanded += 1
                 self.jumpTargetID = id
+            } else {
+                self.seekMissed += 1
+                self.jumpMissedID = id
+                self.lastMissedID = id
             }
         }
     }
@@ -358,6 +404,12 @@ public final class ConversationStore: ObservableObject {
     /// Consume the armed jump (the timeline calls this after scrolling).
     public func clearJumpTarget() {
         jumpTargetID = nil
+    }
+
+    /// Dismiss the armed miss notice (the banner ✕ calls this).
+    /// Counters and `lastMissedID` keep the session record.
+    public func clearJumpMissed() {
+        jumpMissedID = nil
     }
 
     /// Shot hook: surface a canned fetch error in demo mode only.
@@ -394,6 +446,8 @@ public final class ConversationStore: ObservableObject {
         failedIDs = []
         replyTarget = nil
         jumpTargetID = nil
+        jumpMissedID = nil
+        lastMissedID = nil
         chatID = nil
         chatName = nil
         pageToken = nil
@@ -526,6 +580,7 @@ public final class ConversationStore: ObservableObject {
         failedIDs = failed
         replyTarget = nil
         jumpTargetID = nil
+        jumpMissedID = nil
         isDemo = true
         loading = false
         error = nil

@@ -85,6 +85,10 @@
 // offline, throwaway defaults — never the real ones).
 // --show-reply opens the demo replies thread with the compose-reply
 // chip armed on Tom's question (shot hook, offline).
+// --show-jump-missed seeks a bogus id after the demo thread loads
+// (gap-g9 miss-banner shot hook, offline). --show-jump-landed seeks
+// a mid-thread bubble instead, so the Diagnostics jump row shows a
+// landed verdict (gap-g9 shot hook, offline).
 // --show-sidebarchurn swaps the demo list for the churn dataset
 // (meeting + bot + system rows) and folds a beacon burst after load,
 // so the sidebar shows the stable result (shot hook, offline).
@@ -576,6 +580,10 @@ final class AppState: ObservableObject {
     @Published var forwardMessage: ChatMessage?
     /// --show-reply: demo replies thread + armed compose-reply chip.
     let showReply: Bool
+    /// --show-jump-missed: demo thread + bogus-id seek (miss banner).
+    let showJumpMissed: Bool
+    /// --show-jump-landed: demo thread + mid-thread seek (landed verdict).
+    let showJumpLanded: Bool
     /// --show-popout: pop a second chat beside the main selection
     /// (e1-popout shot hook, offline with --demo).
     let showPopout: Bool
@@ -785,6 +793,8 @@ final class AppState: ObservableObject {
         }
         showForward = args.contains("--show-forward")
         showReply = args.contains("--show-reply")
+        showJumpMissed = args.contains("--show-jump-missed")
+        showJumpLanded = args.contains("--show-jump-landed")
         showSidebarChurn = args.contains("--show-sidebarchurn")
         showHistoryError = args.contains("--show-history-error")
         showHistory = args.contains("--show-history") || showHistoryError
@@ -2144,6 +2154,13 @@ final class AppState: ObservableObject {
             // Message-hit jump (om-ja-search): demo threads load
             // synchronously, so the seek lands in-memory (no paging).
             if let seek { conv.seek(messageID: seek) }
+            // Shot hooks (gap-g9): force a jump verdict offline. Missed
+            // seeks a bogus id (banner); landed seeks a mid-thread
+            // bubble (in-memory land, Diagnostics verdict row).
+            if showJumpMissed { conv.seek(messageID: "shot-missing-bubble") }
+            if showJumpLanded, msgs.count > 3 {
+                conv.seek(messageID: msgs[msgs.count / 2].id)
+            }
             // Shot hook: arm the forward sheet on a mid-thread bubble
             // (Tom's mocks note in the default thread), once.
             if showForward, forwardMessage == nil {
