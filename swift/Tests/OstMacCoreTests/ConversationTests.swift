@@ -63,4 +63,33 @@ final class ConversationTests: XCTestCase {
         blank.showDemo(chatID: "19:abc@thread.v2", chatName: "  ", messages: [])
         XCTAssertEqual(blank.headerTitle, "Conversation")
     }
+
+    // MARK: - Index taps (gap-g6g7)
+
+    func testShowDemoFiresOnHistory() {
+        let store = ConversationStore()
+        var fired: [(String, [ChatMessage])] = []
+        store.onHistory = { fired.append(($0, $1)) }
+        let msgs = [ChatMessage(id: "m1", sender: "A", timestamp: "t", content: "hi")]
+        store.showDemo(chatID: "c1", chatName: "C", messages: msgs)
+        XCTAssertEqual(fired.count, 1)
+        XCTAssertEqual(fired[0].0, "c1")
+        XCTAssertEqual(fired[0].1.map(\.id), ["m1"])
+    }
+
+    func testDemoDeleteFiresOnDelete() {
+        let store = ConversationStore()
+        var fired: [(String, String)] = []
+        store.onDelete = { fired.append(($0, $1)) }
+        store.showDemo(
+            chatID: "c1", chatName: "C",
+            messages: [ChatMessage(id: "m1", sender: "A", timestamp: "t", content: "hi")])
+        store.deleteMessage(id: "m1")
+        XCTAssertEqual(fired.count, 1)
+        XCTAssertEqual(fired[0].0, "c1")
+        XCTAssertEqual(fired[0].1, "m1")
+        // Unknown id: no fire.
+        store.deleteMessage(id: "nope")
+        XCTAssertEqual(fired.count, 1)
+    }
 }

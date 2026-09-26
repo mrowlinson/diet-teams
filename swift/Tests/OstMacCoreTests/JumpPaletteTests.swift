@@ -174,6 +174,16 @@ final class JumpPaletteTests: XCTestCase {
         XCTAssertNil(PaletteNav.firstEnabled(total: 0) { _ in true })
     }
 
+    // MARK: - Sticky scope (gap-g6g7)
+
+    func testScopeRawValuesMatchRecentsStore() {
+        // The persisted chip strings round-trip through the view scope.
+        XCTAssertEqual(JumpPaletteScope(rawValue: "chats"), .chats)
+        XCTAssertEqual(JumpPaletteScope(rawValue: "messages"), .messages)
+        XCTAssertNil(JumpPaletteScope(rawValue: "bogus"))
+        XCTAssertEqual(JumpPaletteScope.messages.rawValue, "messages")
+    }
+
     private func sampleTargets() -> [JumpTarget] {
         JumpTargets.build(chats: DemoData.chats, teams: DemoData.teams)
     }

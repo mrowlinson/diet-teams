@@ -72,6 +72,26 @@ struct DiagnosticsView: View {
                         }
                     }
                 }
+                Section("Offline search") {
+                    LabeledContent(
+                        "Index",
+                        value: "\(state.searchIndexDocs) docs" + (state.messageSearch.offlineMs.map {
+                            String(format: " · last local %.1fms", $0)
+                        } ?? ""))
+                        .textSelection(.enabled)
+                    LabeledContent(
+                        "Last source",
+                        value: state.messageSearch.source.rawValue)
+                        .textSelection(.enabled)
+                    if let err = state.searchIndexError {
+                        LabeledContent("Last error") {
+                            Text(err)
+                                .font(DietType.caption1)
+                                .foregroundStyle(Color(nsColor: DietColor.danger))
+                                .textSelection(.enabled)
+                        }
+                    }
+                }
                 Section("Read receipts") {
                     ReceiptsDiagRow(store: state.receipts)
                 }

@@ -213,4 +213,73 @@ final class LocalSearchTests: XCTestCase {
         XCTAssertEqual(store.total, 1)
         XCTAssertFalse(store.hits.isEmpty)
     }
+
+    // MARK: - Wiring (gap-g6g7)
+
+    func testQueryIsTimed() async {
+        let store = LocalSearchStore()
+        XCTAssertNil(store.lastQueryMs)
+        store.index(chatID: "c1", messages: Self.seedMessages())
+        await store.search(query: "ship")
+        XCTAssertNotNil(store.lastQueryMs)
+        XCTAssertLessThan(store.lastQueryMs ?? 999, 200)
+    }
+
+    func testRemoveDropsDocAndPrunesPostings() async {
+        let store = LocalSearchStore()
+        store.index(chatID: "c1", messages: Self.seedMessages())
+        XCTAssertEqual(store.docCount, 5)
+        store.remove(chatID: "c1", messageID: "1003")
+        XCTAssertEqual(store.docCount, 4)
+        await store.search(query: "signatures") // only lived in 1003
+        XCTAssertTrue(store.hits.isEmpty)
+        // Unknown keys are a no-op.
+        store.remove(chatID: "c1", messageID: "nope")
+        XCTAssertEqual(store.docCount, 4)
+    }
+
+    func testRemoveAllDropsIndexAndQuery() async {
+        let store = LocalSearchStore()
+        store.index(chatID: "c1", messages: Self.seedMessages())
+        await store.search(query: "ship")
+        XCTAssertFalse(store.hits.isEmpty)
+        store.removeAll()
+        XCTAssertEqual(store.docCount, 0)
+        XCTAssertTrue(store.hits.isEmpty)
+        XCTAssertEqual(store.lastQuery, "")
+        await store.search(query: "ship")
+        XCTAssertTrue(store.hits.isEmpty)
+    }
+
+    func testWeekScaleQueryUnder200ms() async {
+        // G6 accept shape: a week's worth of threads indexed, one
+        // query finds the old message within the 200ms budget.
+        let store = LocalSearchStore()
+        var msgs: [ChatMessage] = []
+        for i in 0 ..< 2000 {
+            msgs.append(Self.msg(
+                "w\(i)", "Mate \(i % 40)",
+                "2026-09-\(10 + (i % 12))T09:12:00Z",
+                "weekly sync notes number \(i) about the deploy plan"))
+        }
+        msgs.append(Self.msg(
+            "w-target", "Megan Harper", "2026-09-14T09:12:00Z",
+            "last week we agreed the zebra migration ships monday"))
+        store.index(chatID: "c-week", messages: msgs)
+        XCTAssertEqual(store.docCount, 2001)
+        await store.search(query: "zebra migration")
+        XCTAssertEqual(store.hits.map(\.messageID), ["w-target"])
+        XCTAssertLessThan(store.lastQueryMs ?? 999, 200)
+    }
+
+    func testDefaultIndexURLNames() {
+        let base = LocalSearchStore.defaultIndexURL()
+        XCTAssertEqual(base?.lastPathComponent, "search-index.omix")
+        XCTAssertTrue(base?.path.contains(AppIdentity.name) == true)
+        let acct = LocalSearchStore.defaultIndexURL(for: "acct-1")
+        XCTAssertEqual(acct?.lastPathComponent, "search-index.acct-1.omix")
+        // Unsafe ids sanitize (no separators escape the leaf).
+        let evil = LocalSearchStore.defaultIndexURL(for: "../../x")
+        XCTAssertEqual(evil?.lastPathComponent, "search-index..._.._x.omix")
+    }
 }

@@ -27,11 +27,6 @@ import SwiftUI
 /// click/tap still picks directly. The forward sheet (no store) stays
 /// chats-only.
 public struct JumpPaletteView: View {
-    private enum Scope: String {
-        case chats
-        case messages
-    }
-
     private let targets: [JumpTarget]
     private let onPick: (String, String) -> Void
     private let verb: String
@@ -41,9 +36,12 @@ public struct JumpPaletteView: View {
     private let filePeople: FilePeopleSearchStore?
     private let onPickFile: ((SharedFile) -> Void)?
     private let onPickPerson: ((TeamMember) -> Void)?
+    /// Sticky search memory (gap-g6g7): scope chip + last query restore
+    /// + persisted recents. Nil (forward sheet) = ephemeral as before.
+    private let recents: SearchRecentsStore?
     @State private var query = ""
     @State private var highlight = 0
-    @State private var scope: Scope = .chats
+    @State private var scope: JumpPaletteScope = .chats
     /// Bumped by store publishers below: the stores are held plain (not
     /// @ObservedObject), so without this the flat nav counts captured in
     /// `body` would go stale when async hits land between keystrokes.
@@ -58,10 +56,24 @@ public struct JumpPaletteView: View {
         filePeople: FilePeopleSearchStore? = nil,
         onPickFile: ((SharedFile) -> Void)? = nil,
         onPickPerson: ((TeamMember) -> Void)? = nil,
+        recents: SearchRecentsStore? = nil,
         onPick: @escaping (String, String) -> Void
     ) {
         self.targets = targets
-        _query = State(initialValue: initialQuery)
+        // Restore order: explicit initial wins (shot hooks), else the
+        // stuck last query, else blank.
+        let restored: String = {
+            if !initialQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return initialQuery
+            }
+            return recents?.lastQuery ?? ""
+        }()
+        _query = State(initialValue: restored)
+        if let raw = recents?.lastScope,
+           let scope = JumpPaletteScope(rawValue: raw)
+        {
+            _scope = State(initialValue: scope)
+        }
         self.verb = verb
         self.searchStore = searchStore
         self.chatNameFor = chatNameFor
@@ -69,6 +81,7 @@ public struct JumpPaletteView: View {
         self.filePeople = filePeople
         self.onPickFile = onPickFile
         self.onPickPerson = onPickPerson
+        self.recents = recents
         self.onPick = onPick
     }
 
@@ -158,6 +171,8 @@ public struct JumpPaletteView: View {
                             // stale hits never linger under an empty field.
                             searchStore?.clear()
                             filePeople?.clear()
+                        } else {
+                            recents?.noteQuery(trimmedQuery)
                         }
                     }
                     // Deferred: at launch the sheet appears before the
@@ -167,22 +182,31 @@ public struct JumpPaletteView: View {
             .padding(DietSpace.md)
             if searchEnabled {
                 Picker("Scope", selection: $scope) {
-                    Text("Chats").tag(Scope.chats)
-                    Text("Messages").tag(Scope.messages)
+                    Text("Chats").tag(JumpPaletteScope.chats)
+                    Text("Messages").tag(JumpPaletteScope.messages)
                 }
                 .pickerStyle(.segmented)
                 .padding(.horizontal, DietSpace.md)
                 .padding(.bottom, DietSpace.sm)
-                .onChange(of: scope) { settleHighlight() }
+                .onChange(of: scope) {
+                    settleHighlight()
+                    recents?.noteScope(scope.rawValue)
+                }
             }
             DietDividerH()
             if inMessages, let store = searchStore {
-                MessageResultsView(
-                    search: store, query: query,
-                    highlight: $highlight, chatNameFor: chatNameFor,
-                    onPickMessage: { pickMessage($0, in: store) })
-                    // Refresh the flat nav counts when hits land.
-                    .onReceive(store.objectWillChange) { storeTick += 1 }
+                if trimmedQuery.isEmpty, let memory = recents, !memory.recents.isEmpty {
+                    // Blank Messages query: one-tap recents (gap-g6g7).
+                    SearchRecentsView(recents: memory) { q in query = q }
+                        .onReceive(memory.objectWillChange) { storeTick += 1 }
+                } else {
+                    MessageResultsView(
+                        search: store, query: query,
+                        highlight: $highlight, chatNameFor: chatNameFor,
+                        onPickMessage: { pickMessage($0, in: store) })
+                        // Refresh the flat nav counts when hits land.
+                        .onReceive(store.objectWillChange) { storeTick += 1 }
+                }
             } else if matches.isEmpty {
                 DietEmptyState(
                     systemImage: "magnifyingglass",
@@ -276,6 +300,7 @@ public struct JumpPaletteView: View {
             guard !q.isEmpty else { return }
             try? await Task.sleep(nanoseconds: 350_000_000)
             guard !Task.isCancelled else { return }
+            recents?.record(q)
             await store.search(query: q)
         }
         // Debounced file+people search: any keystroke restarts the
@@ -364,6 +389,8 @@ public struct JumpPaletteView: View {
     /// messages search first when the query outruns the debounce, else
     /// pick the highlighted hit); section rows pick directly.
     private func submit() {
+        let submitted = trimmedQuery
+        if !submitted.isEmpty { recents?.record(submitted) }
         guard let row = PaletteNav.resolve(
             highlight, mainCount: mainCount,
             fileCount: fileVisibleCount, personCount: personVisibleCount)
@@ -462,6 +489,20 @@ private struct MessageResultsView: View {
                 .frame(minHeight: 160)
         } else {
             VStack(spacing: 0) {
+                // Provenance badge (gap-g6g7): online / offline+ms / mixed.
+                if let badge = sourceBadge {
+                    HStack(spacing: DietSpace.xs) {
+                        Image(systemName: badgeIcon)
+                            .font(.system(size: DietSize.iconMD))
+                            .foregroundStyle(DietColor.textTertiaryColor)
+                        Text(badge)
+                            .font(DietType.caption1)
+                            .foregroundStyle(DietColor.textTertiaryColor)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, DietSpace.md)
+                    .padding(.vertical, DietSpace.xs)
+                }
                 ScrollViewReader { proxy in
                     List(0 ..< search.hits.count, id: \.self) { i in
                         let hit = search.hits[i]
@@ -546,6 +587,28 @@ private struct MessageResultsView: View {
         }
     }
 
+    /// Badge copy for `search.source` (nil = online-only legacy look:
+    /// no badge when the store never attached a local index).
+    private var sourceBadge: String? {
+        switch search.source {
+        case .none:
+            return nil
+        case .online:
+            return search.offlineMs == nil ? nil : "Online"
+        case .offline:
+            if let ms = search.offlineMs {
+                return String(format: "Offline · %.0fms", ms)
+            }
+            return "Offline"
+        case .mixed:
+            return "Online + Offline"
+        }
+    }
+
+    private var badgeIcon: String {
+        search.source == .offline ? "internaldrive" : "magnifyingglass"
+    }
+
     private func subtitle(for hit: SearchHit) -> String {
         var parts: [String] = []
         if !hit.sender.isEmpty { parts.append(hit.sender) }
@@ -556,6 +619,50 @@ private struct MessageResultsView: View {
         }
         parts.append(hit.displayTime)
         return parts.joined(separator: " · ")
+    }
+}
+
+/// Recent searches (gap-g6g7): one-tap rows under a blank Messages
+/// query + a Clear control. Tapping fills the field (the debounced
+/// task re-runs the search and re-records the query on top).
+private struct SearchRecentsView: View {
+    @ObservedObject var recents: SearchRecentsStore
+    let onTap: (String) -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: DietSpace.xs) {
+                Text("RECENT SEARCHES")
+                    .font(DietType.caption1)
+                    .foregroundStyle(DietColor.textTertiaryColor)
+                Spacer(minLength: 0)
+                Button("Clear") { recents.clearRecents() }
+                    .buttonStyle(.link)
+                    .font(DietType.caption1)
+            }
+            .padding(.top, DietSpace.sm)
+            ForEach(recents.recents, id: \.self) { q in
+                Button { onTap(q) } label: {
+                    HStack(spacing: DietSpace.sm) {
+                        Image(systemName: "clock.arrow.circlepath")
+                            .font(.system(size: DietSize.iconMD))
+                            .foregroundStyle(DietColor.textSecondaryColor)
+                            .frame(width: DietSize.iconLG)
+                        Text(q)
+                            .font(DietType.body)
+                            .foregroundStyle(DietColor.textPrimaryColor)
+                            .lineLimit(1)
+                        Spacer(minLength: DietSpace.sm)
+                    }
+                    .padding(.vertical, DietSpace.xs)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, DietSpace.md)
+        .padding(.bottom, DietSpace.sm)
+        .frame(minHeight: 120, alignment: .top)
     }
 }
 

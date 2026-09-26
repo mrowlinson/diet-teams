@@ -51,6 +51,9 @@ public final class LocalSearchStore: ObservableObject {
     public private(set) var nextFrom: Int?
     /// Last submitted query (trimmed; retry re-runs it).
     public private(set) var lastQuery = ""
+    /// Wall ms of the last synchronous query run (gap-g6g7: the
+    /// airplane-mode <200ms accept reads this; nil before any query).
+    @Published public private(set) var lastQueryMs: Double?
 
     /// Page size matches server search so callers can swap stores.
     public nonisolated static let pageSize: Int32 = 25
@@ -103,6 +106,21 @@ public final class LocalSearchStore: ObservableObject {
             }
         }
         // Re-indexing invalidates the active window; re-run if one exists.
+        if !lastQuery.isEmpty {
+            runQuery(lastQuery)
+        }
+    }
+
+    /// Drop one doc (local delete); unknown keys are a no-op.
+    public func remove(chatID: String, messageID: String) {
+        let key = Self.docKey(chatID: chatID, messageID: messageID)
+        guard snapshot.docs.removeValue(forKey: key) != nil else { return }
+        for tok in snapshot.postings.keys {
+            snapshot.postings[tok]?.removeAll(where: { $0 == key })
+            if snapshot.postings[tok]?.isEmpty == true {
+                snapshot.postings.removeValue(forKey: tok)
+            }
+        }
         if !lastQuery.isEmpty {
             runQuery(lastQuery)
         }
@@ -164,9 +182,15 @@ public final class LocalSearchStore: ObservableObject {
     }
 
     private func runQuery(_ query: String) {
+        let t0 = CFAbsoluteTimeGetCurrent()
         rankedKeys = allMatches(for: query)
         total = rankedKeys.count
         applyWindow(from: 0)
+        let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000
+        lastQueryMs = ms
+        print(String(
+            format: "[local-search] %d hits in %.1fms (docs %d)",
+            rankedKeys.count, ms, snapshot.docs.count))
     }
 
     private func applyWindow(from: Int) {
@@ -233,6 +257,46 @@ public final class LocalSearchStore: ObservableObject {
     }
 
     // MARK: - Persistence (ArchiveCodec, single frame)
+
+    /// `<appSupport>/<AppIdentity.name>/search-index[.acct].omix`
+    /// (gap-g6g7: the relaunch-persist path; nil only when appSupport
+    /// is missing). Per-account files (default keeps the legacy name)
+    /// so one account's threads never surface in another's search.
+    public nonisolated static func defaultIndexURL(
+        for accountID: String = AccountProfile.defaultID
+    ) -> URL? {
+        guard let base = FileManager.default.urls(
+            for: .applicationSupportDirectory, in: .userDomainMask
+        ).first else { return nil }
+        let leaf = accountID == AccountProfile.defaultID
+            ? "search-index.omix"
+            : "search-index.\(AccountProfile.sanitized(accountID)).omix"
+        return base.appendingPathComponent(
+            "\(AppIdentity.name)/\(leaf)", isDirectory: false)
+    }
+
+    /// Load the default index when present; missing file = empty index
+    /// (fresh install), corrupt file = thrown for Diagnostics surfacing.
+    public func loadDefault(for accountID: String = AccountProfile.defaultID) throws {
+        guard let url = Self.defaultIndexURL(for: accountID) else { return }
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        try load(from: url)
+    }
+
+    /// Save to the default index path (creating the dir as needed).
+    public func saveDefault(for accountID: String = AccountProfile.defaultID) throws {
+        guard let url = Self.defaultIndexURL(for: accountID) else { return }
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try save(to: url)
+    }
+
+    /// Drop the whole index + query state (account switch re-points at
+    /// another account's file; the store identity is stable).
+    public func removeAll() {
+        snapshot = SearchSnapshot()
+        clear()
+    }
 
     /// Write the index snapshot to `url` (overwritten).
     public func save(to url: URL) throws {

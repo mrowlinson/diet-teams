@@ -37,6 +37,12 @@ public struct JumpTarget: Identifiable, Hashable, Sendable {
     }
 }
 
+/// Palette search scope (gap-g6g7: sticky via `SearchRecentsStore`).
+public enum JumpPaletteScope: String, Sendable {
+    case chats
+    case messages
+}
+
 /// Forward destinations (om-copyforward): the jump rows narrowed to
 /// chats and channels that can receive a forward. Channel-less team
 /// rows are dropped (nothing to post to), so the forward sheet never
