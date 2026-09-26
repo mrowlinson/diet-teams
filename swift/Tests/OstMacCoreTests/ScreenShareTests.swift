@@ -202,6 +202,53 @@ final class ScreenShareTests: XCTestCase {
         XCTAssertTrue(ScreenShareSummary.denied.contains("System Settings"))
     }
 
+    // MARK: - No-blank guarantee (top10-share; BetaNews 2026-07-12)
+
+    /// Preflight -> status wiring, environment-independent: on a box
+    /// without the grant, status() reports denied (the preflight
+    /// detects the missing permission); on a granted box, authorized.
+    func testStatusReflectsPreflight() {
+        let expected = ScreenSharePermission(
+            granted: ScreenShareAccess.granted())
+        XCTAssertEqual(ScreenShareAccess.status(), expected)
+    }
+
+    func testTileContentPreviewOnlyWhenLiveWithFrame() {
+        XCTAssertEqual(
+            ScreenShareSummary.tileContent(phase: .live, hasPreview: true),
+            .preview)
+        // Every other combo renders the status placeholder — never a
+        // silent tile (Teams blank-share failure mode).
+        for phase: ScreenSharePhase in
+            [.idle, .picking, .starting, .live, .stopping, .failed]
+        {
+            if phase != .live {
+                XCTAssertEqual(
+                    ScreenShareSummary.tileContent(
+                        phase: phase, hasPreview: true),
+                    .placeholder, "\(phase) with a stale frame")
+            }
+            XCTAssertEqual(
+                ScreenShareSummary.tileContent(
+                    phase: phase, hasPreview: false),
+                .placeholder, "\(phase) without a frame")
+        }
+    }
+
+    func testPlaceholderStatusNeverEmpty() {
+        // The fallback state always carries a human word.
+        for phase: ScreenSharePhase in
+            [.idle, .picking, .starting, .live, .stopping, .failed]
+        {
+            let word = ScreenShareSummary.status(
+                phase: phase, lastError: nil)
+            XCTAssertFalse(word.isEmpty, "\(phase)")
+        }
+        XCTAssertFalse(
+            ScreenShareSummary.status(
+                phase: .failed, lastError: "stream ended").isEmpty)
+    }
+
     func testShareLine() {
         XCTAssertEqual(
             DiagnosticsFormat.shareLine(source: nil, frames: 0, sent: 0), "off")

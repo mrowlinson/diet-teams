@@ -29,6 +29,7 @@
 // --say auto-sends once into the open chat. In live mode that is a REAL
 // send via core — never use it on shared chats for testing.
 // --show-about / --show-settings / --show-av open those windows at launch (shot hooks).
+// --show-av-share scrolls the A/V window to the Screen share tile (top10-share shot hook).
 // --show-settings-keywords opens the sanitized fixed Settings view
 // scrolled to the Keyword alerts section (R6 shot hook, offline).
 // --show-settings-calls opens it preselected on Calls (test-call

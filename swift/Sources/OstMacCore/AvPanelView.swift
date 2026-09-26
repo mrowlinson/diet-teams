@@ -592,350 +592,357 @@ public struct AvPanelView: View {
     }
 
     public var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: DietSpace.section) {
-                DietSectionCard("Microphone", systemImage: "mic.fill") {
-                    VStack(alignment: .leading, spacing: DietSpace.sm) {
-                        devicePicker("Microphone", devices: model.micDevices,
-                            selection: $model.micDevice,
-                            loaded: model.devicesLoaded,
-                            empty: "No microphone found")
-                        HStack(spacing: DietSpace.sm) {
-                            Button("Test Microphone", systemImage: "mic") {
-                                model.runMicTest()
-                            }
-                            .buttonStyle(.bordered)
-                            .disabled(model.micPhase.isRunning)
-                            phaseStatus(model.micPhase, model.micResult)
-                        }
-                        if model.micDenied {
-                            VStack(
-                                alignment: .leading,
-                                spacing: DietSpace.xs
-                            ) {
-                                Text("Microphone access is off — the test and level meter need it.")
-                                    .font(DietType.callout).bold()
-                                    .foregroundStyle(DietColor.textPrimaryColor)
-                                Text("Allow Better Teams in System Settings › Privacy & Security › Microphone.")
-                                    .font(DietType.caption1)
-                                    .foregroundStyle(
-                                        DietColor.textSecondaryColor)
-                                Button(
-                                    "Open Privacy Settings",
-                                    systemImage: "arrow.up.forward.app"
-                                ) {
-                                    openURL(MicAccess.privacyURL)
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: DietSpace.section) {
+                    DietSectionCard("Microphone", systemImage: "mic.fill") {
+                        VStack(alignment: .leading, spacing: DietSpace.sm) {
+                            devicePicker("Microphone", devices: model.micDevices,
+                                selection: $model.micDevice,
+                                loaded: model.devicesLoaded,
+                                empty: "No microphone found")
+                            HStack(spacing: DietSpace.sm) {
+                                Button("Test Microphone", systemImage: "mic") {
+                                    model.runMicTest()
                                 }
                                 .buttonStyle(.bordered)
+                                .disabled(model.micPhase.isRunning)
+                                phaseStatus(model.micPhase, model.micResult)
                             }
+                            if model.micDenied {
+                                VStack(
+                                    alignment: .leading,
+                                    spacing: DietSpace.xs
+                                ) {
+                                    Text("Microphone access is off — the test and level meter need it.")
+                                        .font(DietType.callout).bold()
+                                        .foregroundStyle(DietColor.textPrimaryColor)
+                                    Text("Allow Better Teams in System Settings › Privacy & Security › Microphone.")
+                                        .font(DietType.caption1)
+                                        .foregroundStyle(
+                                            DietColor.textSecondaryColor)
+                                    Button(
+                                        "Open Privacy Settings",
+                                        systemImage: "arrow.up.forward.app"
+                                    ) {
+                                        openURL(MicAccess.privacyURL)
+                                    }
+                                    .buttonStyle(.bordered)
+                                }
+                            }
+                            LabeledContent("Input level") {
+                                LevelBar(
+                                    fraction: model.level,
+                                    live: model.levelLive)
+                                    .frame(maxWidth: 220)
+                            }
+                            .font(DietType.callout)
+                            Text("3s record, then playback.")
+                                .font(DietType.caption1)
+                                .foregroundStyle(
+                                    DietColor.textSecondaryColor)
                         }
-                        LabeledContent("Input level") {
-                            LevelBar(
-                                fraction: model.level,
-                                live: model.levelLive)
-                                .frame(maxWidth: 220)
-                        }
-                        .font(DietType.callout)
-                        Text("3s record, then playback.")
-                            .font(DietType.caption1)
-                            .foregroundStyle(
-                                DietColor.textSecondaryColor)
                     }
-                }
-
-                DietSectionCard(
-                    "Speaker", systemImage: "speaker.wave.2.fill"
-                ) {
-                    VStack(alignment: .leading, spacing: DietSpace.sm) {
-                        devicePicker("Speaker",
-                            devices: model.speakerDevices,
-                            selection: $model.speakerDevice,
-                            loaded: model.devicesLoaded,
-                            empty: "No speaker found")
-                        HStack(spacing: DietSpace.sm) {
-                            Button(
-                                "Play Test Sound",
-                                systemImage: "speaker.wave.2"
-                            ) {
-                                model.runTonePlay()
+    
+                    DietSectionCard(
+                        "Speaker", systemImage: "speaker.wave.2.fill"
+                    ) {
+                        VStack(alignment: .leading, spacing: DietSpace.sm) {
+                            devicePicker("Speaker",
+                                devices: model.speakerDevices,
+                                selection: $model.speakerDevice,
+                                loaded: model.devicesLoaded,
+                                empty: "No speaker found")
+                            HStack(spacing: DietSpace.sm) {
+                                Button(
+                                    "Play Test Sound",
+                                    systemImage: "speaker.wave.2"
+                                ) {
+                                    model.runTonePlay()
+                                }
+                                .buttonStyle(.bordered)
+                                .disabled(model.speakerPhase.isRunning)
+                                phaseStatus(
+                                    model.speakerPhase, model.speakerResult)
                             }
-                            .buttonStyle(.bordered)
-                            .disabled(model.speakerPhase.isRunning)
-                            phaseStatus(
-                                model.speakerPhase, model.speakerResult)
                         }
                     }
-                }
-
-                DietSectionCard("Camera", systemImage: "video.fill") {
-                    VStack(alignment: .leading, spacing: DietSpace.sm) {
-                        Picker("Camera",
-                            selection: $camera.selectedDeviceID)
-                        {
-                            Text("System Default").tag(String?.none)
-                            ForEach(cameras) { c in
-                                Text(c.name).tag(String?.some(c.id))
-                            }
-                            if let sel = camera.selectedDeviceID,
-                                !cameras.contains(where: { $0.id == sel })
+    
+                    DietSectionCard("Camera", systemImage: "video.fill") {
+                        VStack(alignment: .leading, spacing: DietSpace.sm) {
+                            Picker("Camera",
+                                selection: $camera.selectedDeviceID)
                             {
-                                Text("Previous camera (unplugged)")
-                                    .tag(String?.some(sel))
+                                Text("System Default").tag(String?.none)
+                                ForEach(cameras) { c in
+                                    Text(c.name).tag(String?.some(c.id))
+                                }
+                                if let sel = camera.selectedDeviceID,
+                                    !cameras.contains(where: { $0.id == sel })
+                                {
+                                    Text("Previous camera (unplugged)")
+                                        .tag(String?.some(sel))
+                                }
                             }
-                        }
-                        .font(DietType.callout)
-                        HStack(alignment: .top, spacing: DietSpace.sm) {
-                            if camera.running {
-                                CameraPreviewView(session: camera.session)
-                                    .frame(width: 240, height: 180)
-                                    .clipShape(RoundedRectangle(
-                                        cornerRadius: DietRadius.control))
-                                    .overlay(RoundedRectangle(
-                                        cornerRadius: DietRadius.control
-                                    ).stroke(DietColor.dividerColor))
-                            } else {
-                                RoundedRectangle(
-                                    cornerRadius: DietRadius.control)
-                                    .fill(DietColor.wellColor)
-                                    .frame(width: 240, height: 180)
-                                    .overlay {
-                                        VStack(spacing: DietSpace.xs) {
-                                            Image(systemName: "video.slash")
-                                                .font(.system(size: DietSize
-                                                    .iconLG))
-                                                .foregroundStyle(DietColor
-                                                    .textSecondaryColor)
-                                            Text("Camera off")
-                                                .font(DietType.callout)
-                                                .foregroundStyle(DietColor
-                                                    .textSecondaryColor)
+                            .font(DietType.callout)
+                            HStack(alignment: .top, spacing: DietSpace.sm) {
+                                if camera.running {
+                                    CameraPreviewView(session: camera.session)
+                                        .frame(width: 240, height: 180)
+                                        .clipShape(RoundedRectangle(
+                                            cornerRadius: DietRadius.control))
+                                        .overlay(RoundedRectangle(
+                                            cornerRadius: DietRadius.control
+                                        ).stroke(DietColor.dividerColor))
+                                } else {
+                                    RoundedRectangle(
+                                        cornerRadius: DietRadius.control)
+                                        .fill(DietColor.wellColor)
+                                        .frame(width: 240, height: 180)
+                                        .overlay {
+                                            VStack(spacing: DietSpace.xs) {
+                                                Image(systemName: "video.slash")
+                                                    .font(.system(size: DietSize
+                                                        .iconLG))
+                                                    .foregroundStyle(DietColor
+                                                        .textSecondaryColor)
+                                                Text("Camera off")
+                                                    .font(DietType.callout)
+                                                    .foregroundStyle(DietColor
+                                                        .textSecondaryColor)
+                                            }
+                                        }
+                                }
+                                VStack(
+                                    alignment: .leading,
+                                    spacing: DietSpace.sm
+                                ) {
+                                    Text(AvSummary.cameraStatus(
+                                        camera.status))
+                                        .font(DietType.callout).bold()
+                                        .foregroundStyle(DietColor
+                                            .textPrimaryColor)
+                                    if let s = camera.lastStats {
+                                        Text(AvSummary.cameraStats(s))
+                                            .font(DietType.caption1)
+                                            .foregroundStyle(DietColor
+                                                .textSecondaryColor)
+                                    }
+                                    Button(
+                                        camera.running ? "Stop" : "Start",
+                                        systemImage: camera.running
+                                            ? "stop.fill" : "play.fill"
+                                    ) {
+                                        if camera.running { camera.stop() } else {
+                                            startCamera()
                                         }
                                     }
+                                    .buttonStyle(.bordered)
+                                }
+                                .padding(.top, DietSpace.xxs)
                             }
+                        }
+                    }
+    
+                    DietSectionCard(
+                        "Screen share", systemImage: "rectangle.on.rectangle"
+                    ) {
+                        ScreenShareTile(
+                            model: share,
+                            liveCall: call.call?.liveMedia == true
+                                && (call.call?.isActive ?? false))
+                    }
+                    .id("screenshare")
+    
+                    DietSectionCard(
+                        "Diagnostics", systemImage: "stethoscope"
+                    ) {
+                        DisclosureGroup(isExpanded: $model.diagExpanded) {
                             VStack(
                                 alignment: .leading,
                                 spacing: DietSpace.sm
                             ) {
-                                Text(AvSummary.cameraStatus(
-                                    camera.status))
-                                    .font(DietType.callout).bold()
-                                    .foregroundStyle(DietColor
-                                        .textPrimaryColor)
-                                if let s = camera.lastStats {
-                                    Text(AvSummary.cameraStats(s))
+                                HStack(spacing: DietSpace.sm) {
+                                    Button("Probe") {
+                                        model.refreshCaps()
+                                        model.refreshProbe()
+                                    }
+                                    .buttonStyle(.bordered)
+                                    Button("Rescan Devices") {
+                                        model.rescanDevices()
+                                        cameras = CameraCapture
+                                            .videoDevices()
+                                    }
+                                    .buttonStyle(.bordered)
+                                }
+                                diagRow("core", model.caps)
+                                diagRow("devices", model.probe)
+                                HStack(spacing: DietSpace.sm) {
+                                    Button("Echo check") {
+                                        model.runToneCheck()
+                                    }
+                                    .buttonStyle(.bordered)
+                                    Text(model.check)
                                         .font(DietType.caption1)
                                         .foregroundStyle(DietColor
                                             .textSecondaryColor)
                                 }
-                                Button(
-                                    camera.running ? "Stop" : "Start",
-                                    systemImage: camera.running
-                                        ? "stop.fill" : "play.fill"
+                                HStack(spacing: DietSpace.sm) {
+                                    Button("Dry run") {
+                                        model.runDryRun()
+                                    }
+                                    .buttonStyle(.bordered)
+                                    Text(model.dry)
+                                        .font(DietType.caption1)
+                                        .foregroundStyle(DietColor
+                                            .textSecondaryColor)
+                                }
+                                HStack(spacing: DietSpace.sm) {
+                                    Button("VT round-trip") {
+                                        model.runRoundTrip()
+                                    }
+                                    .buttonStyle(.bordered)
+                                    Button("Remote loopback") {
+                                        model.runRemoteLoopback()
+                                    }
+                                    .buttonStyle(.bordered)
+                                    Text(model.decode)
+                                        .font(DietType.caption1)
+                                        .foregroundStyle(DietColor
+                                            .textSecondaryColor)
+                                }
+                                HStack(spacing: DietSpace.sm) {
+                                    Button("Live loopback") {
+                                        model.runLiveLoopback()
+                                    }
+                                    .buttonStyle(.bordered)
+                                    Text(model.loop)
+                                        .font(DietType.caption1)
+                                        .foregroundStyle(DietColor
+                                            .textSecondaryColor)
+                                }
+                                HStack(
+                                    alignment: .top,
+                                    spacing: DietSpace.md
                                 ) {
-                                    if camera.running { camera.stop() } else {
-                                        startCamera()
+                                    if let img = model.decodedImage {
+                                        Image(
+                                            img, scale: 1,
+                                            label: Text("decoded")
+                                        )
+                                        .resizable()
+                                        .frame(width: 176, height: 144)
+                                        .clipShape(RoundedRectangle(
+                                            cornerRadius: DietRadius
+                                                .control))
+                                    }
+                                    if let img = model.remoteImage {
+                                        Image(
+                                            img, scale: 1,
+                                            label: Text("remote")
+                                        )
+                                        .resizable()
+                                        .frame(width: 128, height: 128)
+                                        .clipShape(RoundedRectangle(
+                                            cornerRadius: DietRadius
+                                                .control))
                                     }
                                 }
-                                .buttonStyle(.bordered)
                             }
-                            .padding(.top, DietSpace.xxs)
+                            .padding(.top, DietSpace.xs)
+                        } label: {
+                            Text("Core internals")
+                                .font(DietType.callout)
+                                .foregroundStyle(
+                                    DietColor.textSecondaryColor)
                         }
                     }
-                }
-
-                DietSectionCard(
-                    "Screen share", systemImage: "rectangle.on.rectangle"
-                ) {
-                    ScreenShareTile(
-                        model: share,
-                        liveCall: call.call?.liveMedia == true
-                            && (call.call?.isActive ?? false))
-                }
-
-                DietSectionCard(
-                    "Diagnostics", systemImage: "stethoscope"
-                ) {
-                    DisclosureGroup(isExpanded: $model.diagExpanded) {
+    
+                    DietSectionCard(
+                        "Live call (echo bot + media)",
+                        systemImage: "phone.fill"
+                    ) {
                         VStack(
                             alignment: .leading,
                             spacing: DietSpace.sm
                         ) {
+                            CallBanner(store: call)
                             HStack(spacing: DietSpace.sm) {
-                                Button("Probe") {
-                                    model.refreshCaps()
-                                    model.refreshProbe()
+                                Button("Echo live") { call.echoLive() }
+                                    .buttonStyle(.borderedProminent)
+                                    .disabled(call.busy
+                                        || (call.call?.isActive ?? false))
+                                Button("End", role: .destructive) { call.end() }
+                                    .buttonStyle(.bordered)
+                                    .disabled(call.busy
+                                        || !(call.call?.isActive ?? false))
+                                if let m = call.media {
+                                    Text("a \(m.audio_recv)/\(m.audio_sent)" +
+                                        " v \(m.video_recv)/\(m.video_sent)")
+                                        .font(DietType.captionMono)
+                                        .foregroundStyle(DietColor
+                                            .textSecondaryColor)
                                 }
-                                .buttonStyle(.bordered)
-                                Button("Rescan Devices") {
-                                    model.rescanDevices()
-                                    cameras = CameraCapture
-                                        .videoDevices()
-                                }
-                                .buttonStyle(.bordered)
-                            }
-                            diagRow("core", model.caps)
-                            diagRow("devices", model.probe)
-                            HStack(spacing: DietSpace.sm) {
-                                Button("Echo check") {
-                                    model.runToneCheck()
-                                }
-                                .buttonStyle(.bordered)
-                                Text(model.check)
-                                    .font(DietType.caption1)
-                                    .foregroundStyle(DietColor
-                                        .textSecondaryColor)
-                            }
-                            HStack(spacing: DietSpace.sm) {
-                                Button("Dry run") {
-                                    model.runDryRun()
-                                }
-                                .buttonStyle(.bordered)
-                                Text(model.dry)
-                                    .font(DietType.caption1)
-                                    .foregroundStyle(DietColor
-                                        .textSecondaryColor)
-                            }
-                            HStack(spacing: DietSpace.sm) {
-                                Button("VT round-trip") {
-                                    model.runRoundTrip()
-                                }
-                                .buttonStyle(.bordered)
-                                Button("Remote loopback") {
-                                    model.runRemoteLoopback()
-                                }
-                                .buttonStyle(.bordered)
-                                Text(model.decode)
-                                    .font(DietType.caption1)
-                                    .foregroundStyle(DietColor
-                                        .textSecondaryColor)
-                            }
-                            HStack(spacing: DietSpace.sm) {
-                                Button("Live loopback") {
-                                    model.runLiveLoopback()
-                                }
-                                .buttonStyle(.bordered)
-                                Text(model.loop)
-                                    .font(DietType.caption1)
-                                    .foregroundStyle(DietColor
-                                        .textSecondaryColor)
                             }
                             HStack(
                                 alignment: .top,
                                 spacing: DietSpace.md
                             ) {
-                                if let img = model.decodedImage {
-                                    Image(
-                                        img, scale: 1,
-                                        label: Text("decoded")
-                                    )
-                                    .resizable()
-                                    .frame(width: 176, height: 144)
-                                    .clipShape(RoundedRectangle(
-                                        cornerRadius: DietRadius
-                                            .control))
-                                }
-                                if let img = model.remoteImage {
-                                    Image(
-                                        img, scale: 1,
-                                        label: Text("remote")
-                                    )
-                                    .resizable()
-                                    .frame(width: 128, height: 128)
-                                    .clipShape(RoundedRectangle(
-                                        cornerRadius: DietRadius
-                                            .control))
-                                }
-                            }
-                        }
-                        .padding(.top, DietSpace.xs)
-                    } label: {
-                        Text("Core internals")
-                            .font(DietType.callout)
-                            .foregroundStyle(
-                                DietColor.textSecondaryColor)
-                    }
-                }
-
-                DietSectionCard(
-                    "Live call (echo bot + media)",
-                    systemImage: "phone.fill"
-                ) {
-                    VStack(
-                        alignment: .leading,
-                        spacing: DietSpace.sm
-                    ) {
-                        CallBanner(store: call)
-                        HStack(spacing: DietSpace.sm) {
-                            Button("Echo live") { call.echoLive() }
-                                .buttonStyle(.borderedProminent)
-                                .disabled(call.busy
-                                    || (call.call?.isActive ?? false))
-                            Button("End", role: .destructive) { call.end() }
-                                .buttonStyle(.bordered)
-                                .disabled(call.busy
-                                    || !(call.call?.isActive ?? false))
-                            if let m = call.media {
-                                Text("a \(m.audio_recv)/\(m.audio_sent)" +
-                                    " v \(m.video_recv)/\(m.video_sent)")
-                                    .font(DietType.captionMono)
-                                    .foregroundStyle(DietColor
-                                        .textSecondaryColor)
-                            }
-                        }
-                        HStack(
-                            alignment: .top,
-                            spacing: DietSpace.md
-                        ) {
-                            LiveVideoView()
-                            VStack(
-                                alignment: .leading,
-                                spacing: DietSpace.sm
-                            ) {
-                                Text("local send: \(camera.liveSend ? "on" : "off")")
-                                    .font(DietType.caption1)
-                                    .foregroundStyle(DietColor
-                                        .textSecondaryColor)
-                                Button(
-                                    camera.liveSend ? "Stop send"
-                                        : "Send camera"
+                                LiveVideoView()
+                                VStack(
+                                    alignment: .leading,
+                                    spacing: DietSpace.sm
                                 ) {
-                                    if camera.liveSend {
-                                        camera.setLiveSend(false)
-                                    } else if camera.running {
-                                        camera.setLiveSend(true)
-                                    } else {
-                                        startCamera(live: true)
+                                    Text("local send: \(camera.liveSend ? "on" : "off")")
+                                        .font(DietType.caption1)
+                                        .foregroundStyle(DietColor
+                                            .textSecondaryColor)
+                                    Button(
+                                        camera.liveSend ? "Stop send"
+                                            : "Send camera"
+                                    ) {
+                                        if camera.liveSend {
+                                            camera.setLiveSend(false)
+                                        } else if camera.running {
+                                            camera.setLiveSend(true)
+                                        } else {
+                                            startCamera(live: true)
+                                        }
                                     }
+                                    .buttonStyle(.bordered)
                                 }
-                                .buttonStyle(.bordered)
                             }
                         }
                     }
                 }
+                .padding(DietSpace.edge)
             }
-            .padding(DietSpace.edge)
-        }
-        .background(DietColor.windowColor)
-        .frame(minWidth: 560, minHeight: 700)
-        .task {
-            // Devices first; probe + level meter chain after the scan.
-            model.refreshDevices()
-            model.refreshCaps()
-            call.refresh()
-            share.refreshPermission()
-            // Shot hook: --auto-loop runs the live loopback at launch.
-            if CommandLine.arguments.contains("--auto-loop") {
-                model.runLiveLoopback()
+            .background(DietColor.windowColor)
+            .frame(minWidth: 560, minHeight: 700)
+            .task {
+                // Devices first; probe + level meter chain after the scan.
+                model.refreshDevices()
+                model.refreshCaps()
+                call.refresh()
+                share.refreshPermission()
+                // Shot hook: --auto-loop runs the live loopback at launch.
+                if CommandLine.arguments.contains("--auto-loop") {
+                    model.runLiveLoopback()
+                }
             }
-        }
-        .onAppear {
-            call.callWindowOpen = true // media surface up (1s stats loop)
-        }
-        .onDisappear {
-            call.callWindowOpen = false // media surface down
-            model.stopLevelPolling()
-            camera.stop()
-            share.stop()
+            .onAppear {
+                call.callWindowOpen = true // media surface up (1s stats loop)
+                // Shot hook: --show-av-share scrolls to the share tile.
+                if CommandLine.arguments.contains("--show-av-share") {
+                    proxy.scrollTo("screenshare", anchor: .top)
+                }
+            }
+            .onDisappear {
+                call.callWindowOpen = false // media surface down
+                model.stopLevelPolling()
+                camera.stop()
+                share.stop()
+            }
         }
     }
 

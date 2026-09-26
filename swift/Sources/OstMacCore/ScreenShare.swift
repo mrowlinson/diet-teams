@@ -193,6 +193,24 @@ public enum ScreenShareSummary {
     /// Denied-permission hint (mirrors AvSummary.micDenied).
     public static let denied =
         "Screen Recording denied — allow Better Teams in System Settings › Privacy & Security › Screen Recording"
+
+    /// Tile preview-vs-placeholder decision (pure, unit-tested).
+    /// No-blank guarantee: every combo renders something — a live
+    /// frame, or a status placeholder. Live without a frame yet (stream
+    /// just started, frame dropped) shows the "Live" word, never an
+    /// empty tile — the Teams blank-share failure mode (BetaNews
+    /// 2026-07-12) cannot render as silence here.
+    public static func tileContent(
+        phase: ScreenSharePhase, hasPreview: Bool
+    ) -> ScreenShareTileContent {
+        (phase.isLive && hasPreview) ? .preview : .placeholder
+    }
+}
+
+/// Preview-vs-placeholder tile state (see `tileContent` above).
+public enum ScreenShareTileContent: Equatable, Sendable {
+    case preview
+    case placeholder
 }
 
 // MARK: - Model + engine
@@ -239,6 +257,12 @@ public final class ScreenShareModel: NSObject, ObservableObject {
     /// after Settings trips). Preflight true recovers to authorized;
     /// false never sets denied by itself (see ScreenSharePermission).
     public func refreshPermission() {
+        // --share-denied shot hook: the seeded denial holds — never
+        // re-probed away, so the denied path renders on any box.
+        if CommandLine.arguments.contains("--share-denied") {
+            permission = .denied
+            return
+        }
         if ScreenShareAccess.granted() {
             permission = .authorized
         } else if permission == .authorized {
@@ -584,7 +608,9 @@ public struct ScreenShareTile: View {
         VStack(alignment: .leading, spacing: DietSpace.sm) {
             ZStack {
                 Rectangle().fill(.black.opacity(0.85))
-                if model.phase.isLive, let img = model.preview {
+                if ScreenShareSummary.tileContent(
+                    phase: model.phase, hasPreview: model.preview != nil
+                ) == .preview, let img = model.preview {
                     Image(img, scale: 1, label: Text("Screen share preview"))
                         .resizable()
                         .aspectRatio(contentMode: .fit)
