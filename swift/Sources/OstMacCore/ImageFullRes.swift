@@ -62,12 +62,14 @@ public final class FullResImageModel: ObservableObject {
     public let thumb: NSImage?
     private let cache: RichMediaCache
     private let fetcher: RichMediaCache.Fetcher
+    private let decodedCache: DecodedImageCache
 
     public init(
         thumbURL: String, messageID: String,
         thumb: NSImage? = nil,
         cache: RichMediaCache = .shared,
-        fetcher: RichMediaCache.Fetcher? = nil
+        fetcher: RichMediaCache.Fetcher? = nil,
+        decodedCache: DecodedImageCache = .shared
     ) {
         self.thumbURL = thumbURL
         self.fullURL = ImageFullRes.fullResURL(for: thumbURL)
@@ -75,6 +77,7 @@ public final class FullResImageModel: ObservableObject {
         self.thumb = thumb
         self.cache = cache
         self.fetcher = fetcher ?? RichMediaCache.defaultFetch
+        self.decodedCache = decodedCache
     }
 
     /// Load once; no-op while loaded or already loading.
@@ -93,26 +96,21 @@ public final class FullResImageModel: ObservableObject {
         do {
             let data = try await cache.data(
                 url: fullURL, messageID: messageID, fetcher: fetcher)
-            if GifProbe.isAnimated(data) {
-                let clip = await Task.detached(priority: .userInitiated) {
-                    GifClip.decode(data: data, maxPixels: ImageDecode.viewerMaxPixels)
-                }.value
-                guard let clip, let first = clip.frames.first else {
-                    phase = .failed("not an image")
-                    return
-                }
-                image = first
-                gif = clip
-                phase = .loaded
-                return
-            }
-            guard let img = await ImageDecode.decodeOffMain(
+            // Memoized one-source decode (reopens reuse the stored
+            // image instead of re-decoding the same bytes per open).
+            guard let result = await decodedCache.decoded(
                 data: data, maxPixels: ImageDecode.viewerMaxPixels)
             else {
                 phase = .failed("not an image")
                 return
             }
-            image = img
+            switch result {
+            case let .still(img):
+                image = img
+            case let .animated(clip):
+                image = clip.frames.first
+                gif = clip
+            }
             phase = .loaded
         } catch {
             phase = .failed(String(describing: error))

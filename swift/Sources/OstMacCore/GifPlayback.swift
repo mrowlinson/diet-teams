@@ -32,6 +32,12 @@ public enum GifProbe {
     /// still format take the static path (no overlay, no timers).
     public static func isAnimated(_ data: Data) -> Bool {
         guard let src = source(data: data) else { return false }
+        return isAnimatedSource(src)
+    }
+
+    /// Animated check over an existing source (single-source decode:
+    /// callers that already parsed the header skip re-creating it).
+    public static func isAnimatedSource(_ src: CGImageSource) -> Bool {
         guard let type = CGImageSourceGetType(src) as String?,
               UTType(type)?.conforms(to: .gif) == true
         else { return false }
@@ -102,9 +108,15 @@ public struct GifClip: Sendable {
 
     /// Downsampled per-frame decode, synchronous (call off the main thread).
     public static func decode(data: Data, maxPixels: CGFloat) -> GifClip? {
-        guard GifProbe.isAnimated(data),
-              let src = GifProbe.source(data: data)
+        guard let src = GifProbe.source(data: data),
+              GifProbe.isAnimatedSource(src)
         else { return nil }
+        return decode(src: src, maxPixels: maxPixels)
+    }
+
+    /// Per-frame decode over an existing (already animated-checked)
+    /// source. Nil when a frame fails to decode.
+    public static func decode(src: CGImageSource, maxPixels: CGFloat) -> GifClip? {
         let count = CGImageSourceGetCount(src)
         let indices = sampledIndices(count: count)
         let stride = Double(count) / Double(Swift.max(indices.count, 1))

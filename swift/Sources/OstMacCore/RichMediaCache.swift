@@ -27,6 +27,15 @@ public actor RichMediaCache {
     private var diskDir: URL?
     private let diskCapBytes: Int
     private let diskCapFiles: Int
+    /// Amortized trim (om-perf-swift-media): the full dir scan runs only
+    /// when these estimates say the caps may be over, or every
+    /// `trimScanEveryWrites` (bounds drift from foreign writers). Nil =
+    /// unknown (seeded by a scan on the next write, so the first write
+    /// into an over-cap dir still trims promptly).
+    private var estFiles: Int?
+    private var estBytes: Int?
+    private var writesSinceTrim = 0
+    private static let trimScanEveryWrites = 64
 
     public init(memoryLimitMB: Int = 64) {
         self.init(diskDir: Self.defaultDiskDir(), memoryLimitMB: memoryLimitMB)
@@ -108,6 +117,9 @@ public actor RichMediaCache {
         inFlight = [:]
         memory.removeAllObjects()
         diskDir = Self.diskDir(for: accountID)
+        estFiles = nil
+        estBytes = nil
+        writesSinceTrim = 0
     }
 
     /// Default fetcher: offline `demo://` fixtures, else blocking core FFI
@@ -122,14 +134,18 @@ public actor RichMediaCache {
     }
 
     /// Stable key: sha256 hex of `messageID + "\n" + url`.
+    /// Nibble-table hex (was: `String(format:)` per byte, ~35µs/key).
     public static func key(url: String, messageID: String) -> String {
-        let input = Data((messageID + "\n" + url).utf8)
-        return SHA256.hash(data: input).map { String(format: "%02x", $0) }.joined()
+        ImageDecode.bytesHex(Data((messageID + "\n" + url).utf8))
     }
 
     /// Memory, then disk. Nil when nothing is stored (no fetch).
     public func cached(url: String, messageID: String) -> Data? {
-        let k = Self.key(url: url, messageID: messageID)
+        cached(key: Self.key(url: url, messageID: messageID))
+    }
+
+    /// Keyed lookup (skips re-hashing when the caller already has the key).
+    private func cached(key k: String) -> Data? {
         if let m = memory.object(forKey: k as NSString) { return m as Data }
         if let d = readDisk(key: k) {
             memory.setObject(d as NSData, forKey: k as NSString, cost: d.count)
@@ -145,7 +161,7 @@ public actor RichMediaCache {
         fetcher: @escaping Fetcher = RichMediaCache.defaultFetch
     ) async throws -> Data {
         let k = Self.key(url: url, messageID: messageID)
-        if let hit = cached(url: url, messageID: messageID) { return hit }
+        if let hit = cached(key: k) { return hit }
         if let t = inFlight[k] { return try await t.value }
         let task: Task<Data, Error> = Task { try await fetcher(url) }
         inFlight[k] = task
@@ -194,18 +210,49 @@ public actor RichMediaCache {
 
     private func writeDisk(key: String, data: Data) {
         guard let u = diskURL(key: key) else { return }
+        let isNew = !FileManager.default.fileExists(atPath: u.path)
         try? data.write(to: u, options: .atomic)
-        trimDisk()
+        maybeTrimDisk(isNewFile: isNew, wroteBytes: data.count)
+    }
+
+    /// Scan + evict only when the estimates say a cap may be over (or
+    /// the estimates are unseeded / stale). Under-cap writes skip the
+    /// readdir+stat entirely (~19ms saved per write at 2k files).
+    /// Same-key overwrites keep the file count (the 64-write reseed
+    /// absorbs any byte drift from changed sizes).
+    private func maybeTrimDisk(isNewFile: Bool, wroteBytes: Int) {
+        writesSinceTrim += 1
+        if estFiles == nil || estBytes == nil
+            || writesSinceTrim >= Self.trimScanEveryWrites
+        {
+            let (files, bytes) = trimDisk()
+            estFiles = files
+            estBytes = bytes
+            writesSinceTrim = 0
+            return
+        }
+        if isNewFile {
+            estFiles! += 1
+            estBytes! += wroteBytes
+        }
+        if estFiles! > diskCapFiles || estBytes! > diskCapBytes {
+            let (files, bytes) = trimDisk()
+            estFiles = files
+            estBytes = bytes
+            writesSinceTrim = 0
+        }
     }
 
     /// Evict least-recently-modified files until the dir fits both caps.
     /// Best-effort (a racing reader just refetches); failures are silent.
-    private func trimDisk() {
-        guard let dir = diskDir else { return }
+    /// Returns the post-trim (files, bytes) for the trim estimates.
+    @discardableResult
+    private func trimDisk() -> (files: Int, bytes: Int) {
+        guard let dir = diskDir else { return (estFiles ?? 0, estBytes ?? 0) }
         let keys: [URLResourceKey] = [.fileSizeKey, .contentModificationDateKey, .isRegularFileKey]
         guard let urls = try? FileManager.default.contentsOfDirectory(
             at: dir, includingPropertiesForKeys: keys, options: .skipsHiddenFiles)
-        else { return }
+        else { return (estFiles ?? 0, estBytes ?? 0) }
         var entries: [(url: URL, size: Int, mtime: Date)] = []
         entries.reserveCapacity(urls.count)
         var total = 0
@@ -217,7 +264,9 @@ public actor RichMediaCache {
             total += size
             entries.append((u, size, v.contentModificationDate ?? .distantPast))
         }
-        guard total > diskCapBytes || entries.count > diskCapFiles else { return }
+        guard total > diskCapBytes || entries.count > diskCapFiles else {
+            return (entries.count, total)
+        }
         entries.sort { $0.mtime < $1.mtime } // oldest (least-recent) first
         var i = 0
         while (total > diskCapBytes || entries.count - i > diskCapFiles)
@@ -227,6 +276,7 @@ public actor RichMediaCache {
             total -= entries[i].size
             i += 1
         }
+        return (entries.count - i, total)
     }
 
     /// Disk footprint (file count + bytes) for tests/diagnostics.

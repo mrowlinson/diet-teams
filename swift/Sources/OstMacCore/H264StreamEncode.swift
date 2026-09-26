@@ -12,6 +12,9 @@ public final class H264StreamEncoder {
     private let width: Int
     private let height: Int
     private var frameCount = 0
+    /// Pooled input buffers (was: one CVPixelBuffer alloc per frame).
+    /// Touched only on the encode queue (see `encode`).
+    private var pool: CVPixelBufferPool?
 
     /// Nil when the session cannot be created or prepared.
     public init?(width: Int, height: Int, fps: Int32 = 15, bitrate: Int32 = 256_000) {
@@ -51,6 +54,18 @@ public final class H264StreamEncoder {
             self.session = nil
             return nil
         }
+        var pool: CVPixelBufferPool?
+        let poolStatus = CVPixelBufferPoolCreate(
+            kCFAllocatorDefault,
+            [kCVPixelBufferPoolMinimumBufferCountKey as String: 3] as CFDictionary,
+            [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+                kCVPixelBufferWidthKey as String: width,
+                kCVPixelBufferHeightKey as String: height,
+                kCVPixelBufferIOSurfacePropertiesKey as String: [:] as CFDictionary,
+            ] as CFDictionary,
+            &pool)
+        if poolStatus == kCVReturnSuccess { self.pool = pool }
     }
 
     deinit {
@@ -64,12 +79,20 @@ public final class H264StreamEncoder {
         guard let session else { throw H264EncodeError.session(-1) }
         guard bgra.count >= width * height * 4 else { throw H264EncodeError.badDims }
         var pixels: CVPixelBuffer?
-        let cv = CVPixelBufferCreate(
-            kCFAllocatorDefault, width, height,
-            kCVPixelFormatType_32BGRA, nil, &pixels)
-        guard cv == kCVReturnSuccess, let pixels else {
-            throw H264EncodeError.pixelBuffer(cv)
+        if let pool {
+            let cv = CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &pixels)
+            guard cv == kCVReturnSuccess, pixels != nil else {
+                throw H264EncodeError.pixelBuffer(cv)
+            }
+        } else {
+            let cv = CVPixelBufferCreate(
+                kCFAllocatorDefault, width, height,
+                kCVPixelFormatType_32BGRA, nil, &pixels)
+            guard cv == kCVReturnSuccess, let pixels else {
+                throw H264EncodeError.pixelBuffer(cv)
+            }
         }
+        guard let pixels else { throw H264EncodeError.pixelBuffer(kCVReturnError) }
         CVPixelBufferLockBaseAddress(pixels, [])
         defer { CVPixelBufferUnlockBaseAddress(pixels, []) }
         guard let base = CVPixelBufferGetBaseAddress(pixels) else {
