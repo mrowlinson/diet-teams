@@ -313,15 +313,25 @@ public final class MessageNotifications: ObservableObject {
     nonisolated public static func dispatch(
         actionID: String, userInfo: [AnyHashable: Any], replyText: String? = nil
     ) -> NotificationRoute {
+        // gap-g1: background banners carry their owning account; the
+        // broadcast forwards it (absent = active account, back-compat)
+        // so open/reply route to the right profile.
+        let account: [AnyHashable: Any] =
+            if let acct = NcDelivery.accountID(from: userInfo) {
+                ["accountID": acct]
+            } else {
+                [:]
+            }
         switch NcDelivery.route(actionID: actionID, userInfo: userInfo, replyText: replyText) {
         case .reply(let chat, let text):
             NotificationCenter.default.post(
                 name: .omNotifReply, object: nil,
-                userInfo: ["chatID": chat, "text": text])
+                userInfo: ["chatID": chat, "text": text].merging(account) { $1 })
             return .reply(chatID: chat, text: text)
         case .open(let chat):
             NotificationCenter.default.post(
-                name: .omNotifOpenChat, object: nil, userInfo: ["chatID": chat])
+                name: .omNotifOpenChat, object: nil,
+                userInfo: ["chatID": chat].merging(account) { $1 })
             return .open(chatID: chat)
         case .acceptCall(let call):
             NotificationCenter.default.post(

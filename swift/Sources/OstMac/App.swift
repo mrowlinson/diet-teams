@@ -409,6 +409,14 @@ final class AppState: ObservableObject {
     let filePeople: FilePeopleSearchStore
     let shared = SharedFilesStore()
     let feed = RealtimeFeed()
+    /// gap-g1 2nd feed: REST sweep over inactive accounts (the live
+    /// trouter serves the active profile only). Started with the feed in
+    /// live mode; the App timer drives it (30s, ungated — it must fire
+    /// while minimized, unlike the 2s visible-only tick).
+    let bgPoller = BackgroundAccountPoller()
+    /// gap-g1 unified roll-up: background .notify counts per inactive
+    /// account, drained into the live UnreadStore on switch.
+    private var bgRollup = BackgroundUnreadRollup()
     let typing = TypingStore()
     let notifs = MessageNotifications()
     /// e2-attention: system Focus sync (quiet source) + presence
@@ -531,6 +539,9 @@ final class AppState: ObservableObject {
     @Published var notifPosted = 0
     @Published var notifSkipped = 0
     @Published var notifLastReason = ""
+    /// gap-g1 background arrivals handled this session (inactive
+    /// accounts; their banners count in notifPosted above).
+    @Published var bgEvents = 0
     @Published var showJump = false
     /// Saved collection sheet (e2-saved): Go-menu command + --show-saved.
     @Published var showSaved = false
@@ -564,6 +575,9 @@ final class AppState: ObservableObject {
     /// Chat-list wiring (rebuilt with `chats` on account switch).
     private var chatsCancellables = Set<AnyCancellable>()
     private var stateTimer: Timer?
+    /// gap-g1 sweep timer (30s, ungated — background accounts must
+    /// banner while minimized, when the 2s tick stands down).
+    private var bgTimer: Timer?
     private var started = false
     private var contentOpened = false
     // om-rules: notify/skip rules over the live feed (RulesStore loads
@@ -964,13 +978,15 @@ final class AppState: ObservableObject {
             }
         }
         // om-notif: banner click opens the chat; inline reply sends.
+        // gap-g1: background banners carry their owning account — open
+        // switches to it first, reply sends on it (never the active one).
         _ = NotificationCenter.default.addObserver(
             forName: .omNotifOpenChat, object: nil, queue: nil
         ) { [weak self] note in
             guard let id = note.userInfo?["chatID"] as? String else { return }
+            let acct = note.userInfo?["accountID"] as? String
             Task { @MainActor [weak self] in
-                let name = self?.chats.chat(id: id)?.name
-                self?.jump(chatID: id, chatName: name ?? "Conversation")
+                self?.openFromNotification(chatID: id, accountID: acct)
             }
         }
         _ = NotificationCenter.default.addObserver(
@@ -979,7 +995,10 @@ final class AppState: ObservableObject {
             guard let id = note.userInfo?["chatID"] as? String,
                   let text = note.userInfo?["text"] as? String
             else { return }
-            Task { @MainActor [weak self] in self?.sendFromNotification(chatID: id, text: text) }
+            let acct = note.userInfo?["accountID"] as? String
+            Task { @MainActor [weak self] in
+                self?.sendFromNotification(chatID: id, text: text, accountID: acct)
+            }
         }
         // gap-g3: call-banner actions (Accept/Decline/click). Decline is
         // end() — CallStore counts an ended incoming ring as a decline.
@@ -1018,8 +1037,12 @@ final class AppState: ObservableObject {
                 self?.resetStoresForAccount(record)
             },
             resume: { [weak self] in self?.repointAuthToActive() },
-            removeCaches: { record in
+            removeCaches: { [weak self] record in
                 AccountCaches.remove(accountID: record.id)
+                // gap-g1: the removed account leaves the background
+                // set (snapshot + roll-up stash dropped with it).
+                self?.bgPoller.drop(accountID: record.id)
+                self?.bgRollup.drop(accountID: record.id)
             },
             emptied: { [weak self] in
                 Task { @MainActor [weak self] in
@@ -1110,6 +1133,9 @@ final class AppState: ObservableObject {
         typing.clear()
         meeting.clear()
         unread.markAllRead()
+        // gap-g1 switch handoff: arrivals accrued while this account was
+        // inactive land in the live store, so the switch shows unread N.
+        unread.ingestBackground(bgRollup.take(accountID: id))
         mentions.markAllRead()
         receipts.clear()
         ghost.clear() // f1-ghost: counters clear, toggles persist
@@ -1337,6 +1363,9 @@ final class AppState: ObservableObject {
             notifs.attach()
             await notifs.requestAuthorization()
             feed.start()
+            // gap-g1: background sweep over inactive accounts (first
+            // sweep seeds silently — no launch banner storm).
+            startBackgroundPoll()
         }
         if let say = autoSay {
             if openChatID == nil, isDemo, let first = chats.chats.first {
@@ -1501,6 +1530,8 @@ final class AppState: ObservableObject {
     func shutdown() {
         stateTimer?.invalidate()
         stateTimer = nil
+        bgTimer?.invalidate()
+        bgTimer = nil
         feed.stop()
     }
 
@@ -2168,9 +2199,15 @@ final class AppState: ObservableObject {
     /// Quiet hours/DND gate the call (never reach here while quiet).
     /// Breakthrough mentions and keyword hits post elevated (OM_MENTION
     /// style + subtitle).
+    /// gap-g1: background calls pass the owning account (banner names
+    /// it, userInfo routes to it) plus the snapshot owner identity for
+    /// the breakthrough subtitle. Live calls omit all four (nil = active
+    /// account, live conv identity — unchanged behavior).
     private func maybeNotify(
         _ msg: RealtimeMessage, chatName: String,
-        decision: ChatFilter.Decision, mutedChatIDs: Set<String>
+        decision: ChatFilter.Decision, mutedChatIDs: Set<String>,
+        accountID: String? = nil, accountName: String? = nil,
+        ownerDisplayName: String? = nil, ownerMRI: String? = nil
     ) {
         guard notifs.enabled else { return }
         guard !mutedChatIDs.contains(msg.chatID) else { return }
@@ -2184,12 +2221,15 @@ final class AppState: ObservableObject {
         if reason == MentionAlert.breakthroughReason {
             // Same identity the decision used (live name wins, per-chat
             // gates resolve identically — pure, no extra window claim).
+            // Background calls pass the snapshot identity instead.
             var cfg = rules.config
-            if let own = conv.ownDisplayName, !own.isEmpty { cfg.owner.displayName = own }
+            if let own = (ownerDisplayName ?? conv.ownDisplayName), !own.isEmpty {
+                cfg.owner.displayName = own
+            }
             let eff = cfg.effective(forChat: chatName)
             let mined = msg.mentions
             let ownerHit = Mentions.mentionsOwner(
-                mined, ownerMRI: resolvedOwnerMRI,
+                mined, ownerMRI: ownerMRI ?? resolvedOwnerMRI,
                 ownerDisplayName: eff.ownerDisplayName,
                 matchByName: eff.matchByDisplayName)
             subtitle = MentionAlert.subtitle(
@@ -2200,12 +2240,14 @@ final class AppState: ObservableObject {
             for: msg, chatName: chatName,
             decision: decision, screenLocked: NcDelivery.isScreenLocked(),
             showPreview: notifs.showPreview, sound: notifs.sound,
-            isMention: breakthrough, subtitle: subtitle)
+            isMention: breakthrough, subtitle: subtitle,
+            accountName: accountName)
         else { return }
         Notifier.shared.post(
             title: banner.title, body: banner.body,
             id: banner.id.isEmpty ? nil : banner.id, chatID: banner.chatID,
-            sound: banner.sound, isMention: banner.isMention, subtitle: banner.subtitle)
+            sound: banner.sound, isMention: banner.isMention, subtitle: banner.subtitle,
+            accountID: accountID)
     }
 
     /// Wire the notifier: categories + auth for rules-posted banners.
@@ -2217,14 +2259,25 @@ final class AppState: ObservableObject {
     /// Live mode only (demo never starts the feed, so never notifies).
     private func setupNotifier() {
         Notifier.shared.setup()
-        Notifier.shared.onOpenChat = { [weak self] chatID in
+        Notifier.shared.onOpenChat = { [weak self] chatID, accountID in
             guard let strongSelf = self else { return }
             await MainActor.run {
-                let name = strongSelf.chats.chat(id: chatID)?.name ?? "Conversation"
-                strongSelf.jump(chatID: chatID, chatName: name)
+                strongSelf.openFromNotification(chatID: chatID, accountID: accountID)
             }
         }
-        Notifier.shared.onReply = { chatID, text in
+        // gap-g1: a foreign-account reply switches first (on-main),
+        // then sends on the delegate queue (blocking, ex-main) — the
+        // profile flip is synchronous, so the send lands on the right
+        // account. A failed switch fails the reply (loud system note),
+        // never sends from the wrong account.
+        Notifier.shared.onReply = { [weak self] chatID, text, accountID in
+            let ready = await MainActor.run { [weak self] in
+                self?.prepareReplyAccount(accountID) ?? true
+            }
+            guard ready else {
+                return .failure(CoreCallError.failed(
+                    "couldn't switch to the message's account"))
+            }
             do {
                 _ = try RustCore.send(chatID: chatID, text: text)
                 return .success(())
@@ -2256,9 +2309,46 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Banner click (gap-g1): a foreign-account banner switches to
+    /// its account first, then jumps (jump falls back to direct open
+    /// while the post-switch list loads). Unknown foreign accounts are
+    /// stale banners — dropped, never opened in the wrong account.
+    private func openFromNotification(chatID id: String, accountID: String?) {
+        if let acct = accountID, acct != accounts.activeID {
+            guard !isDemo, accounts.accounts.contains(where: { $0.id == acct }) else { return }
+            switchAccount(to: acct)
+        }
+        let name = chats.chat(id: id)?.name ?? "Conversation"
+        jump(chatID: id, chatName: name)
+    }
+
+    /// False unless a reply may send on `accountID`: foreign accounts
+    /// switch first (sync profile flip); demo, unknown accounts, and
+    /// failed flips refuse (the caller fails loud, never cross-sends).
+    private func prepareReplyAccount(_ accountID: String?) -> Bool {
+        guard let acct = accountID, acct != accounts.activeID else { return true }
+        guard !isDemo, accounts.accounts.contains(where: { $0.id == acct }) else { return false }
+        return accounts.switchTo(acct)
+    }
+
     /// Inline reply from a notification: optimistic bubble when the chat
-    /// is open, direct core send otherwise (no chat switch).
-    private func sendFromNotification(chatID id: String, text: String) {
+    /// is open, direct core send otherwise (no chat switch). gap-g1: a
+    /// foreign-account reply switches to its account first, then sends
+    /// (the flip is synchronous, so the detached send lands right); a
+    /// refused switch posts a loud failure instead of cross-sending.
+    private func sendFromNotification(chatID id: String, text: String, accountID: String? = nil) {
+        if let acct = accountID, acct != accounts.activeID {
+            guard prepareReplyAccount(acct) else {
+                Notifier.shared.postSystem(
+                    title: "OstMac: reply failed",
+                    body: "Reply failed: couldn't switch to the message's account.")
+                return
+            }
+            Task.detached {
+                _ = try? RustCore.send(chatID: id, text: text)
+            }
+            return
+        }
         if openChatID == id {
             conv.send(text: text)
             return
@@ -2276,6 +2366,102 @@ final class AppState: ObservableObject {
             conv.open(chatID: id)
         }
         chats.refresh()
+    }
+
+    // MARK: - Background accounts (gap-g1)
+
+    /// Sweep cadence over inactive accounts (accept: banner within 60s
+    /// of an arrival — one interval covers worst-case skew).
+    private static let bgPollInterval: TimeInterval = 30
+
+    /// Start the background sweep (live only, once): an immediate seed
+    /// sweep plus the 30s timer. Ungated — unlike the 2s tick it fires
+    /// while minimized, which is the whole point.
+    private func startBackgroundPoll() {
+        guard !isDemo, bgTimer == nil else { return }
+        bgTimer = Timer.scheduledTimer(
+            withTimeInterval: Self.bgPollInterval, repeats: true
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.sweepBackgroundAccounts() }
+        }
+        sweepBackgroundAccounts()
+    }
+
+    /// One sweep: snapshot the account list on-main, diff off-main
+    /// (blocking network), handle arrivals back on-main. Skipped while
+    /// a single account is active (nothing to sweep).
+    private func sweepBackgroundAccounts() {
+        guard !isDemo else { return }
+        let snapshot = accounts.accounts
+        let active = accounts.activeID
+        guard snapshot.contains(where: { $0.id != active }) else { return }
+        let poller = bgPoller
+        Task.detached { [weak self] in
+            let events = poller.pollOnce(accounts: snapshot, activeID: active)
+            guard !events.isEmpty else { return }
+            await MainActor.run { [weak self] in
+                self?.handleBackgroundEvents(events)
+            }
+        }
+    }
+
+    private func handleBackgroundEvents(_ events: [BackgroundChatEvent]) {
+        for ev in events {
+            handleBackgroundEvent(ev)
+        }
+    }
+
+    /// One inactive-account arrival: the same rules decision as the live
+    /// path, but against that account's rules snapshot (its owner
+    /// identity, never the active account's). Notifies accrue into the
+    /// roll-up stash + post an account-naming banner (counted in the
+    /// shared notifPosted/notifSkipped + alert stats); skips stay
+    /// silent. Never touches the active account's list, timeline,
+    /// receipts, presence, or mentions — those rebind on switch.
+    private func handleBackgroundEvent(_ ev: BackgroundChatEvent) {
+        bgEvents += 1
+        // The account may have been removed mid-sweep — drop the event.
+        guard let account = accounts.accounts.first(where: { $0.id == ev.accountID }) else { return }
+        let msg = ev.asRealtimeMessage
+        // Blocked senders skip everything (device-global list, same
+        // gate as the live path; groupness rides the polled row).
+        if blocked.isBlocked(chatID: msg.chatID, senderName: msg.sender, isGroup: ev.isGroup) {
+            notifSkipped += 1
+            notifLastReason = "blocked-user"
+            return
+        }
+        let cfg = BackgroundRules.snapshot(base: rules.config, account: account)
+        let decision = ChatFilter.decide(
+            message: msg, chatDisplayName: ev.chatName,
+            ownerMRI: BackgroundRules.ownerMRI(account: account),
+            rules: cfg, meetingDedup: &meetingDedup, now: Date(),
+            // Own Teams presence belongs to the ACTIVE account — not a
+            // signal for this one. Local quiet (schedule/Focus) is
+            // device-global and applies; snoozes key by chat id.
+            dndActive: false,
+            quietActive: localQuietNow,
+            snoozedChatIDs: snooze.activeIDs())
+        noteAlertStats(decision: decision)
+        switch decision {
+        case .notify(let reason):
+            notifPosted += 1
+            notifLastReason = reason
+        case .skip(let reason):
+            notifSkipped += 1
+            notifLastReason = reason
+        }
+        guard case .notify = decision else { return }
+        bgRollup.note(accountID: ev.accountID, chatID: ev.chatID)
+        if localQuietNow {
+            noteSuppressedIfWarranted(msg, chatName: ev.chatName, decision: decision)
+        } else {
+            maybeNotify(
+                msg, chatName: ev.chatName, decision: decision,
+                mutedChatIDs: rules.config.mutedChatIDs,
+                accountID: ev.accountID, accountName: ev.accountName,
+                ownerDisplayName: account.displayName,
+                ownerMRI: BackgroundRules.ownerMRI(account: account))
+        }
     }
 
     /// 2s status tick, gated on visible surfaces: hidden/miniaturized

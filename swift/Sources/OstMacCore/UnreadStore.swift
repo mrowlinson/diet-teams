@@ -221,6 +221,24 @@ public final class UnreadStore: ObservableObject {
         }
     }
 
+    /// Seed counts accrued while another account was active (gap-g1
+    /// switch handoff: the background roll-up drains here so the switch
+    /// lands on unread N). Merges additively; blank ids and non-positive
+    /// counts are dropped. Empty input is a no-op (no dock write).
+    public func ingestBackground(_ counts: [String: Int]) {
+        let clean = counts.filter {
+            !$0.key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.value > 0
+        }
+        guard !clean.isEmpty else { return }
+        let before = total
+        for (id, n) in clean {
+            self.counts[id, default: 0] += n
+        }
+        if total != before {
+            syncDock()
+        }
+    }
+
     /// Opening a chat marks it read: drops its auto count AND its
     /// horizon override, syncs the dock. Unknown ids are a no-op (no
     /// dock write).

@@ -147,8 +147,9 @@ public enum RustCore {
     }
 
     /// Swift-native (R14 om-later-b4 B4; was `ostmac_chats`).
-    public static func chats(limit: Int32 = 20) throws -> ChatsResponse {
-        try CoreReads.chats(limit: limit)
+    /// `profile` nil = active profile; gap-g1 passes inactive ids.
+    public static func chats(limit: Int32 = 20, profile: String? = nil) throws -> ChatsResponse {
+        try CoreReads.chats(limit: limit, profile: profile)
     }
 
     /// Swift-native (R14 om-later-b4 B4; was `ostmac_teams`).

@@ -28,9 +28,16 @@ public enum OmReplyInfo {
     public static let sendButtonTitle = "Send"
     /// Inline-reply field placeholder (expanded UI).
     public static let textInputPlaceholder = "Type a reply…"
+    /// Owning account profile id (gap-g1 background banners). Absent =
+    /// the active account (back-compat: every live banner omits it).
+    public static let accountIDKey = "OMAccountID"
 
-    public static func userInfo(chatID: String) -> [String: String] {
-        [chatIDKey: chatID]
+    public static func userInfo(chatID: String, accountID: String? = nil) -> [String: String] {
+        var info = [chatIDKey: chatID]
+        if let accountID, !accountID.isEmpty {
+            info[accountIDKey] = accountID
+        }
+        return info
     }
 
     /// Tolerant read: this backend's key plus om-notif's "chatID",
@@ -52,12 +59,14 @@ public final class Notifier: NSObject, @unchecked Sendable {
 
     private let center = UNUserNotificationCenter.current()
 
-    /// Reply sender, wired by the app. Result failure text is surfaced as
-    /// a loud system notification. Nil = no Reply button offered.
-    public var onReply: (@Sendable (String, String) async -> Result<Void, Error>)?
+    /// Reply sender, wired by the app (chatID, text, owning account —
+    /// nil = active account). Result failure text is surfaced as a loud
+    /// system notification. Nil = no Reply button offered.
+    public var onReply: (@Sendable (String, String, String?) async -> Result<Void, Error>)?
 
-    /// Open-chat handler, wired by the app.
-    public var onOpenChat: (@Sendable (String) async -> Void)?
+    /// Open-chat handler, wired by the app (chatID, owning account —
+    /// nil = active account).
+    public var onOpenChat: (@Sendable (String, String?) async -> Void)?
 
     /// gap-g3: call-banner handlers, wired by the app (call id in).
     /// Used only when this delegate is installed; the live app routes
@@ -132,7 +141,13 @@ public final class Notifier: NSObject, @unchecked Sendable {
     /// `sound` false posts silent (Settings → Sound, via the caller).
     /// Elevated mentions (om-mention-alerts) take the OM_MENTION
     /// category, the critical sound, and the mention subtitle.
-    public func post(title: String, body: String, id: String? = nil, chatID: String? = nil, sound: Bool = true, isMention: Bool = false, subtitle: String? = nil) {
+    /// gap-g1: `accountID` stamps the owning account into userInfo
+    /// (nil/blank = active account, back-compat) and scopes the thread
+    /// so cross-account banners never merge. The title already names the
+    /// account when NcDelivery built it (`[Work] …`); this posts it
+    /// verbatim. Locked banners redact everything (no account leak on
+    /// the lock screen).
+    public func post(title: String, body: String, id: String? = nil, chatID: String? = nil, sound: Bool = true, isMention: Bool = false, subtitle: String? = nil, accountID: String? = nil) {
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body.isEmpty ? "(no text content)" : body
@@ -146,8 +161,10 @@ public final class Notifier: NSObject, @unchecked Sendable {
             } else {
                 content.categoryIdentifier = onReply == nil ? OmReplyInfo.categoryNoReplyID : OmReplyInfo.categoryID
             }
-            content.userInfo = OmReplyInfo.userInfo(chatID: chatID)
-            content.threadIdentifier = chatID
+            let acct = (accountID ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            content.userInfo = OmReplyInfo.userInfo(
+                chatID: chatID, accountID: acct.isEmpty ? nil : acct)
+            content.threadIdentifier = acct.isEmpty ? chatID : "\(acct):\(chatID)"
             if lockCheck?() ?? NcDelivery.isScreenLocked() {
                 content.title = NcDelivery.redactedTitle
                 content.body = NcDelivery.redactedBody
@@ -201,19 +218,23 @@ extension Notifier: UNUserNotificationCenterDelegate {
         didReceive response: UNNotificationResponse
     ) async {
         // Shared route: Reply posts, banner click / Open-chat opens.
+        // gap-g1: the owning account rides alongside (nil = active) so
+        // background banners route to their account, never the active one.
         let text = (response as? UNTextInputNotificationResponse)?.userText
+        let info = response.notification.request.content.userInfo
+        let accountID = NcDelivery.accountID(from: info)
         switch NcDelivery.route(
             actionID: response.actionIdentifier,
-            userInfo: response.notification.request.content.userInfo,
+            userInfo: info,
             replyText: text)
         {
         case .reply(let chatID, _):
             if let textResponse = response as? UNTextInputNotificationResponse {
-                await handleReply(textResponse, chatID: chatID)
+                await handleReply(textResponse, chatID: chatID, accountID: accountID)
             }
             return
         case .open(let chatID):
-            await onOpenChat?(chatID)
+            await onOpenChat?(chatID, accountID)
             return
         case .acceptCall(let callID):
             await onAcceptCall?(callID)
@@ -231,7 +252,6 @@ extension Notifier: UNUserNotificationCenterDelegate {
         }
         // Unrouted clicks on system/test notifs (no chat) copy the body;
         // message banners never copy (click opens, dismiss is silent).
-        let info = response.notification.request.content.userInfo
         guard OmReplyInfo.chatID(from: info) == nil else { return }
         let body = response.notification.request.content.body
         guard !body.isEmpty else { return }
@@ -242,11 +262,11 @@ extension Notifier: UNUserNotificationCenterDelegate {
         }
     }
 
-    private func handleReply(_ response: UNTextInputNotificationResponse, chatID: String) async {
+    private func handleReply(_ response: UNTextInputNotificationResponse, chatID: String, accountID: String?) async {
         let text = response.userText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         guard let onReply else { return }
-        switch await onReply(chatID, text) {
+        switch await onReply(chatID, text, accountID) {
         case .success:
             break
         case .failure(let err):

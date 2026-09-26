@@ -44,6 +44,12 @@ public struct RealtimeMessage: Decodable, Sendable, Identifiable {
     /// builds — the rules filter treats that as unclassifiable (the type
     /// gate passes) rather than skipping.
     public let messageType: String?
+    /// Owning account profile id (gap-g1: the feed's profile concept).
+    /// Stamped host-side by the producer (live feed = active account,
+    /// background poller = the polled account). Nil = active account
+    /// (back-compat: old payloads and live events omit it). Never
+    /// trusted from the wire alone — the poller stamps what it polled.
+    public let accountID: String?
 
     enum CodingKeys: String, CodingKey {
         case chatID = "chat_id"
@@ -53,17 +59,19 @@ public struct RealtimeMessage: Decodable, Sendable, Identifiable {
         case editedID = "edited_id"
         case raw, reactions
         case messageType = "message_type"
+        case accountID = "account_id"
     }
 
     /// Host-side construction (tests, mock feeds). `senderID`/`raw`/
-    /// `reactions`/`messageType` default to nil (old core builds omit them); wire
-    /// decoding untouched.
+    /// `reactions`/`messageType`/`accountID` default to nil (old core builds
+    /// omit them); wire decoding untouched.
     public init(
         chatID: String, msgId: String, sender: String,
         senderID: String? = nil, text: String, time: String,
         isEdit: Bool, editedID: String? = nil, raw: String? = nil,
         reactions: [ReactionCount]? = nil,
-        messageType: String? = nil
+        messageType: String? = nil,
+        accountID: String? = nil
     ) {
         self.chatID = chatID
         self.msgId = msgId
@@ -76,6 +84,18 @@ public struct RealtimeMessage: Decodable, Sendable, Identifiable {
         self.raw = raw
         self.reactions = reactions
         self.messageType = messageType
+        self.accountID = accountID
+    }
+
+    /// Copy stamped with the owning account (producers tag what they
+    /// polled; nil clears back to active-account).
+    public func stamped(accountID: String?) -> RealtimeMessage {
+        RealtimeMessage(
+            chatID: chatID, msgId: msgId, sender: sender,
+            senderID: senderID, text: text, time: time,
+            isEdit: isEdit, editedID: editedID, raw: raw,
+            reactions: reactions, messageType: messageType,
+            accountID: accountID)
     }
 
     public init(from decoder: Decoder) throws {
@@ -91,6 +111,7 @@ public struct RealtimeMessage: Decodable, Sendable, Identifiable {
         raw = try c.decodeIfPresent(String.self, forKey: .raw)
         reactions = try c.decodeIfPresent([ReactionCount].self, forKey: .reactions)
         messageType = try c.decodeIfPresent(String.self, forKey: .messageType)
+        accountID = try c.decodeIfPresent(String.self, forKey: .accountID)
     }
 
     /// True when this event belongs to the given open chat.

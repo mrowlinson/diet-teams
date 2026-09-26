@@ -496,6 +496,13 @@ public enum CoreReads {
         try chats(limit: limit, ctx: production())
     }
 
+    /// Chat list for one account profile (gap-g1 background poll: the
+    /// inactive accounts' tokens load by profile, no active flip). Nil =
+    /// the active profile (same as `chats(limit:)`).
+    public static func chats(limit: Int32 = 20, profile: String?) throws -> ChatsResponse {
+        try chats(limit: limit, profile: profile, ctx: production())
+    }
+
     /// Region base URLs from the stored gtms JSON (verbatim port of
     /// `chat_service_url` / `chatsvcagg_url`; unparseable → defaults).
     static func regionGTMS(_ slots: TokenSlots) -> [String: String] {
@@ -611,9 +618,9 @@ public enum CoreReads {
         let messages: [Msg]?
     }
 
-    static func chats(limit: Int32, ctx: ReadContext) throws -> ChatsResponse {
+    static func chats(limit: Int32, profile: String? = nil, ctx: ReadContext) throws -> ChatsResponse {
         let lim = limit <= 0 ? 20 : Int(limit)
-        let profile = CoreLocal.activeProfileID()
+        let profile = profile ?? CoreLocal.activeProfileID()
         let (skype, slots) = try skypeToken(
             profile: profile, code: "chats", ctx: ctx
         )

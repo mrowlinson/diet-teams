@@ -60,11 +60,15 @@ public enum NcDelivery {
     /// `showPreview` false hides message text (synthesized meeting bodies
     /// are not message content, so they stay); `sound` false posts silent.
     /// `isMention`/`subtitle` ride through for the OM_MENTION style.
+    /// gap-g1: `accountName` prefixes the title (`[Work] …`) so
+    /// background banners name the account (locked redaction drops the
+    /// prefix too — no account leak on the lock screen).
     public static func makeBanner(
         for msg: RealtimeMessage, chatName: String,
         decision: ChatFilter.Decision, screenLocked: Bool,
         showPreview: Bool = true, sound: Bool = true,
-        isMention: Bool = false, subtitle: String? = nil
+        isMention: Bool = false, subtitle: String? = nil,
+        accountName: String? = nil
     ) -> Banner? {
         guard case .notify(let reason) = decision else { return nil }
         let title: String
@@ -97,7 +101,15 @@ public enum NcDelivery {
         if !showPreview, reason != ChatFilter.meetingStartingReason {
             body = MessageNotifications.hiddenPreviewBody
         }
-        return Banner(id: msg.msgId, chatID: msg.chatID, title: title, body: body, sound: sound, isMention: isMention, subtitle: subtitle)
+        let named: String
+        if let name = accountName?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !name.isEmpty
+        {
+            named = "[\(name)] \(title)"
+        } else {
+            named = title
+        }
+        return Banner(id: msg.msgId, chatID: msg.chatID, title: named, body: body, sound: sound, isMention: isMention, subtitle: subtitle)
     }
 
     /// Chat id from banner userInfo: accepts both backend keys (om-notif
@@ -113,6 +125,16 @@ public enum NcDelivery {
     /// Blank/missing = nil. Disjoint from the chat keys above.
     public static func callID(from userInfo: [AnyHashable: Any]) -> String? {
         if let id = userInfo[OmCallInfo.callIDKey] as? String, !id.isEmpty {
+            return id
+        }
+        return nil
+    }
+
+    /// Owning account profile id from a message banner (gap-g1
+    /// OMAccountID key). Blank/missing = nil = the active account.
+    /// Disjoint from the chat/call keys.
+    public static func accountID(from userInfo: [AnyHashable: Any]) -> String? {
+        if let id = userInfo[OmReplyInfo.accountIDKey] as? String, !id.isEmpty {
             return id
         }
         return nil
