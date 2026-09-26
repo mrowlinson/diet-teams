@@ -58,6 +58,9 @@ struct SettingsView: View {
     /// Message density (f2-density): Comfortable/Compact (Chats →
     /// Appearance). Bound live; flips re-layout instantly.
     @ObservedObject private var density: DensityStore
+    /// Opt-in login item (top10-menubar: off by default; the toggle
+    /// below is the ONLY writer — the app never re-enables itself).
+    @ObservedObject private var loginItems: LoginItemStore
     private let onAccountAdded: (AuthViewModel) -> Void
     private let onRemoveAccount: (String) -> Void
     @State private var pendingAddVM: AuthViewModel?
@@ -96,6 +99,7 @@ struct SettingsView: View {
         canned: CannedResponsesStore = CannedResponsesStore(),
         ghost: GhostStore = GhostStore(),
         density: DensityStore = DensityStore(),
+        loginItems: LoginItemStore = LoginItemStore(),
         onAccountAdded: @escaping (AuthViewModel) -> Void = { _ in },
         onRemoveAccount: @escaping (String) -> Void = { _ in }
     ) {
@@ -113,6 +117,7 @@ struct SettingsView: View {
         _canned = ObservedObject(wrappedValue: canned)
         _ghost = ObservedObject(wrappedValue: ghost)
         _density = ObservedObject(wrappedValue: density)
+        _loginItems = ObservedObject(wrappedValue: loginItems)
         self.onAccountAdded = onAccountAdded
         self.onRemoveAccount = onRemoveAccount
         fixedAccount = nil
@@ -165,6 +170,10 @@ struct SettingsView: View {
         }
         onAccountAdded = { _ in }
         onRemoveAccount = { _ in }
+        // Fixed view: a fresh store (reads live state on appear; the
+        // demo toggle writes the real service like the live one — the
+        // shot never flips it).
+        _loginItems = ObservedObject(wrappedValue: LoginItemStore())
         fixedAccount = account
     }
 
@@ -227,6 +236,24 @@ struct SettingsView: View {
 
     @ViewBuilder
     private var accountSections: some View {
+        // top10-menubar: opt-IN login item (default off; this toggle
+        // is the only writer — the app never re-enables itself).
+        Section("Startup") {
+            Toggle("Open Better Teams at login", isOn: Binding(
+                get: { loginItems.enabled },
+                set: { on in Task { await loginItems.set(on) } }
+            ))
+            .disabled(loginItems.busy)
+            if let err = loginItems.error {
+                Text(err)
+                    .font(DietType.caption1)
+                    .foregroundStyle(Color(nsColor: DietColor.danger))
+            }
+            Text("Off by default. Better Teams never turns this back on by itself.")
+                .font(DietType.caption1)
+                .foregroundStyle(DietColor.textSecondaryColor)
+        }
+        .task { loginItems.refresh() }
         Section("Account") {
             LabeledContent("Status", value: account.detail)
                 .textSelection(.enabled)

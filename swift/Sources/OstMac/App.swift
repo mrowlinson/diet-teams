@@ -139,6 +139,7 @@ struct OstMacAppMain: App {
     private let cannedAuth: AuthViewModel?
 
     init() {
+        ColdStart.arm() // top10-menubar: launch-timeline t0 (first line)
         let args = CommandLine.arguments
         _state = StateObject(wrappedValue: AppState(args: args))
         if let name = Self.authStateName(args: args) {
@@ -222,11 +223,15 @@ struct OstMacAppMain: App {
         }
         .defaultSize(width: 440, height: 520)
         Window("Call A/V", id: AppIdentity.avWindowID) {
-            AvPanelView(screenShare: state.screenShare)
+            // top10-menubar: LazyView — capture models + camera
+            // enumeration build on first open, never at launch.
+            LazyView { AvPanelView(screenShare: state.screenShare) }
         }
         .defaultSize(width: 600, height: 740)
         Window("Call", id: AppIdentity.callWindowID) {
-            InCallView(call: state.call)
+            // top10-menubar: LazyView — capture models build on
+            // first open (first call join), never at launch.
+            LazyView { InCallView(call: state.call) }
         }
         .defaultSize(width: 420, height: 560)
         Window("Recent Calls", id: AppIdentity.callsWindowID) {
@@ -277,6 +282,26 @@ struct OstMacAppMain: App {
             }
         }
         .defaultSize(width: 560, height: 640)
+        // top10-menubar: menu-bar extra (presence dot + unread count;
+        // popover = quick-chat triage). The chats VM is passed by
+        // source (AppState rebuilds it on account switch).
+        MenuBarExtra {
+            MenuBarPopoverView(
+                chatsSource: { [state] in state.chats },
+                unread: state.unread,
+                presence: state.presence,
+                onOpenChat: { id in
+                    NotificationCenter.default.post(
+                        name: .omNotifOpenChat, object: nil,
+                        userInfo: ["chatID": id])
+                    NSApp.activate(ignoringOtherApps: true)
+                },
+                onOpenMain: { NSApp.activate(ignoringOtherApps: true) },
+                onQuit: { NSApp.terminate(nil) })
+        } label: {
+            MenuBarLabelView(unread: state.unread, presence: state.presence)
+        }
+        .menuBarExtraStyle(.window)
         Settings {
             if CommandLine.arguments.contains("--show-settings-templates") {
                 // Shot hook (e2-canned): the real Templates section
@@ -299,6 +324,7 @@ struct OstMacAppMain: App {
                     accounts: state.accounts, call: state.call,
                     canned: state.canned, ghost: state.ghost,
                     density: state.density,
+                    loginItems: state.loginItems,
                     onAccountAdded: { state.completePendingAdd($0) },
                     onRemoveAccount: { state.removeAccount($0) })
             }
@@ -494,7 +520,12 @@ final class AppState: ObservableObject {
     /// True between an account switch/add and its quiet reload landing
     /// (keeps the gate open across the `.unknown` repoint beat).
     @Published var switchingAccount = false
-    let screenShare = ScreenShareModel()
+    /// Screen-share owner, created on first A/V use (top10-menubar:
+    /// no media objects at launch — the ScreenShareModel init notes
+    /// into ColdStart, so the launch log proves zero).
+    lazy var screenShare = ScreenShareModel()
+    /// Opt-in login item (top10-menubar: default off; Settings toggle).
+    let loginItems = LoginItemStore()
     let notes = NotesStore()
     let showNotes: Bool
     let catchUp: CatchUpStore
@@ -1083,6 +1114,7 @@ final class AppState: ObservableObject {
                 }
             }
         )
+        ColdStart.mark("appstate.init") // top10-menubar: launch timeline
     }
 
     /// Chat-list satellite wiring (local-remove fan-out + selection
@@ -1314,6 +1346,23 @@ final class AppState: ObservableObject {
             accounts.refreshAll()
         }
         await openContentIfAllowed()
+        // top10-menubar: launch timeline close + media-deferral proof.
+        ColdStart.mark("startup.done")
+        print("[coldstart] \(ColdStart.mediaInitReport())")
+        fflush(stdout)
+        if CommandLine.arguments.contains("--coldstart-quit") {
+            // Proof hook: clean exit once the timeline lands (flushed).
+            // Waits for the first chat open (join-ready) up to 30s —
+            // the selection sink lands just after startup.done.
+            Task {
+                for _ in 0..<300 where !ColdStart.hasMarked("chat.first-open") {
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+                print("[coldstart] \(ColdStart.report().replacingOccurrences(of: "\n", with: " | "))")
+                fflush(stdout)
+                NSApp.terminate(nil)
+            }
+        }
     }
 
     /// Post-gate: chats + restore + feed + autosay. Runs once, only when
@@ -1344,7 +1393,9 @@ final class AppState: ObservableObject {
                 CommandLine.arguments.contains("--show-transcripts-actions")
             transcripts.selectAndShowFirst()
         }
-        await meetings.load()
+        // top10-menubar: the meeting list loads on first Meetings-window
+        // open (that scene already refresh()es on appear) — never on the
+        // launch path.
         seedShifts() // team picker + first-week grid (demo + live)
         if chats.state == .loaded {
             // Core's signed_in is aad-centric; a loaded list proves
@@ -1448,6 +1499,7 @@ final class AppState: ObservableObject {
         stateTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in self?.tick() }
         }
+        ColdStart.mark("content.open") // top10-menubar: launch timeline
     }
 
     /// Offline banner proof (om-notif-live --show-notif-live): one canned
@@ -1879,6 +1931,10 @@ final class AppState: ObservableObject {
         guard !blocked.isBlocked(chatID: id) else { return }
         activityPane = nil // e1-inwindow: any open chat clears the pane
         openChatID = id
+        // top10-menubar: join-ready = first chat open (one-shot).
+        if !ColdStart.hasMarked("chat.first-open") {
+            ColdStart.mark("chat.first-open")
+        }
         if SelectionRestore.shouldPersist(chatID: id) {
             persistedSelection = id
         }

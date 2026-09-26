@@ -29,7 +29,20 @@ public final class CameraCapture: NSObject, ObservableObject {
 
     public static let deviceKey = "om.av.cameraDeviceID"
 
-    public let session = AVCaptureSession()
+    /// Capture session, created on first media use (top10-menubar:
+    /// no AVCaptureSession at launch — the class is @MainActor, so the
+    /// unsynchronized backer is safe). `sessionAllocated` pins that.
+    private var _session: AVCaptureSession?
+    public var session: AVCaptureSession {
+        if let s = _session { return s }
+        ColdStart.noteMediaInit("camera.session")
+        let s = AVCaptureSession()
+        _session = s
+        return s
+    }
+
+    /// True once the session exists (deferral probe — never allocates).
+    public var sessionAllocated: Bool { _session != nil }
     private var output: AVCaptureVideoDataOutput?
     private let queue = DispatchQueue(label: "dev.ostmac.camera")
     /// Push worker: the AVCapture callback only packs rows, then hands the
