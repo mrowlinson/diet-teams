@@ -212,4 +212,56 @@ final class NativeControlsTests: XCTestCase {
                 "\(name) must not keep a bare field")
         }
     }
+
+    func testChatHoldsSurfacesRenderNative() throws {
+        // om-chat-holds: the two dismiss-✕ buttons ride the system
+        // borderless style (native hover + native ring, chat-#2
+        // precedent); the plain+well send box and the bare edit-sheet
+        // field stay (holds #1/#6: no native bezel stretches or wraps).
+        let files = try Self.swiftFiles()
+        let conv = try XCTUnwrap(
+            files.first(where: { $0.name == "ConversationView.swift" }),
+            "ConversationView.swift missing")
+        for label in [
+            ".accessibilityLabel(\"Cancel reply\")",
+            ".accessibilityLabel(\"Remove attachment\")",
+        ] {
+            let ranges = conv.text.ranges(of: label)
+            XCTAssertEqual(ranges.count, 1, "\(label) must be unique")
+            let at = try XCTUnwrap(ranges.first).lowerBound
+            let site = String(conv.text[at...]).prefix(400)
+            XCTAssertTrue(
+                conv.text[..<at].suffix(400)
+                    .contains(".buttonStyle(.borderless)"),
+                "\(label) must use the system borderless style")
+            XCTAssertFalse(
+                site.contains(".plainFocusRing()"),
+                "\(label) must not carry the custom ring")
+        }
+        // Hold #6 pin: the edit-sheet field keeps the bare multiline
+        // recipe (.roundedBorder clips it to 1 line, chat-lane proof).
+        let editRanges = conv.text.ranges(of: "text: $editDraft")
+        XCTAssertEqual(editRanges.count, 1, "edit field must be unique")
+        let editAt = try XCTUnwrap(editRanges.first).lowerBound
+        let editSite = String(conv.text[editAt...]).prefix(300)
+        XCTAssertTrue(
+            editSite.contains(".textFieldStyle(.plain)"),
+            "edit-sheet field must keep the bare recipe")
+        XCTAssertTrue(
+            editSite.contains(".lineLimit(3...8)"),
+            "edit-sheet field must keep multiline growth")
+    }
+}
+
+private extension String {
+    /// All ranges of `needle` (XCTUnwrap-free helper for the pin test).
+    func ranges(of needle: String) -> [Range<Index>] {
+        var out: [Range<Index>] = []
+        var from = startIndex
+        while let r = self[from...].range(of: needle) {
+            out.append(r)
+            from = r.upperBound
+        }
+        return out
+    }
 }
