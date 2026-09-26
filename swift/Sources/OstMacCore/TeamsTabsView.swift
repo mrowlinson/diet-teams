@@ -134,7 +134,7 @@ public struct TeamsTabsView: View {
             .padding(.horizontal, DietSpace.md)
             .padding(.vertical, DietSpace.xs)
         case .loaded:
-            ScrollView(.horizontal, showsIndicators: false) {
+            ScrollView(.horizontal) {
                 HStack(spacing: DietSpace.sm) {
                     ForEach(store.tabs) { tab in
                         chip(for: tab)
@@ -143,6 +143,7 @@ public struct TeamsTabsView: View {
                 .padding(.horizontal, DietSpace.md)
                 .padding(.vertical, DietSpace.xs)
             }
+            .scrollIndicators(.hidden)
         }
     }
 

@@ -94,6 +94,12 @@ final class TeamsTabsTests: XCTestCase {
         XCTAssertFalse(
             text.contains(".buttonStyle(.plain)"),
             "plain custom-drawn chip style must be gone")
+        XCTAssertTrue(
+            text.contains(".scrollIndicators(.hidden)"),
+            "tabs scroller must use the modern scrollIndicators API")
+        XCTAssertFalse(
+            text.contains("showsIndicators:"),
+            "legacy showsIndicators init arg must be gone")
     }
 
     func testOpenErrorSurfaces() async throws {
